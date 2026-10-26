@@ -4,9 +4,11 @@ extends SceneTree
 ## --headless):
 ##   xvfb-run -a -s "-screen 0 1280x800x24" \
 ##     Godot --path . --script tests/render_proof.gd
-## Capture 1: cockpit close-up at the Drop Start dangle - grab wheel,
-## dash switches, state label, controls panel, nose and the track ahead.
-## Capture 2: the drone lift - car dangling on 4 lines under the drone.
+## Capture 1: cockpit view FROM THE EYE ANCHOR (fallback camera) at the
+## Drop Start dangle - the driver sits IN the car: grab wheel large in
+## the lower centre, dash switches, blower low, ribbon ahead.
+## Capture 2: the drone lift - car dangling on 4 lines under the drone,
+## shot along the ribbon so the (Fix Pass 2) centreline centring shows.
 ## Also asserts the panel lists every accepted command and the lines
 ## are actually visible during the lift.
 
@@ -62,13 +64,21 @@ func _run() -> void:
 	check(main.switch_pivots.size() == 3, "3 prep switches on the dash")
 	check(main.state_label.text.length() > 0, "state label is live (%s)" % main.state_label.text)
 
-	# Capture 1: cockpit from just behind/right of the driver, mid-swing.
-	var cam1 := Camera3D.new()
-	main.car.add_child(cam1)
-	cam1.position = Vector3(0.48, 1.78, 1.38)
-	cam1.look_at(main.car.global_transform * Vector3(0.24, 0.88, -0.60), Vector3.UP)
-	await snap(cam1, "cockpit_view.png")
-	cam1.queue_free()
+	# Fix Pass 2 anchor geometry: the fallback camera sits exactly on the
+	# eye anchor, and the wheel hub is at natural reach from it (brief:
+	# 0.42-0.48 m forward of the eye, 0.22-0.30 m below it).
+	check(main.fallback_cam.position == main.EYE_ANCHOR,
+		"fallback camera sits on the eye anchor %s" % str(main.EYE_ANCHOR))
+	var hub: Vector3 = main._wheel_hub_local()
+	var hub_fwd: float = main.EYE_ANCHOR.z - hub.z
+	var hub_drop: float = main.EYE_ANCHOR.y - hub.y
+	check(hub_fwd >= 0.42 and hub_fwd <= 0.48,
+		"wheel hub %.2f m forward of the eye (natural reach band)" % hub_fwd)
+	check(hub_drop >= 0.22 and hub_drop <= 0.30,
+		"wheel hub %.2f m below the eye (natural reach band)" % hub_drop)
+
+	# Capture 1: cockpit from the eye anchor itself, at the Drop Start.
+	await snap(main.fallback_cam, "cockpit_view.png")
 
 	# Capture 2: the lift. Put the car on the track, call the drone,
 	# skip to the dangle and shoot from outside.
@@ -82,14 +92,30 @@ func _run() -> void:
 		t += 1
 	check(main.mode == main.MODE_HANG, "lift engaged for capture 2")
 	main.debug_set_hang_dangle()
+	# Fix Pass 2: zero the pendulum and prove the recovery hang point is
+	# centred over the centreline before shooting it.
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
 	for i3: int in 40:
 		await physics_frame
 	check(main.line_mis[0].visible, "lift lines visible during the dangle")
+	var fr_rc: Dictionary = main._frame_at(main.drop_target_s)
+	var rel_rc: Vector3 = main.car.global_position - fr_rc["pos"]
+	var lat_rc: float = rel_rc.dot(fr_rc["side"])
+	check(absf(lat_rc) < 0.05,
+		"recovery hang centred over the centreline (lat offset %.3f m)" % lat_rc)
+	# Shoot from behind/above along the ribbon so the centring reads.
 	var cam2 := Camera3D.new()
 	main.add_child(cam2)
 	var car_pos: Vector3 = main.car.global_position
-	cam2.position = car_pos + Vector3(6.0, 2.6, 6.0)
-	cam2.look_at(car_pos + Vector3(0, 1.6, 0), Vector3.UP)
+	var rc_pos: Vector3 = fr_rc["pos"]
+	var rc_tan: Vector3 = fr_rc["tan"]
+	var rc_up: Vector3 = fr_rc["up"]
+	var rc_side: Vector3 = fr_rc["side"]
+	cam2.position = rc_pos - rc_tan * 8.5 + rc_up * 3.4 + rc_side * 2.6
+	cam2.look_at(car_pos + Vector3(0, 0.8, 0), Vector3.UP)
 	await snap(cam2, "lift_view.png")
 	cam2.queue_free()
 

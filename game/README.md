@@ -71,6 +71,11 @@ Godot --headless --path . --script tests/smoke_test.gd
 # tests/sightline_view.png (long offset sightline, climb -> bank -> lip)
 # and tests/ribbon_side_view.png (grazing side angle: ribbon thickness
 # and skirt) - the track must visibly exist, not read as pylons only.
+# Fix Pass 2: cockpit_view is shot from the driver eye anchor (fallback
+# camera) and the proof asserts hub-vs-anchor reach geometry plus the
+# recovery hang's centreline offset; the smoke asserts the same
+# centring for the Drop Start and the recovery, and that a release at
+# swing centre lands on the ribbon.
 xvfb-run -a Godot --path . --script tests/render_proof.gd
 
 # frame discipline probe (nodes / draw calls / primitives)
@@ -79,7 +84,12 @@ xvfb-run -a Godot --path . --script tests/frame_stats.gd
 
 UNVERIFIED by design (XR layer — only a headset run proves these):
 grab-wheel hand tracking, hand-proximity switch flips, HMD lean
-reading, in-headset panel legibility.
+reading, in-headset panel legibility, and (Fix Pass 2) the anchored
+seat position and wheel reach comfort in the headset. The anchor:
+recenter/spawn offsets the rig so the HMD lands on a fixed eye anchor
+in the cockpit (hub 0.45 m ahead of the eye, 0.26 m below it); the
+drone's hang points (Drop Start + recovery) are centred over the
+ribbon centreline, over flat, unbanked sections.
 
 ## Quest export — status
 

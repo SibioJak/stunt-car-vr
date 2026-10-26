@@ -28,6 +28,12 @@ const HANG_CLEAR: float = 1.2
 const GRAV: float = 9.8
 const SWITCH_NAMES: Array[String] = ["FUEL", "SPARK", "BOOST"]
 const PREP_BOOST_CREDIT: float = 25.0
+# Fix Pass 2: fixed driver eye anchor in car space. The seat offset rig
+# lands the player's HMD exactly here on spawn/recenter, so physical
+# seated height no longer floats the driver on top of the car. The wheel
+# hub sits 0.45 m forward of the eye and 0.26 m below it (natural reach).
+const EYE_ANCHOR: Vector3 = Vector3(0.0, 1.14, 0.05)
+const WHEEL_HUB: Vector3 = Vector3(0.0, 0.88, -0.40)
 
 # --- track samples ---
 var t_pts: Array[Vector3] = []
@@ -118,6 +124,9 @@ var state_label: Label3D
 var panel_label: Label3D
 var prep_label: Label3D
 
+var seat_offset: Node3D
+var anchor_pending: bool = false
+var anchor_wait_frames: int = 0
 var origin: XROrigin3D
 var xr_cam: XRCamera3D
 var hand_ctrl: Dictionary = {}
@@ -171,11 +180,16 @@ func _ready() -> void:
 
 
 func _build_rig() -> void:
+	# Rig stack: car -> seat_offset -> XROrigin3D -> camera/controllers.
+	# The seat offset carries the Fix Pass 2 anchor correction; the origin
+	# itself stays at zero so tracked poses pass through untouched (the
+	# lean experiment reads the camera local to the origin).
+	seat_offset = Node3D.new()
+	seat_offset.name = "SeatOffset"
+	car.add_child(seat_offset)
 	origin = XROrigin3D.new()
 	origin.name = "Origin"
-	# Driver head anchor inside the cockpit; the origin rides the car.
-	origin.position = Vector3(0.0, 1.02, 0.28)
-	car.add_child(origin)
+	seat_offset.add_child(origin)
 	xr_cam = XRCamera3D.new()
 	origin.add_child(xr_cam)
 	var xr_interface: XRInterface = XRServer.find_interface("OpenXR")
@@ -184,7 +198,7 @@ func _build_rig() -> void:
 		xr_ok = true
 	else:
 		fallback_cam = Camera3D.new()
-		fallback_cam.position = Vector3(0.0, 1.02, 0.28)
+		fallback_cam.position = EYE_ANCHOR
 		fallback_cam.name = "FallbackCam"
 		car.add_child(fallback_cam)
 		fallback_cam.current = true
@@ -480,7 +494,7 @@ func _build_car() -> void:
 	car.add_child(car_body)
 	var paint := _mat(Color(0.85, 0.35, 0.08))
 	var dark := _mat(Color(0.13, 0.13, 0.15))
-	# Floor + side pods (driver sits centre, head anchor at car-local (0,1.02,0.28))
+	# Floor + side pods (driver sits centre, eye anchor at EYE_ANCHOR)
 	_box(car_body, Vector3(1.30, 0.16, 3.30), Vector3(0, 0.32, 0), dark)
 	_box(car_body, Vector3(0.34, 0.42, 2.60), Vector3(-0.72, 0.48, 0.1), paint)
 	_box(car_body, Vector3(0.34, 0.42, 2.60), Vector3(0.72, 0.48, 0.1), paint)
@@ -530,22 +544,22 @@ func _build_cockpit() -> void:
 	# Dash slab
 	_box(car_body, Vector3(1.24, 0.30, 0.14), Vector3(0, 0.78, -0.62), _mat(Color(0.10, 0.10, 0.11)))
 	# Steering column + grab wheel (wood-rimmed three-spoke: this car's character)
-	# Fix Pass 1: wheel raised ~13.5 cm (hub 0.92 -> 1.055) and tipped a
-	# little more toward the driver (-18 -> -22 deg) - Chris's field note
-	# was "wheel is too low" for a comfortable seated grab. Column
-	# lengthened/re-aimed to meet the new hub.
+	# Fix Pass 1 raised the hub (0.92 -> 1.055); Fix Pass 2 repositions it
+	# relative to the anchored eye instead: hub = WHEEL_HUB, 0.45 m ahead
+	# of EYE_ANCHOR and 0.26 m below it, tilt kept at -22 deg. Column
+	# re-centred/shortened to run from the dash into the new hub.
 	var col := MeshInstance3D.new()
 	var colm := CylinderMesh.new()
 	colm.top_radius = 0.03
 	colm.bottom_radius = 0.03
-	colm.height = 0.38
+	colm.height = 0.32
 	col.mesh = colm
-	col.position = Vector3(0, 0.90, -0.54)
+	col.position = Vector3(0, 0.87, -0.51)
 	col.rotation_degrees = Vector3(90, 0, 0)
 	car_body.add_child(col)
 	wheel_node = Node3D.new()
 	wheel_node.name = "Wheel"
-	wheel_node.position = Vector3(0, 1.055, -0.40)
+	wheel_node.position = WHEEL_HUB
 	wheel_node.rotation_degrees = Vector3(-22, 0, 0)
 	car_body.add_child(wheel_node)
 	var rim := MeshInstance3D.new()
@@ -868,9 +882,47 @@ func _input(event: InputEvent) -> void:
 
 
 func _recenter() -> void:
-	# Godot 4.7 API: RotationMode enum (RESET_FULL_ROTATION + keep_height=false
-	# recentres rotation AND position).
-	XRServer.center_on_hmd(XRServer.RESET_FULL_ROTATION, false)
+	# Fix Pass 2: recenter means "put my eye on the cockpit anchor", not
+	# the raw XR reference reset (center_on_hmd left the tracked seated
+	# height stacked on top of the cockpit offset - the driver floated).
+	# The correction is applied next physics frame via the seat offset.
+	if xr_ok:
+		anchor_pending = true
+		anchor_wait_frames = 0
+
+
+func _process_anchor_pending() -> void:
+	if not anchor_pending:
+		return
+	if not xr_ok:
+		anchor_pending = false
+		return
+	anchor_wait_frames += 1
+	# Wait for a live tracked pose so the correction is computed from the
+	# player's real seated position; give up gracefully after ~10 s.
+	if xr_cam.get_is_tracking() or anchor_wait_frames > 600:
+		_apply_seat_anchor()
+		anchor_pending = false
+
+
+func _apply_seat_anchor() -> void:
+	# Offset the seat so the HMD lands exactly on EYE_ANCHOR in car space,
+	# yaw-aligned to the car's heading. The correction is rigid and sits
+	# ABOVE the XR origin, so head motion (and the lean reading, which is
+	# measured local to the origin) afterwards is relative to the anchor.
+	var cam_car: Transform3D = car.global_transform.affine_inverse() * xr_cam.global_transform
+	var fwd: Vector3 = -cam_car.basis.z
+	fwd.y = 0.0
+	if fwd.length() < 0.05:
+		fwd = Vector3(0.0, 0.0, -1.0)
+	fwd = fwd.normalized()
+	# Yaw that rotates the current horizontal view direction onto the
+	# car's forward (-Z in car space).
+	var yaw: float = atan2(fwd.z, fwd.x) + PI * 0.5
+	var rot := Basis(Vector3.UP, yaw)
+	var corr := Transform3D(rot, EYE_ANCHOR - rot * cam_car.origin)
+	seat_offset.transform = corr * seat_offset.transform
+	_capture_lean_neutral()
 
 
 func _toggle_lean() -> void:
@@ -886,8 +938,8 @@ func _capture_lean_neutral() -> void:
 
 # --- grab wheel ---
 func _wheel_hub_local() -> Vector3:
-	# must match wheel_node.position in _build_cockpit (raised in Fix Pass 1)
-	return Vector3(0, 1.055, -0.40)
+	# single source: wheel_node.position in _build_cockpit is WHEEL_HUB too
+	return WHEEL_HUB
 
 
 func _hand_wheel_angle(hand: String) -> float:
@@ -969,8 +1021,13 @@ func start_race() -> void:
 	susp_x = 0.0
 	susp_v = 0.0
 	drop_target_s = 2.0
+	anchor_pending = true
+	anchor_wait_frames = 0
 	var fr: Dictionary = _frame_at(drop_target_s)
-	anchor_pos = fr["pos"] + fr["up"] * (HANG_LEN + HANG_CLEAR)
+	# Fix Pass 2: hang anchor offset along WORLD up, so at swing centre
+	# the car hangs plumb over the ribbon centreline regardless of the
+	# section's slope/bank (the frame-up offset drifted sideways).
+	anchor_pos = fr["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR)
 	anchor_target = anchor_pos
 	pend_th_f = 0.30
 	pend_th_l = 0.12
@@ -1062,7 +1119,9 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 	hang_from_pos = catch_pos
 	drop_target_s = _find_drop_s(from_s)
 	var fr: Dictionary = _frame_at(drop_target_s)
-	anchor_target = fr["pos"] + fr["up"] * (HANG_LEN + HANG_CLEAR)
+	# Fix Pass 2: world-up hang anchor (see start_race) - the car must
+	# hang centred over the ribbon, not offset along a tilted frame up.
+	anchor_target = fr["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR)
 	anchor_pos = catch_pos + Vector3.UP * (HANG_LEN + 1.6)
 	# initial pendulum angles from the catch offset
 	var off: Vector3 = catch_pos - anchor_pos
@@ -1074,16 +1133,31 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 
 
 func _find_drop_s(from_s: float) -> float:
-	# nearest suitable straight: ahead, no gap, near-flat, near-straight
-	var best: float = clampf(from_s + 8.0, 0.0, track_len - 4.0)
+	# Nearest suitable hang section ahead: no gap, near-straight, flat,
+	# and UNBANKED. Fix Pass 2: the old search accepted slopes up to
+	# tan.y 0.12 and ignored bank entirely - the corner's bank decays
+	# over ~50 samples past the corner, so drops were offered over
+	# still-banked ribbon where the hang point drifted a full half-width
+	# sideways ("barely over the track"). The car hangs plumb (world up)
+	# from the anchor, so a level, unbanked section keeps the swing
+	# centre squarely over the centreline.
+	var limit: float = track_len - 4.0
 	var cand: float = from_s + 4.0
-	while cand < track_len - 4.0 and cand < from_s + 90.0:
+	while cand < limit:
 		var fr: Dictionary = _frame_at(cand)
-		if not bool(fr["gap"]) and absf(float(fr["curv"])) < 0.004 and absf(float(fr["tan"].y)) < 0.12:
-			best = cand
-			break
+		if not bool(fr["gap"]) and absf(float(fr["curv"])) < 0.004 \
+				and absf(float(fr["tan"].y)) < 0.08 and absf(float(fr["bank"])) < 0.03:
+			return cand
 		cand += 3.0
-	return best
+	# Relaxed fallback (pre-fix criteria) if nothing strict qualifies.
+	cand = from_s + 4.0
+	while cand < limit:
+		var fr2: Dictionary = _frame_at(cand)
+		if not bool(fr2["gap"]) and absf(float(fr2["curv"])) < 0.004 \
+				and absf(float(fr2["tan"].y)) < 0.12:
+			return cand
+		cand += 3.0
+	return clampf(from_s + 8.0, 0.0, limit)
 
 
 func _do_release() -> void:
@@ -1105,6 +1179,7 @@ func _do_release() -> void:
 # ---------------------------------------------------------------- sim
 
 func _physics_process(delta: float) -> void:
+	_process_anchor_pending()
 	_poll_inputs(delta)
 	race_time += delta
 	match mode:

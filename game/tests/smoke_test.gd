@@ -80,6 +80,21 @@ func _run() -> void:
 		p_max = maxf(p_max, d)
 	check(p_max - p_min > 0.25, "stage1: pendulum sway moves the car (range %.2f m)" % (p_max - p_min))
 
+	# Stage 1b (Fix Pass 2): at swing centre the Drop Start hang point is
+	# centred over the ribbon centreline. Zero the pendulum (test-only
+	# state poke; the position measured comes from production
+	# _hang_car_pos) and measure against the frame at drop_target_s.
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	await frames(4)
+	var fr_ds: Dictionary = main._frame_at(main.drop_target_s)
+	var rel_ds: Vector3 = main.car.global_position - fr_ds["pos"]
+	var lat_ds: float = rel_ds.dot(fr_ds["side"])
+	check(absf(lat_ds) < 0.05,
+		"stage1b: Drop Start hangs centred over the centreline (lat offset %.3f m)" % lat_ds)
+
 	# Stage 2: timed release -> scored touchdown -> driving.
 	main._do_release()
 	var landed: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
@@ -121,6 +136,19 @@ func _run() -> void:
 		func() -> bool: return main.mode == main.MODE_HANG and main.hang_phase == "dangle", 2500)
 	check(dangling, "stage4: on-demand lift carries the car to a dangle")
 
+	# Stage 4b (Fix Pass 2): the RECOVERY hang point is centred over the
+	# ribbon centreline at swing centre - same zeroed-pendulum measure.
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	await frames(4)
+	var fr_rc: Dictionary = main._frame_at(main.drop_target_s)
+	var rel_rc: Vector3 = main.car.global_position - fr_rc["pos"]
+	var lat_rc: float = rel_rc.dot(fr_rc["side"])
+	check(absf(lat_rc) < 0.05,
+		"stage4b: recovery hangs centred over the centreline (lat offset %.3f m, drop s=%.0f)" % [lat_rc, main.drop_target_s])
+
 	# Stage 5: prep sequence in order -> boost credit increases.
 	main.boost_meter = 40.0
 	var boost0: float = main.boost_meter
@@ -131,10 +159,14 @@ func _run() -> void:
 	check(main.prep_done, "stage5: prep sequence completes in the shown order")
 	check(main.boost_meter > boost0, "stage5: good prep grants boost credit (%.0f -> %.0f)" % [boost0, main.boost_meter])
 
-	# Stage 6: release over the track -> driving resumes.
+	# Stage 6: release over the track -> driving resumes. The pendulum is
+	# still zeroed from stage 4b, so this is a release AT SWING CENTRE -
+	# it must land the car on the ribbon, near the centreline.
 	main._do_release()
 	var resumed: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(resumed, "stage6: release over the track resumes driving")
+	check(resumed and absf(main.car_lat) < 0.35,
+		"stage6: swing-centre release lands on the ribbon (car_lat %.3f m)" % main.car_lat)
 
 	# Stage 7: lean experiment changes grip at the bank (bonus layer).
 	main.debug_warp_to_s(155.0)
