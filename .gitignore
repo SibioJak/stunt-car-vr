@@ -14,3 +14,6 @@ game/android/
 .DS_Store
 Thumbs.db
 *.swp
+
+# Godot per-machine import sidecars for test proofs — regenerated locally, never tracked (they collide with Chris-side imports)
+game/tests/*.png.import
