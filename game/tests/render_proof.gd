@@ -58,7 +58,8 @@ func _run() -> void:
 	# Panel completeness: every accepted command must be listed.
 	var ptxt: String = main.panel_label.text
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call drone",
-			"restart", "lean", "Recenter", "SPACE", "1/2/3", "W/S"]:
+			"restart", "lean", "Recenter", "SPACE", "1/2/3", "W/S",
+			"DIAG", "ANCHOR", "CAMH", "FRC"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)
 	check(main.wheel_node != null, "grab wheel exists")
 	check(main.switch_pivots.size() == 3, "3 prep switches on the dash")
@@ -79,6 +80,39 @@ func _run() -> void:
 
 	# Capture 1: cockpit from the eye anchor itself, at the Drop Start.
 	await snap(main.fallback_cam, "cockpit_view.png")
+
+	# Fix Pass 3 (Item 4): the stood-up wheel must FACE the driver.
+	# Project the rim circle (in the tilt node's local XZ plane)
+	# through the anchor camera and measure the screen-space ellipse:
+	# minor/major axis ratio from the projected points' covariance.
+	# A flat plate seen from the seat scores ~0.3; the target is
+	# >= 0.55.
+	var rim_pts: Array[Vector2] = []
+	for k: int in 16:
+		var ang: float = TAU * float(k) / 16.0
+		var p_local := Vector3(cos(ang) * 0.205, 0.0, sin(ang) * 0.205)
+		var p_world: Vector3 = main.wheel_node.global_transform * p_local
+		rim_pts.append(main.fallback_cam.unproject_position(p_world))
+	var mean := Vector2.ZERO
+	for p: Vector2 in rim_pts:
+		mean += p
+	mean /= float(rim_pts.size())
+	var sxx: float = 0.0
+	var syy: float = 0.0
+	var sxy: float = 0.0
+	for p2: Vector2 in rim_pts:
+		var d: Vector2 = p2 - mean
+		sxx += d.x * d.x
+		syy += d.y * d.y
+		sxy += d.x * d.y
+	var tr: float = sxx + syy
+	var det: float = sxx * syy - sxy * sxy
+	var disc: float = sqrt(maxf(tr * tr * 0.25 - det, 0.0))
+	var lam_max: float = tr * 0.5 + disc
+	var lam_min: float = maxf(tr * 0.5 - disc, 0.0)
+	var ellipse_ratio: float = sqrt(lam_min / lam_max) if lam_max > 0.0 else 0.0
+	check(ellipse_ratio >= 0.55,
+		"wheel rim ellipse ratio %.2f >= 0.55 (wheel faces the driver, not a flat plate)" % ellipse_ratio)
 
 	# Capture 2: the lift. Put the car on the track, call the drone,
 	# skip to the dangle and shoot from outside.

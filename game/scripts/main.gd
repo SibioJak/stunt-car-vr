@@ -34,6 +34,25 @@ const PREP_BOOST_CREDIT: float = 25.0
 # hub sits 0.45 m forward of the eye and 0.26 m below it (natural reach).
 const EYE_ANCHOR: Vector3 = Vector3(0.0, 1.14, 0.05)
 const WHEEL_HUB: Vector3 = Vector3(0.0, 0.88, -0.40)
+# Fix Pass 3: the wheel is STOOD UP. Godot's TorusMesh ring lies in the
+# XZ plane (axis +Y); the old -22 deg X-tilt therefore left the rim
+# plane ~68 deg off vertical - a flat plate with its face pointing up.
+# The tilt node rotates WHEEL_TILT_DEG about X, which puts the rim
+# plane 90 - 68 = 22 deg off vertical, face toward the driver, and the
+# rim spins about its own axis inside that node.
+const WHEEL_TILT_DEG: float = 68.0
+# Fix Pass 3: grip proximity radii widened (live hands land where they
+# land; the origin-true controller reps are the other half of this).
+const WHEEL_GRAB_RADIUS: float = 0.40
+const DASH_CTL_RADIUS: float = 0.32
+# Fix Pass 3: the seat anchor applies only on a STABLE tracked pose:
+# the camera's local position must move less than ANCHOR_STABLE_EPS
+# across ANCHOR_STABLE_FRAMES consecutive physics frames. The old code
+# applied on the first frame any tracking data existed - a single
+# snapshot of whatever transient pose the runtime handed over first.
+const ANCHOR_STABLE_FRAMES: int = 20
+const ANCHOR_STABLE_EPS: float = 0.01
+const ANCHOR_FALLBACK_FRAMES: int = 600
 
 # --- track samples ---
 var t_pts: Array[Vector3] = []
@@ -111,7 +130,8 @@ var susp_v: float = 0.0
 var car: Node3D
 var car_body: Node3D
 var nose_mi: MeshInstance3D
-var wheel_node: Node3D
+var wheel_node: Node3D # tilt node (stood-up wheel plane)
+var wheel_spin: Node3D # spin node inside it (rotates about the wheel axis)
 var smoke_mi: MeshInstance3D
 var lean_needle: MeshInstance3D
 var drone: Node3D
@@ -127,6 +147,22 @@ var prep_label: Label3D
 var seat_offset: Node3D
 var anchor_pending: bool = false
 var anchor_wait_frames: int = 0
+# Fix Pass 3 anchor state (reported on the panel DIAG block):
+# NONE / PENDING / APPLIED-STABLE / APPLIED-FALLBACK. After a fallback
+# apply, anchor_reapply_watch stays set so a later stable pose triggers
+# exactly one re-apply from the real pose.
+var anchor_state: String = "NONE"
+var anchor_stable_frames: int = 0
+var anchor_last_cam_pos: Vector3 = Vector3.ZERO
+var anchor_have_last: bool = false
+var anchor_reapply_watch: bool = false
+# Fix Pass 3 live diagnostics (panel DIAG block, refreshed at ~5 Hz):
+# raw grip-channel values per hand, exactly as the runtime delivers.
+var diag_grip: Dictionary = {"L": 0.0, "R": 0.0}
+var diag_click: Dictionary = {"L": false, "R": false}
+var diag_force: Dictionary = {"L": 0.0, "R": 0.0}
+var diag_block: String = ""
+var diag_timer: float = 0.0
 var origin: XROrigin3D
 var xr_cam: XRCamera3D
 var hand_ctrl: Dictionary = {}
@@ -204,31 +240,44 @@ func _build_rig() -> void:
 		fallback_cam.current = true
 	for hand: String in ["L", "R"]:
 		# Tracker binding per the Duel field census on this rig (Quest 3):
-		# plain "left_hand"/"right_hand", pose left at class default.
+		# plain "left_hand"/"right_hand". Pose is now set EXPLICITLY to
+		# "default" (the action map's default_pose action, bound to the
+		# aim path): the same census found live data only on the
+		# "default"/"palm_pose" tracker poses on this VDXR rig, so
+		# "grip_pose" must NOT be selected - it carries no live data
+		# here and the controllers would freeze.
 		var tracker_name: StringName = &"left_hand" if hand == "L" else &"right_hand"
 		var c := XRController3D.new()
 		c.tracker = tracker_name
+		c.pose = &"default"
 		origin.add_child(c)
 		hand_ctrl[hand] = c
 		_build_controller_rep(c, hand)
 
 
 func _build_controller_rep(ctrl: XRController3D, hand: String) -> void:
+	# Fix Pass 3: the rep is rebuilt ORIGIN-TRUE. Chris's wave test put
+	# the drawn controllers ~a controller's length ahead of his real
+	# hands; the old rep's body sat offset from the node origin the
+	# grab math measures from, and the "default" (aim) pose origin is
+	# itself forward of the palm. Now the visible body is CENTRED on
+	# the node origin and a bright sphere sits exactly AT the origin:
+	# the point he sees is the point the math measures from.
 	var rep := Node3D.new()
 	rep.name = "ControllerRep" + hand
 	ctrl.add_child(rep)
 	ctrl_rep[hand] = rep
 	var accent: Color = Color(0.25, 0.85, 1.0) if hand == "L" else Color(1.0, 0.55, 0.2)
-	_box(rep, Vector3(0.038, 0.026, 0.105), Vector3(0, 0, -0.02), _mat(Color(0.16, 0.16, 0.18)))
-	_box(rep, Vector3(0.042, 0.010, 0.030), Vector3(0, 0.018, -0.03), _mat_unshaded(accent))
-	var tip := MeshInstance3D.new()
+	_box(rep, Vector3(0.040, 0.028, 0.110), Vector3.ZERO, _mat(Color(0.16, 0.16, 0.18)))
+	_box(rep, Vector3(0.044, 0.010, 0.034), Vector3(0, 0.019, -0.008), _mat_unshaded(accent))
+	var origin_dot := MeshInstance3D.new()
 	var sm := SphereMesh.new()
-	sm.radius = 0.011
-	sm.height = 0.022
-	tip.mesh = sm
-	tip.position = Vector3(0, 0.01, -0.085)
-	tip.material_override = _mat_unshaded(accent)
-	rep.add_child(tip)
+	sm.radius = 0.013
+	sm.height = 0.026
+	origin_dot.mesh = sm
+	origin_dot.position = Vector3.ZERO
+	origin_dot.material_override = _mat_unshaded(accent)
+	rep.add_child(origin_dot)
 
 
 func _build_environment() -> void:
@@ -287,10 +336,10 @@ func _gen_append(is_gap: bool, curv: float) -> void:
 	t_gap.append(is_gap)
 
 
-func _walk(steps: int, yaw_rate: float, phi_target: float, bank_target: float, is_gap: bool, phi_rate: float = 0.006) -> void:
+func _walk(steps: int, yaw_rate: float, phi_target: float, bank_target: float, is_gap: bool, phi_rate: float = 0.006, bank_rate: float = 0.012) -> void:
 	for i: int in steps:
 		_gen_phi = move_toward(_gen_phi, phi_target, phi_rate)
-		_gen_bank = move_toward(_gen_bank, bank_target, 0.012)
+		_gen_bank = move_toward(_gen_bank, bank_target, bank_rate)
 		_gen_yaw += yaw_rate
 		var hd := Vector3(-sin(_gen_yaw), 0.0, -cos(_gen_yaw))
 		var tanv: Vector3 = (hd * cos(_gen_phi) + Vector3.UP * sin(_gen_phi)).normalized()
@@ -312,8 +361,15 @@ func _build_track() -> void:
 	_walk(50, 0.0, 0.0, 0.0, false) # start straight
 	_walk(80, 0.0, deg_to_rad(16.0), 0.0, false) # steep climb
 	_walk(47, deg_to_rad(90.0) / 47.0, 0.0, deg_to_rad(34.0), false) # banked corner (left, R~30)
-	_walk(20, 0.0, 0.0, 0.0, false) # flat run to the lip
-	_walk(10, 0.0, deg_to_rad(10.0), 0.0, false, 0.030) # launch lip
+	# Fix Pass 3 (phantom lean): the default bank convergence
+	# (0.012 rad/sample) left the corner's bank on ~50 m of following
+	# STRAIGHT - measured 27 deg of bank at s=185, on the "flat run" -
+	# so the car presented rolled on straights with no cornering
+	# input, and the gap was crossed on a banked frame. The post-
+	# corner walks converge bank at 0.10 rad/sample instead: the
+	# track is truly flat ~6 m past the corner exit.
+	_walk(20, 0.0, 0.0, 0.0, false, 0.006, 0.10) # flat run to the lip
+	_walk(10, 0.0, deg_to_rad(10.0), 0.0, false, 0.030, 0.10) # launch lip
 	gap_s0 = float(t_pts.size())
 	_walk(14, 0.0, deg_to_rad(2.0), 0.0, true, 0.020) # THE GAP - no ribbon
 	gap_s1 = float(t_pts.size())
@@ -543,43 +599,54 @@ func _build_car() -> void:
 func _build_cockpit() -> void:
 	# Dash slab
 	_box(car_body, Vector3(1.24, 0.30, 0.14), Vector3(0, 0.78, -0.62), _mat(Color(0.10, 0.10, 0.11)))
-	# Steering column + grab wheel (wood-rimmed three-spoke: this car's character)
-	# Fix Pass 1 raised the hub (0.92 -> 1.055); Fix Pass 2 repositions it
-	# relative to the anchored eye instead: hub = WHEEL_HUB, 0.45 m ahead
-	# of EYE_ANCHOR and 0.26 m below it, tilt kept at -22 deg. Column
-	# re-centred/shortened to run from the dash into the new hub.
+	# Steering column + grab wheel (wood-rimmed: this car's character).
+	# Hub position from Fix Pass 2 stands: WHEEL_HUB, 0.45 m ahead of
+	# EYE_ANCHOR and 0.26 m below it. Fix Pass 3 stands the wheel UP:
+	# the tilt node rotates WHEEL_TILT_DEG about X so the rim plane
+	# sits 22 deg off vertical facing the driver (see the WHEEL_TILT
+	# note at the constants); the column is aligned to the wheel axis
+	# (the tilt node's local +Y in car space) and runs from the dash
+	# into the hub; the spin node inside the tilt node rotates about
+	# that same axis, so the rim spins IN its plane - the old build
+	# set rotation.z on the flat-tilted node, which precessed the
+	# rim like a coin instead of spinning it.
+	var tilt_rad: float = deg_to_rad(WHEEL_TILT_DEG)
+	var wheel_axis := Vector3(0.0, cos(tilt_rad), sin(tilt_rad))
 	var col := MeshInstance3D.new()
 	var colm := CylinderMesh.new()
 	colm.top_radius = 0.03
 	colm.bottom_radius = 0.03
-	colm.height = 0.32
+	colm.height = 0.34
 	col.mesh = colm
-	col.position = Vector3(0, 0.87, -0.51)
-	col.rotation_degrees = Vector3(90, 0, 0)
+	col.position = WHEEL_HUB - wheel_axis * 0.13
+	col.rotation_degrees = Vector3(WHEEL_TILT_DEG, 0, 0)
 	car_body.add_child(col)
 	wheel_node = Node3D.new()
 	wheel_node.name = "Wheel"
 	wheel_node.position = WHEEL_HUB
-	wheel_node.rotation_degrees = Vector3(-22, 0, 0)
+	wheel_node.rotation_degrees = Vector3(WHEEL_TILT_DEG, 0, 0)
 	car_body.add_child(wheel_node)
+	wheel_spin = Node3D.new()
+	wheel_spin.name = "WheelSpin"
+	wheel_node.add_child(wheel_spin)
 	var rim := MeshInstance3D.new()
 	var torus := TorusMesh.new()
 	torus.inner_radius = 0.185
 	torus.outer_radius = 0.225
 	rim.mesh = torus
 	rim.material_override = _mat(Color(0.45, 0.28, 0.12)) # wood rim
-	wheel_node.add_child(rim)
-	_box(wheel_node, Vector3(0.40, 0.045, 0.03), Vector3(0, 0, 0), _mat(Color(0.55, 0.55, 0.58)))
-	_box(wheel_node, Vector3(0.045, 0.20, 0.03), Vector3(0, -0.10, 0), _mat(Color(0.55, 0.55, 0.58)))
+	wheel_spin.add_child(rim)
+	# spokes lie IN the rim plane (local XZ; thickness along local Y)
+	_box(wheel_spin, Vector3(0.40, 0.03, 0.045), Vector3(0, 0, 0), _mat(Color(0.55, 0.55, 0.58)))
+	_box(wheel_spin, Vector3(0.045, 0.03, 0.40), Vector3(0, 0, 0), _mat(Color(0.55, 0.55, 0.58)))
 	var hub := MeshInstance3D.new()
 	var hubm := CylinderMesh.new()
 	hubm.top_radius = 0.055
 	hubm.bottom_radius = 0.055
 	hubm.height = 0.05
 	hub.mesh = hubm
-	hub.rotation_degrees = Vector3(90, 0, 0)
 	hub.material_override = _mat_unshaded(Color(1.0, 0.75, 0.15))
-	wheel_node.add_child(hub)
+	wheel_spin.add_child(hub)
 	# 3 prep switches on the dash (lever pivots)
 	var switch_cols: Array[Color] = [Color(0.9, 0.2, 0.15), Color(0.95, 0.8, 0.15), Color(0.2, 0.5, 0.95)]
 	for i: int in 3:
@@ -645,12 +712,17 @@ func _build_cockpit() -> void:
 	panel_root.position = Vector3(0.80, 1.08, -0.38)
 	panel_root.rotation_degrees = Vector3(-6, -38, 0)
 	car_body.add_child(panel_root)
-	_box(panel_root, Vector3(0.66, 0.90, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)))
+	# Fix Pass 3: the board grows (0.66x0.90 -> 0.76x1.56) and the
+	# label widens (540 -> 600 px) so the command list PLUS the DIAG
+	# block physically fit on it. Sized from MEASUREMENT, not
+	# estimates: the full label's rendered AABB is 1.40 m tall
+	# (Label3D.get_aabb), so the board carries it with margin.
+	_box(panel_root, Vector3(0.76, 1.56, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)))
 	panel_label = Label3D.new()
-	panel_label.position = Vector3(-0.30, 0.41, 0.02)
+	panel_label.position = Vector3(-0.345, 0.75, 0.02)
 	panel_label.font_size = 30
 	panel_label.pixel_size = 0.00115
-	panel_label.width = 540.0
+	panel_label.width = 600.0
 	panel_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel_label.modulate = Color(0.92, 0.95, 1.0)
 	panel_label.outline_size = 5
@@ -673,25 +745,66 @@ func _panel_text() -> String:
 	lines.append("STATE %s  TD %s" % [_state_name(), last_touchdown])
 	lines.append("LEAN EXP %s  GRIP x%.2f" % ["ON" if lean_on else "OFF", grip_mult])
 	lines.append("-- VR CONTROLS --")
-	lines.append("Grab wheel: squeeze GRIP near wheel, turn hand")
+	lines.append("Grab wheel: GRIP near wheel, turn hand")
 	lines.append("Throttle R trigger / Brake L trigger")
 	lines.append("Boost: R A button (while driving)")
-	lines.append("Release from drone: R trigger (when dangling)")
+	lines.append("Release: R trigger (when dangling)")
 	lines.append("Flip switch: GRIP near a dash switch")
-	lines.append("Call drone lift: L X button (while driving)")
-	lines.append("Dash buttons: GRIP near red=restart, green=lean on/off")
-	lines.append("Recenter view: L stick click / Restart race: L Y button")
+	lines.append("Call drone: L X button (while driving)")
+	lines.append("Dash buttons (GRIP near):")
+	lines.append("red = restart, green = lean on/off")
+	lines.append("Recenter view: L stick click")
+	lines.append("Restart race: L Y button")
 	lines.append("-- DESKTOP --")
 	lines.append("W/S throttle/brake, A/D steer, SHIFT boost")
 	lines.append("SPACE release, 1/2/3 flip FUEL/SPARK/BOOST")
 	lines.append("L call lift, T lean on/off, Q/E lean body")
 	lines.append("R restart race, C recenter view")
+	# Fix Pass 3: live DIAG block (cached string, refreshed ~5 Hz -
+	# see _build_diag_block). This is how a headset screenshot reports
+	# machine state instead of impressions.
+	if diag_block != "":
+		for dl: String in diag_block.split("\n"):
+			lines.append(dl)
 	return "\n".join(lines)
 
 
 func _update_panel() -> void:
 	if panel_label != null:
 		panel_label.text = _panel_text()
+
+
+# Fix Pass 3 (Item 1): the DIAG block. Refreshed at ~5 Hz from
+# _physics_process into the cached diag_block string; _panel_text
+# appends it under the command list. Everything live-only reports its
+# RAW values here (anchor state + which apply path fired, HMD tracking,
+# camera height in car space, per-hand grip channels and hub distance,
+# wheel angle) so Chris's next screenshot is a bug report by itself.
+func _build_diag_block() -> String:
+	var lines: Array[String] = []
+	lines.append("-- DIAG --")
+	if xr_ok:
+		var cam_car: Transform3D = car.global_transform.affine_inverse() * xr_cam.global_transform
+		lines.append("ANCHOR %s TRK %s CAMH %.2f" % [
+			anchor_state, "Y" if _hmd_has_tracking_data() else "N", cam_car.origin.y])
+	else:
+		lines.append("ANCHOR DESKTOP (cam on anchor) CAMH %.2f" % EYE_ANCHOR.y)
+	lines.append(_diag_hand_line("L"))
+	lines.append(_diag_hand_line("R"))
+	lines.append("WHEEL %+d DEG" % int(round(rad_to_deg(wheel_angle))))
+	return "\n".join(lines)
+
+
+func _diag_hand_line(hand: String) -> String:
+	var dist_m: float = _hand_pos(hand).distance_to(car.global_transform * _wheel_hub_local())
+	var flags: String = ""
+	if dist_m < WHEEL_GRAB_RADIUS:
+		flags += " NEAR"
+	if grab_hand == hand:
+		flags += " HOLD"
+	return "%s GRIP %.2f CLK %d FRC %.2f %dcm%s" % [
+		hand, float(diag_grip[hand]), 1 if bool(diag_click[hand]) else 0,
+		float(diag_force[hand]), int(round(dist_m * 100.0)), flags]
 
 
 func _state_name() -> String:
@@ -885,24 +998,64 @@ func _recenter() -> void:
 	# Fix Pass 2: recenter means "put my eye on the cockpit anchor", not
 	# the raw XR reference reset (center_on_hmd left the tracked seated
 	# height stacked on top of the cockpit offset - the driver floated).
-	# The correction is applied next physics frame via the seat offset.
+	# Fix Pass 3: recenter re-arms the stability-gated application.
 	if xr_ok:
-		anchor_pending = true
-		anchor_wait_frames = 0
+		_arm_anchor()
+
+
+func _arm_anchor() -> void:
+	anchor_pending = true
+	anchor_wait_frames = 0
+	anchor_stable_frames = 0
+	anchor_have_last = false
+	anchor_reapply_watch = false
+	anchor_state = "PENDING"
 
 
 func _process_anchor_pending() -> void:
-	if not anchor_pending:
-		return
 	if not xr_ok:
 		anchor_pending = false
 		return
-	anchor_wait_frames += 1
-	# Wait for a live tracked pose so the correction is computed from the
-	# player's real seated position; give up gracefully after ~10 s.
-	if _hmd_has_tracking_data() or anchor_wait_frames > 600:
+	# Fix Pass 3 (Item 2): pose stability is tracked continuously - a
+	# pose counts as stable only after the camera's local position has
+	# moved < ANCHOR_STABLE_EPS across ANCHOR_STABLE_FRAMES consecutive
+	# physics frames WITH tracking data present. The pre-pass code
+	# applied on the first frame tracking data existed: on the
+	# Virtual Desktop rig the first valid pose can be a transient
+	# snapshot (headset not yet worn, stream not yet settled), and a
+	# rigid correction baked from it misplaces the driver for the
+	# whole session (run 3: framing never changed, wheel never
+	# entered his frame - inference, labelled as such in the report).
+	if _hmd_has_tracking_data():
+		var cam_pos: Vector3 = xr_cam.transform.origin
+		if anchor_have_last and cam_pos.distance_to(anchor_last_cam_pos) < ANCHOR_STABLE_EPS:
+			anchor_stable_frames += 1
+		else:
+			anchor_stable_frames = 0
+		anchor_last_cam_pos = cam_pos
+		anchor_have_last = true
+	else:
+		anchor_stable_frames = 0
+		anchor_have_last = false
+	if anchor_pending:
+		anchor_wait_frames += 1
+		if anchor_stable_frames >= ANCHOR_STABLE_FRAMES:
+			_apply_seat_anchor()
+			anchor_state = "APPLIED-STABLE"
+			anchor_pending = false
+		elif anchor_wait_frames > ANCHOR_FALLBACK_FRAMES:
+			# ~10 s with no stable pose: apply from whatever pose
+			# exists (graceful degradation, as before) - but keep
+			# watching: when a stable tracked pose later appears,
+			# re-apply ONCE from the real pose.
+			_apply_seat_anchor()
+			anchor_state = "APPLIED-FALLBACK"
+			anchor_pending = false
+			anchor_reapply_watch = true
+	elif anchor_reapply_watch and anchor_stable_frames >= ANCHOR_STABLE_FRAMES:
 		_apply_seat_anchor()
-		anchor_pending = false
+		anchor_state = "APPLIED-STABLE"
+		anchor_reapply_watch = false
 
 
 func _hmd_has_tracking_data() -> bool:
@@ -959,16 +1112,45 @@ func _wheel_hub_local() -> Vector3:
 	return WHEEL_HUB
 
 
+func _wheel_plane_v() -> Vector3:
+	# The rim lives in the tilt node's local XZ plane; this is the
+	# tilt-local +Z axis expressed in car space (tilt = WHEEL_TILT_DEG
+	# about X). Paired with car-space +X it spans the wheel plane.
+	var t: float = deg_to_rad(WHEEL_TILT_DEG)
+	return Vector3(0.0, -sin(t), cos(t))
+
+
 func _hand_wheel_angle(hand: String) -> float:
+	# Fix Pass 3 (Item 4): the hand's angle is measured IN THE WHEEL
+	# PLANE (the old code used atan2(y, x) in car space, an
+	# approximation for the flat wheel). With the rim stood up, the
+	# angle is taken about the wheel axis: atan2 over the plane
+	# basis (car +X, tilt-local +Z). Turning the hand clockwise as
+	# the driver sees it (top of the rim -> driver's right) increases
+	# this angle, and _poll_grab ADDS the delta to wheel_angle while
+	# the visual spin is wheel_spin.rotation.y = -wheel_angle: the
+	# pair keeps the rim point under the hand glued to the hand,
+	# 1:1 at the rim, and clockwise steers right like a real car.
 	var local: Vector3 = car.to_local(_hand_pos(hand)) - _wheel_hub_local()
-	return atan2(local.y, local.x)
+	return atan2(local.dot(_wheel_plane_v()), local.x)
 
 
 func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
+	# Fix Pass 3 (Item 3): grip is active if ANY channel the runtime
+	# actually delivers says so - analog "grip" > 0.65 OR "grip_click"
+	# OR "grip_force" > 0.65 (all read through XRController3D
+	# .get_input, the API-guarded call). The raw values are stashed
+	# for the panel DIAG block so the next live run shows which
+	# channel Virtual Desktop really feeds.
 	var grip_v: float = _input_float(ctrl, &"grip")
-	var near_wheel: bool = _hand_pos(hand).distance_to(car.global_transform * _wheel_hub_local()) < 0.30
+	var grip_click: bool = _input_bool(ctrl, &"grip_click")
+	var grip_force: float = _input_float(ctrl, &"grip_force")
+	diag_grip[hand] = grip_v
+	diag_click[hand] = grip_click
+	diag_force[hand] = grip_force
+	var now: bool = grip_v > 0.65 or grip_click or grip_force > 0.65
+	var near_wheel: bool = _hand_pos(hand).distance_to(car.global_transform * _wheel_hub_local()) < WHEEL_GRAB_RADIUS
 	var was: bool = gripping[hand]
-	var now: bool = grip_v > 0.65
 	# switch / dash-control flipping on a fresh grip near a dash control
 	if now and not was:
 		var ctl: int = _dash_ctl_near(_hand_pos(hand))
@@ -986,15 +1168,13 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 		elif grab_hand == hand:
 			var ang: float = _hand_wheel_angle(hand)
 			var d: float = wrapf(ang - grab_prev_ang, -PI, PI)
-			# wheel is tilted -22 deg about X; hand rotation about the
-			# car's Z still tracks the rim closely enough for a feel test.
-			wheel_angle = clampf(wheel_angle - d, -PI, PI)
+			wheel_angle = clampf(wheel_angle + d, -PI, PI)
 			grab_prev_ang = ang
 	elif grab_hand == hand and not now:
 		grab_hand = ""
 		# other hand takes over if it is still gripping the wheel
 		var other: String = "R" if hand == "L" else "L"
-		if bool(gripping[other]) and _hand_pos(other).distance_to(car.global_transform * _wheel_hub_local()) < 0.30:
+		if bool(gripping[other]) and _hand_pos(other).distance_to(car.global_transform * _wheel_hub_local()) < WHEEL_GRAB_RADIUS:
 			grab_hand = other
 			grab_prev_ang = _hand_wheel_angle(other)
 	if grab_hand == "" and mode == MODE_DRIVE:
@@ -1003,7 +1183,7 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 
 func _dash_ctl_near(world_pos: Vector3) -> int:
 	for i: int in dash_ctl_nodes.size():
-		if world_pos.distance_to(dash_ctl_nodes[i].global_position) < 0.24:
+		if world_pos.distance_to(dash_ctl_nodes[i].global_position) < DASH_CTL_RADIUS:
 			return i
 	return -1
 
@@ -1038,8 +1218,7 @@ func start_race() -> void:
 	susp_x = 0.0
 	susp_v = 0.0
 	drop_target_s = 2.0
-	anchor_pending = true
-	anchor_wait_frames = 0
+	_arm_anchor()
 	var fr: Dictionary = _frame_at(drop_target_s)
 	# Fix Pass 2: hang anchor offset along WORLD up, so at swing centre
 	# the car hangs plumb over the ribbon centreline regardless of the
@@ -1197,6 +1376,11 @@ func _do_release() -> void:
 
 func _physics_process(delta: float) -> void:
 	_process_anchor_pending()
+	# Fix Pass 3: refresh the panel DIAG block at ~5 Hz.
+	diag_timer += delta
+	if diag_timer >= 0.2:
+		diag_timer = 0.0
+		diag_block = _build_diag_block()
 	_poll_inputs(delta)
 	race_time += delta
 	match mode:
@@ -1417,9 +1601,11 @@ func _update_suspension(delta: float) -> void:
 
 
 func _refresh_car_visuals() -> void:
-	# wheel visual follows steering angle; body roll leans with lat motion
-	if wheel_node != null:
-		wheel_node.rotation.z = -wheel_angle
+	# wheel visual follows steering angle: the spin node rotates
+	# about the wheel's own axis (see the grab-math derivation note
+	# at _hand_wheel_angle for the sign pairing)
+	if wheel_spin != null:
+		wheel_spin.rotation.y = -wheel_angle
 	if car_body != null:
 		var steer: float = clampf(wheel_angle / PI, -1.0, 1.0)
 		car_body.rotation.z = -steer * 0.05 - lat_vel * 0.012

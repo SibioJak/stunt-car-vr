@@ -72,6 +72,14 @@ func check_api_surface() -> void:
 		if String(prop["name"]) == "has_tracking_data":
 			pose_has_prop = true
 	guard_check(pose_has_prop, "XRPose.has_tracking_data property exists in this engine")
+	# XRNode3D.pose is a PROPERTY main.gd assigns by name in
+	# _build_rig (c.pose = &"default" on the hand controllers, Fix
+	# Pass 3) - assert it the same way.
+	var node3d_has_pose: bool = false
+	for prop2: Dictionary in ClassDB.class_get_property_list("XRNode3D", true):
+		if String(prop2["name"]) == "pose":
+			node3d_has_pose = true
+	guard_check(node3d_has_pose, "XRNode3D.pose property exists in this engine")
 
 
 func autopilot() -> void:
@@ -148,6 +156,38 @@ func _run() -> void:
 	var landed: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(landed, "stage2: release drops the car and it lands into DRIVE")
 	check(main.last_touchdown != "-", "stage2: touchdown scored (%s)" % main.last_touchdown)
+
+	# Stage 2b (Fix Pass 3, Item 5): phantom-lean guard. On the start
+	# straight, at standstill and at cruise with ZERO steering input,
+	# the car's visual roll (body-roll visual AND car-vs-frame roll)
+	# must stay within 1 deg of level. Plus the diagnosed cause: the
+	# generator used to leave the corner's bank on ~50 m of following
+	# straight (measured 27 deg of frame bank at s=185); the frame on
+	# the post-corner straight must now be flat.
+	main.debug_warp_to_s(10.0)
+	main.speed = 0.0
+	main.test_throttle = 0.0
+	await frames(30)
+	var fr_2b: Dictionary = main._frame_at(main.car_s)
+	var up_2b: Vector3 = main.car.global_transform.basis.y
+	var roll_2b: float = rad_to_deg(atan2(up_2b.dot(fr_2b["side"]), up_2b.dot(fr_2b["up"])))
+	var body_2b: float = rad_to_deg(main.car_body.rotation.z)
+	check(absf(body_2b) < 1.0 and absf(roll_2b) < 1.0,
+		"stage2b: standstill on the start straight is level (body %.2f deg, car-vs-frame %.2f deg)" % [body_2b, roll_2b])
+	main.debug_warp_to_s(10.0)
+	main.test_throttle = 0.3
+	for i2b: int in 60:
+		main.wheel_angle = 0.0 # zero steering input, held
+		await physics_frame
+	main.test_throttle = 0.0
+	var fr_2c: Dictionary = main._frame_at(main.car_s)
+	var up_2c: Vector3 = main.car.global_transform.basis.y
+	var roll_2c: float = rad_to_deg(atan2(up_2c.dot(fr_2c["side"]), up_2c.dot(fr_2c["up"])))
+	var body_2c: float = rad_to_deg(main.car_body.rotation.z)
+	check(absf(body_2c) < 1.0 and absf(roll_2c) < 1.0,
+		"stage2b: cruise on the start straight is level (body %.2f deg, car-vs-frame %.2f deg, s=%.0f)" % [body_2c, roll_2c, main.car_s])
+	check(absf(rad_to_deg(float(main._frame_at(195.0)["bank"]))) < 1.0,
+		"stage2b: post-corner straight frame is flat (bank at s=195: %.2f deg)" % rad_to_deg(float(main._frame_at(195.0)["bank"])))
 
 	# Stage 3: drive, climb, hold the bank, cross the gap airborne.
 	main.test_throttle = 0.9
