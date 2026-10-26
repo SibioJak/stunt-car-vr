@@ -1,0 +1,16 @@
+# Godot 4
+game/.godot/
+*.uid
+
+# Export output
+game/builds/
+*.apk
+
+# Installed Android build template (regenerate: Project > Install
+# Android Build Template; ~200 MB of stock Godot template files)
+game/android/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
