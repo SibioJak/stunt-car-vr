@@ -9,6 +9,10 @@ extends SceneTree
 ## airborne -> on-demand drone lift -> dangle -> prep sequence ->
 ## boost credit up -> release over track -> driving resumes -> lean
 ## experiment changes grip at the bank.
+## Fix Pass 6 stages: 2e = driver-body seat spring (sink depth,
+## phase lag behind the car springs, ordering by impact, zero at
+## rest); 2f = 8 m road width + the engine/skid audio state
+## machine (pitch vs speed, skid vs slip/grip/air, teardown latch).
 ## NOT covered here (XR layer, reported UNVERIFIED, never passed
 ## silently): grab-wheel hand tracking, switch flipping by hand
 ## proximity, HMD lean reading, panel legibility in the headset.
@@ -59,6 +63,9 @@ func check_api_surface() -> void:
 		["XRServer", "get_tracker"], # main.gd: XRServer.get_tracker(&"head")
 		["XRPositionalTracker", "get_pose"], # main.gd: pose_tracker.get_pose(&"default")
 		["XRNode3D", "get_has_tracking_data"], # XRNode3D surface the controllers/camera rig conceptually relies on
+		["AudioStreamPlayer", "play"], # Fix Pass 6: engine_player.play() / skid_player.play()
+		["AudioStreamPlayer", "stop"], # Fix Pass 6: the teardown latch stops both players
+		["Time", "get_ticks_msec"], # Fix Pass 6: audio stall-watchdog heartbeat
 	]
 	for entry: Variant in methods:
 		var pair: Array = entry
@@ -80,6 +87,22 @@ func check_api_surface() -> void:
 		if String(prop2["name"]) == "pose":
 			node3d_has_pose = true
 	guard_check(node3d_has_pose, "XRNode3D.pose property exists in this engine")
+	# Fix Pass 6: AudioStreamWAV properties main.gd assigns by name
+	# when it generates the engine/skid streams (format, mix_rate,
+	# data, loop_mode, loop_begin, loop_end).
+	var wav_props: Array[String] = []
+	for prop3: Dictionary in ClassDB.class_get_property_list("AudioStreamWAV", true):
+		wav_props.append(String(prop3["name"]))
+	for pname: String in ["format", "mix_rate", "data", "loop_mode", "loop_begin", "loop_end"]:
+		guard_check(wav_props.has(pname),
+			"AudioStreamWAV.%s property exists in this engine" % pname)
+	# Fix Pass 6: the notification constants _notification switches
+	# on (audio teardown latch) - integer constants on Node in 4.7.
+	var node_consts: PackedStringArray = ClassDB.class_get_integer_constant_list("Node", true)
+	for cname: String in ["NOTIFICATION_APPLICATION_FOCUS_OUT", "NOTIFICATION_APPLICATION_FOCUS_IN",
+			"NOTIFICATION_WM_CLOSE_REQUEST", "NOTIFICATION_EXIT_TREE"]:
+		guard_check(node_consts.has(cname),
+			"Node.%s constant exists in this engine" % cname)
 
 
 func autopilot() -> void:
@@ -213,6 +236,51 @@ func _run() -> void:
 		"stage2c: compression orders by grade (rough %.3f m > calm %.3f m)" % [c_rough, c_calm])
 	await frames(10)
 
+	# Stage 2e (Fix Pass 6, Item 1): the driver-BODY seat spring.
+	# A second, softer spring under the viewpoint only: staged
+	# touchdowns through the production _land path must (a) dip the
+	# view beyond the car-spring trace (the sink IS that extra dip),
+	# (b) peak AFTER the car springs' peak compression - the phase
+	# lag is the whole effect, (c) order by impact, (d) return to
+	# ~zero at rest.
+	main.debug_warp_to_s(10.0)
+	main.speed = 0.0
+	main.test_throttle = 0.0
+	await frames(150) # settle from the warp: spring back to rest
+	check(absf(main.body_sink) < 0.002,
+		"stage2e: body spring is zero at rest (sink %.4f m)" % main.body_sink)
+	main.mode = main.MODE_AIR
+	main.air_vel = Vector3(0.0, -3.0, 0.0)
+	main._land(main._frame_at(main.car_s), 0.0, main.CLEARANCE)
+	var car_peak1: float = 0.0
+	var car_i1: int = -1
+	var sink_peak1: float = 0.0
+	var sink_i1: int = -1
+	for ib: int in 150:
+		await physics_frame
+		var cc1: float = (main.c_f + main.c_r) * 0.5
+		if cc1 > car_peak1:
+			car_peak1 = cc1
+			car_i1 = ib
+		if main.body_sink > sink_peak1:
+			sink_peak1 = main.body_sink
+			sink_i1 = ib
+	check(sink_peak1 > 0.006,
+		"stage2e: view sinks in the seat past the car-spring trace (peak sink %.3f m)" % sink_peak1)
+	check(sink_i1 > car_i1,
+		"stage2e: peak sink lands AFTER peak car compression (frame %d vs %d)" % [sink_i1, car_i1])
+	main.mode = main.MODE_AIR
+	main.air_vel = Vector3(0.0, -8.0, 0.0)
+	main._land(main._frame_at(main.car_s), 0.0, main.CLEARANCE)
+	var sink_peak2: float = 0.0
+	for ib2: int in 240:
+		await physics_frame
+		sink_peak2 = maxf(sink_peak2, main.body_sink)
+	check(sink_peak2 > sink_peak1 + 0.006,
+		"stage2e: sink depth orders by impact (rough %.3f m > calm %.3f m)" % [sink_peak2, sink_peak1])
+	check(absf(main.body_sink) < 0.003,
+		"stage2e: body spring settles back to ~zero (sink %.4f m)" % main.body_sink)
+
 	# Stage 2b (Fix Pass 3, Item 5): phantom-lean guard. On the start
 	# straight, at standstill and at cruise with ZERO steering input,
 	# the car's visual roll (body-roll visual AND car-vs-frame roll)
@@ -275,6 +343,56 @@ func _run() -> void:
 		"stage2d: hand 0.10 m from a dash button activates it (point measure)")
 	check(main._dash_ctl_near(btn_pos + Vector3(0.0, 0.20, 0.0)) == -1,
 		"stage2d: hand 0.20 m from a dash button activates nothing")
+
+	# Stage 2f (Fix Pass 6, Items 2 + 3): the 8 m road and the
+	# audio state machine. Sound QUALITY is not asserted anywhere
+	# here (headless cannot hear) - only that the channels track
+	# the model's state: engine pitch monotonic with speed, skid
+	# gain ~0 while gripping and while airborne, > 0 under forced
+	# slip, and the focus-out latch stops both players.
+	check(absf(main.HALF_WIDTH - 4.0) < 0.001,
+		"stage2f: road is 8 m wide (half width %.1f m)" % main.HALF_WIDTH)
+	main.debug_warp_to_s(10.0)
+	main.test_throttle = 0.0
+	main.speed = 6.0
+	await frames(50)
+	var pitch_lo: float = main.audio_engine_pitch()
+	main.speed = 26.0
+	await frames(50)
+	var pitch_hi: float = main.audio_engine_pitch()
+	check(pitch_hi > pitch_lo + 0.3,
+		"stage2f: engine pitch tracks speed (%.2f at ~6 m/s -> %.2f at ~26 m/s)" % [pitch_lo, pitch_hi])
+	check(main.audio_skid_gain() < 0.02,
+		"stage2f: skid silent while gripping on the straight (gain %.3f)" % main.audio_skid_gain())
+	# Forced slip: mid-bank at speed - the model's drift is large.
+	main.debug_warp_to_s(160.0)
+	main.speed = 24.0
+	main.test_throttle = 0.3
+	await frames(35, true)
+	check(main.audio_skid_gain() > 0.15,
+		"stage2f: skid sounds under forced slip at the bank (gain %.2f, slip %.2f)" % [main.audio_skid_gain(), main.slip_state])
+	main.test_throttle = 0.0
+	# Airborne: tires unload, the skid silences.
+	main.debug_stage_landing(232.0, 3.0, 12.0)
+	await frames(10)
+	check(main.mode == main.MODE_AIR and main.audio_skid_gain() < 0.05,
+		"stage2f: skid silent while airborne (gain %.3f)" % main.audio_skid_gain())
+	var landed2: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 300)
+	check(landed2, "stage2f: staged flight lands back into DRIVE")
+	# Teardown latch (the _notification focus-out path's function):
+	# latched = both players stopped; unlatch = engine resumes,
+	# but only because a race is live.
+	main._set_audio_latched(true)
+	await frames(3)
+	check(main.audio_latched and not main.engine_player.playing and not main.skid_player.playing,
+		"stage2f: focus-out latch silences both players")
+	main._set_audio_latched(false)
+	await frames(5)
+	check(not main.audio_latched and main.engine_player.playing,
+		"stage2f: focus-in unlatch resumes the engine in a live race")
+	main.debug_warp_to_s(10.0)
+	main.speed = 10.0
+	await frames(5)
 
 	# Stage 3: drive, climb, hold the bank, cross the gap airborne.
 	main.test_throttle = 0.9

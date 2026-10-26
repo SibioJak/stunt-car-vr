@@ -18,6 +18,12 @@ extends SceneTree
 ## the sightlines to a grid of text points (car meshes via segment vs
 ## global-AABB; the wheel rim/hub via a plane-crossing annulus test).
 ## Capture 5 is a close-up of the DIAG board for legibility.
+## Fix Pass 6 adds: capture 7 = the drone lift lines framed from
+## below during the diagonal dangle, paired with a plan-view
+## segment-intersection sweep over sampled hang states (the wires
+## must never cross - Item 4); capture 8 = the driver's view of
+## the WIDENED road on the climb (Item 2); and a body-spring sink
+## sample read at the staged touchdown (Item 1).
 
 var failures: int = 0
 var checks: int = 0
@@ -31,6 +37,24 @@ func check(cond: bool, stage: String) -> void:
 	else:
 		failures += 1
 		print("FAIL  ", stage)
+
+
+func _seg_cross_xz(a: Vector3, b: Vector3, c: Vector3, d: Vector3) -> bool:
+	# Proper plan-view (XZ) segment intersection, endpoints
+	# excluded with a small margin (adjacent lift lines bound a
+	# side of the lift quad - they must not cross mid-span).
+	var rx: float = b.x - a.x
+	var rz: float = b.z - a.z
+	var sx: float = d.x - c.x
+	var sz: float = d.z - c.z
+	var den: float = rx * sz - rz * sx
+	if absf(den) < 0.0000001:
+		return false
+	var qx: float = c.x - a.x
+	var qz: float = c.z - a.z
+	var t: float = (qx * sz - qz * sx) / den
+	var u: float = (qx * rz - qz * rx) / den
+	return t > 0.02 and t < 0.98 and u > 0.02 and u < 0.98
 
 
 func snap(cam: Camera3D, out_name: String) -> void:
@@ -313,6 +337,37 @@ func _run() -> void:
 	await snap(cam2, "lift_view.png")
 	cam2.queue_free()
 
+	# Fix Pass 6 (Item 4): the lift wires must never cross. Sweep
+	# the running dangle (the car is still hanging diagonally from
+	# the debug pose above, swinging and dipping) and test every
+	# pair of the 4 lift lines for a plan-view (XZ) intersection;
+	# then capture 7 frames the lines from BELOW - Chris's run-6
+	# viewpoint - so the pairing is visible, not just asserted.
+	var crossings: int = 0
+	var samples: int = 0
+	for iw: int in 240:
+		await physics_frame
+		if iw % 8 == 0:
+			samples += 1
+			var dc6: Array = main._drone_corners()
+			var cc6: Array = main._car_corners()
+			for pa: int in 4:
+				for pb: int in range(pa + 1, 4):
+					if _seg_cross_xz(dc6[pa], cc6[pa], dc6[pb], cc6[pb]):
+						crossings += 1
+	check(crossings == 0,
+		"no lift-wire crossings across %d sampled hang states (%d crossings)" % [samples, crossings])
+	var cam7 := Camera3D.new()
+	main.add_child(cam7)
+	var fr_w: Dictionary = main._frame_at(main.drop_target_s)
+	var car_pw: Vector3 = main.car.global_position
+	var drone_pw: Vector3 = main.drone.global_position
+	cam7.position = car_pw + (fr_w["side"] as Vector3) * 5.2 - Vector3.UP * 1.7 \
+		- (fr_w["tan"] as Vector3) * 3.0
+	cam7.look_at((car_pw + drone_pw) * 0.5 + Vector3.UP * 0.8, Vector3.UP)
+	await snap(cam7, "wires_view.png")
+	cam7.queue_free()
+
 	# Fix Pass 1 proofs: the ribbon must visibly exist.
 	check(main.get_node_or_null("TrackSkirt") != null, "ribbon box-section skirt mesh exists")
 
@@ -375,14 +430,26 @@ func _run() -> void:
 	# body, nose down: the visible bounce, caught in a frame.
 	main.debug_stage_landing(232.0, 1.3, 12.0)
 	var land_peak: float = 0.0
+	var land_sink: float = 0.0
 	var land_frames: int = 0
 	while land_frames < 240:
 		await physics_frame
 		land_peak = maxf(land_peak, (main.c_f + main.c_r) * 0.5)
+		land_sink = maxf(land_sink, main.body_sink)
 		if main.mode == main.MODE_DRIVE:
 			break
 		land_frames += 1
-	check(main.mode == main.MODE_DRIVE, "staged landing touches down into DRIVE")
+	var landed_ok: bool = main.mode == main.MODE_DRIVE
+	# The touchdown must also land in the DRIVER (Fix Pass 6, Item
+	# 1): keep sampling past the hit - the body spring peaks AFTER
+	# the car springs by design. (The mode is read at loop exit:
+	# this landing rebounds into a hop after touchdown.)
+	for il2: int in 40:
+		await physics_frame
+		land_sink = maxf(land_sink, main.body_sink)
+	check(land_sink > 0.004,
+		"driver body sinks at the staged touchdown (peak sink %.3f m)" % land_sink)
+	check(landed_ok, "staged landing touches down into DRIVE")
 	check(land_peak > main.SUSP_REST + 0.08,
 		"suspension travels at the staged touchdown (peak avg compression %.3f m)" % land_peak)
 	# Camera RIDES the car body (beside the front axle, tight lens):
@@ -399,6 +466,17 @@ func _run() -> void:
 		+ main.car.global_transform.basis.y * 0.2 + fwd6 * 0.8, Vector3.UP)
 	await snap(cam6, "landing_view.png")
 	cam6.queue_free()
+
+	# Capture 8 (Fix Pass 6, Item 2): the widened road from the
+	# driver's seat on the climb - 8 m of ribbon ahead, room to
+	# manoeuvre. Numerical width asserted in the smoke (stage 2f);
+	# here the frame itself is the evidence.
+	check(absf(main.HALF_WIDTH - 4.0) < 0.001,
+		"road is 8 m wide (half width %.1f m)" % main.HALF_WIDTH)
+	main.debug_warp_to_s(60.0)
+	for i8: int in 10:
+		await physics_frame
+	await snap(main.fallback_cam, "wide_road_view.png")
 
 	print("---")
 	if failures == 0:

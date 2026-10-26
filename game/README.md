@@ -237,6 +237,69 @@ the suspension reads as HEAVY, whether the bounce and the dangle's
 new precariousness land as feel rather than motion, and whether
 the amplified lean tilt registers without fighting his head.
 
+## Fix Pass 6 (after headset run 6: lean tilt trimmed to ×1.25 —
+## shipped ahead of this pass, commit db54be5 — suspension landed,
+## but the DRIVER's own weight was missing from the view, the road
+## felt narrow, there was no engine/skid sound, and the drone's
+## lift wires crossed)
+
+- **Driver-body seat spring.** Run 6: "when car hits road and
+  tires hit, player should feel like his view is also sinking
+  down within the seat… two different sensations at once — car
+  spring + body spring… that's the Star Wars effect." A second
+  spring now sits between the car's ViewSpring and the headset:
+  soft, laggy, driven by touchdown impulses (through the
+  production landing path), suspension-bottoming thumps, the
+  dangle's line-catch, and longitudinal load (acceleration
+  presses you in, braking tips you forward). Its signature is
+  phase: the car's springs peak first, the driver's sink peaks
+  after. Zero at rest; sink clamps at 55 mm so it can never feel
+  like the seat is falling away. Tuning constants: `BODY_K`,
+  `BODY_DAMP`, `BODY_MAX_SINK`, `BODY_IMPULSE_K`,
+  `BODY_MIN_IMPULSE`, `BODY_PITCH_K`, `BODY_CATCH_IMPULSE`.
+  Smoke stage 2e measures it (a calm touchdown sinks ~8 mm,
+  peaking ~10 frames after the car springs; a rough one drives
+  it to the clamp); the render proof reads 0.035 m of sink at
+  its staged touchdown.
+- **The road is 8 m wide.** Run 6: "Stunt Car Racer gave you
+  the sense the road was wide and massive, not a rollercoaster…
+  there was room to manoeuvre." `HALF_WIDTH` 2.3 → 4.0 m; the
+  ribbon, its supports, the off-line rule (2.15× half width)
+  and the vent all derive from it. New capture:
+  `tests/wide_road_view.png`.
+- **First audio: engine + skid, both synthesized in code** (no
+  audio assets). A harmonic loop whose playback rate is the rev
+  counter — speed first, throttle flare, boost lift, airborne
+  unload — and a noise loop whose gain follows the model's TRUE
+  lateral slip state (the curvature drift after the lean grip
+  modification), so it sounds exactly when the tires are losing
+  the argument and is silent while gripping or airborne. Levels
+  are conservative (engine −17 dB, skid peaks −13 dB). Teardown
+  discipline, per the standing rule: a latch stops both players
+  on application focus-out / window close / tree exit; a stall
+  watchdog cuts gains if the physics loop goes quiet; nothing
+  sounds before a race is live and nothing resumes except on a
+  genuine focus-in. NO new controls — the panel is unchanged.
+  Smoke stage 2f asserts the state machine (pitch 1.31 → 2.02
+  across ~6 → ~26 m/s; skid 0 gripping, 0.80 under forced bank
+  slip, ~0 airborne; the latch stops both players).
+- **Lift wires uncrossed.** Run-6 photo: "the wires are crossed."
+  Cause: the drone held world yaw 0 while the car hung yawed
+  with the track, so numbered corners paired across the quad.
+  During the hang the drone now holds its yaw aligned to the
+  car's heading (the track frame at the drop target; the car's
+  own heading in the dangle), corner i → corner i. Proven two
+  ways: a plan-view segment-intersection sweep over 30 sampled
+  hang states (0 crossings) and capture `tests/wires_view.png`
+  from below — four lines in a clean fan.
+
+UNVERIFIED (live feel and ALL sound — only headset run 7 proves
+these): whether the body sink reads as YOUR weight landing in
+two stages (car, then you); whether the wide road's manoeuvre
+room is real at the bank; and whether the engine and skid tell
+you what the tires are doing, at the right levels. Sound quality
+is Chris's ears' verdict alone.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:

@@ -4,7 +4,9 @@ extends Node3D
 ## Throwaway FEEL prototype (Godot 4.7 / OpenXR, Quest-native target).
 ## One ribbon track, one placeholder Odd Rod car, grab-wheel steering,
 ## Drop Start + drone recovery with cockpit prep while dangling, and the
-## lean-for-traction experiment. NO AUDIO. See design-spec.md items 1-16.
+## lean-for-traction experiment. See design-spec.md items 1-16.
+## Fix Pass 6 adds the project's first audio: synthesized engine + skid
+## as an information channel (see the AUDIO constants block).
 ##
 ## Driving is a custom kinematic path model (path distance s + lateral
 ## offset), Crammond-flavoured: rationed boost, slope gravity, banked
@@ -20,7 +22,12 @@ const MODE_DRIVE: int = 1
 const MODE_AIR: int = 2
 const MODE_DONE: int = 3
 
-const HALF_WIDTH: float = 2.3
+# Fix Pass 6 (Item 2): the road is 8 m wide. Chris, run 6: the
+# original "gave you the sense the road was wide and massive... there
+# was room to manoeuvre," and he needs the width to properly test
+# steering. Everything derived from HALF_WIDTH (surface, skirts,
+# edge strips, gantry, off-track and landing checks) follows.
+const HALF_WIDTH: float = 4.0
 const RIBBON_DEPTH: float = 0.45 # box-section depth so the ribbon reads edge-on
 const CLEARANCE: float = 0.35
 const HANG_LEN: float = 5.5
@@ -104,6 +111,42 @@ const DIP_SLACK_IMPULSE: float = -1.5 # dip impulse at/below this -> lines slack
 const ANCHOR_STABLE_FRAMES: int = 20
 const ANCHOR_STABLE_EPS: float = 0.01
 const ANCHOR_FALLBACK_FRAMES: int = 600
+# Fix Pass 6 (Item 1) - driver-BODY seat spring, the "Star Wars
+# effect". A second, independent spring layer for the driver's body
+# in the seat, stacked ABOVE the car's ViewSpring (car ->
+# SeatOffset -> ViewSpring -> BodySpring -> XROrigin). The car's
+# suspension moves the whole cockpit; this layer moves ONLY the
+# viewpoint rig inside it - on a touchdown the car stops on its
+# springs and then the driver's eyes keep sinking INTO the seat and
+# rebound a beat later. Two different sensations at once (Chris).
+# Character: SOFTER and LAGGIER than the car springs - lower natural
+# frequency (BODY_OMEGA ~1.6 Hz vs the car springs' ~2 Hz) and its
+# own damping - driven by EVENTS (touchdown impulse scaled by
+# impact, suspension bottoming, hard accel/brake body pitch, the
+# dangle's line-catch thump), never by the anchor. Zero at rest.
+const BODY_K: float = 100.0 # body spring rate (1/s^2) - softer than SUSP_K
+const BODY_DAMP: float = 5.2 # underdamped: sink, overshoot, settle late
+const BODY_MAX_SINK: float = 0.055 # depth cap, m (a few cm at a hard landing)
+const BODY_IMPULSE_K: float = 0.13 # sink velocity per m/s of touchdown impact
+const BODY_PITCH_K: float = 0.35 # body pitch per unit of sink travel
+const BODY_BRAKE_PITCH_K: float = 0.0016 # forward body pitch per m/s^2 of braking
+const BODY_ACCEL_SINK_K: float = 0.0022 # seat press per m/s^2 of longitudinal accel
+const BODY_CATCH_IMPULSE: float = 0.16 # line-catch thump into the seat, m/s
+const BODY_MIN_IMPULSE: float = 2.2 # impacts below this vy barely register
+# Fix Pass 6 (Item 3) - engine + skid audio, the project's first
+# audio. Synthesized sources only (generated in code, no assets);
+# audio is an INFORMATION channel: the engine note tracks
+# speed/load/boost (airborne = revs unload), the skid gain tracks
+# the model's TRUE tire slip state (the grip-modified cornering
+# drift) - silent while gripping, rising at the limit, silent while
+# airborne. Conservative fixed levels, no new user commands.
+const AUDIO_ENGINE_DB: float = -17.0 # engine level at full song
+const AUDIO_ENGINE_IDLE_DB: float = -23.0 # engine level at idle / hang
+const AUDIO_SKID_MAX_DB: float = -13.0 # skid level at full slip
+const AUDIO_SKID_FLOOR_DB: float = -34.0 # skid level at the onset of slip
+const AUDIO_SLIP_ONSET: float = 1.2 # |drift| (m/s) where tires start to sing
+const AUDIO_SLIP_SPAN: float = 3.8 # |drift| range from onset to full slip
+const AUDIO_STALL_MS: int = 600 # physics-tick gap that counts as a stall
 
 # --- track samples ---
 var t_pts: Array[Vector3] = []
@@ -212,6 +255,35 @@ var catch_from: Vector3 = Vector3.ZERO
 var orient_dir: Vector3 = Vector3.DOWN
 var orient_have: bool = false
 
+# Fix Pass 6 (Item 1) driver-body spring state: sink depth (positive
+# = sunk into the seat) and its velocity, integrated every physics
+# frame in _update_body_spring. body_node carries the offset in the
+# seat stack; body_node_fb mirrors it for the desktop fallback cam.
+var body_sink: float = 0.0
+var body_sink_v: float = 0.0
+var body_bottom_cool: float = 0.0 # cooldown between bottoming thumps
+var body_node: Node3D
+var body_node_fb: Node3D
+
+# Fix Pass 6 (Item 3) audio state. slip_state is the model's tire
+# slip (0 = gripping .. 1 = fully sliding), computed in
+# _update_drive from the grip-modified drift and consumed by the
+# skid gain - it is a physics output, not an input proxy.
+# Teardown discipline: audio_latched is set by application
+# focus-out / close request / scene-tree exit and STOPS both
+# players; it clears only on a genuine focus-in while a race is
+# live. audio_stalled is the watchdog state (physics ticks gone
+# quiet): gains are cut while it holds, physics resuming clears it.
+var slip_state: float = 0.0
+var race_started: bool = false
+var audio_latched: bool = false
+var audio_stalled: bool = false
+var audio_last_physics_ms: int = 0
+var audio_rpm: float = 0.8 # smoothed engine speed factor (pitch scale)
+var audio_skid_now: float = 0.0 # smoothed skid gain, 0..1
+var engine_player: AudioStreamPlayer
+var skid_player: AudioStreamPlayer
+
 # --- nodes ---
 var car: Node3D
 var car_body: Node3D
@@ -302,15 +374,31 @@ func _ready() -> void:
 	_build_car()
 	_build_drone()
 	_build_rig()
+	_build_audio()
 	start_race()
 	set_process(true)
 
 
+func _notification(what: int) -> void:
+	# Fix Pass 6 (Item 3) audio teardown discipline: the latch is
+	# set by application focus-out, by a close request, and by
+	# scene-tree exit; it clears ONLY on a genuine focus-in (and
+	# the audio update additionally requires a live race before
+	# anything sounds). Audio never resumes uninvited.
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT \
+			or what == NOTIFICATION_WM_CLOSE_REQUEST \
+			or what == NOTIFICATION_EXIT_TREE:
+		_set_audio_latched(true)
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		_set_audio_latched(false)
+
+
 func _build_rig() -> void:
-	# Rig stack: car -> seat_offset -> XROrigin3D -> camera/controllers.
-	# The seat offset carries the Fix Pass 2 anchor correction; the origin
-	# itself stays at zero so tracked poses pass through untouched (the
-	# lean experiment reads the camera local to the origin).
+	# Rig stack: car -> seat_offset -> ViewSpring -> BodySpring ->
+	# XROrigin3D -> camera/controllers. The seat offset carries the
+	# Fix Pass 2 anchor correction; the origin itself stays at zero
+	# so tracked poses pass through untouched (the lean experiment
+	# reads the camera local to the origin).
 	seat_offset = Node3D.new()
 	seat_offset.name = "SeatOffset"
 	car.add_child(seat_offset)
@@ -320,9 +408,16 @@ func _build_rig() -> void:
 	view_node = Node3D.new()
 	view_node.name = "ViewSpring"
 	seat_offset.add_child(view_node)
+	# Fix Pass 6: BodySpring sits ABOVE ViewSpring and moves ONLY
+	# the viewpoint rig (the driver's body in the seat) - the
+	# cockpit around it does not move. Zero at rest; never written
+	# by the anchor math.
+	body_node = Node3D.new()
+	body_node.name = "BodySpring"
+	view_node.add_child(body_node)
 	origin = XROrigin3D.new()
 	origin.name = "Origin"
-	view_node.add_child(origin)
+	body_node.add_child(origin)
 	xr_cam = XRCamera3D.new()
 	origin.add_child(xr_cam)
 	var xr_interface: XRInterface = XRServer.find_interface("OpenXR")
@@ -330,10 +425,16 @@ func _build_rig() -> void:
 		get_viewport().use_xr = true
 		xr_ok = true
 	else:
+		# The desktop fallback camera gets the same two spring
+		# layers: it is parented to a mirror BodySpring node in car
+		# space (its position stays EYE_ANCHOR at rest).
+		body_node_fb = Node3D.new()
+		body_node_fb.name = "BodySpringFB"
+		car.add_child(body_node_fb)
 		fallback_cam = Camera3D.new()
 		fallback_cam.position = EYE_ANCHOR
 		fallback_cam.name = "FallbackCam"
-		car.add_child(fallback_cam)
+		body_node_fb.add_child(fallback_cam)
 		fallback_cam.current = true
 	for hand: String in ["L", "R"]:
 		# Tracker binding per the Duel field census on this rig (Quest 3):
@@ -1380,6 +1481,10 @@ func start_race() -> void:
 	was_airborne = false
 	race_time = 0.0
 	finished_time = 0.0
+	race_started = true # Fix Pass 6: audio may start from here on
+	body_sink = 0.0
+	body_sink_v = 0.0
+	slip_state = 0.0
 	_reset_suspension()
 	_reset_dangle_feel()
 	drop_target_s = 2.0
@@ -1595,9 +1700,13 @@ func _physics_process(delta: float) -> void:
 			_update_air(delta)
 		MODE_DONE:
 			speed = move_toward(speed, 0.0, 8.0 * delta)
+	if mode != MODE_DRIVE:
+		slip_state = 0.0 # tires unloaded: no slip, no skid
 	_update_lean_reading()
 	_update_suspension(delta)
+	_update_body_spring(delta)
 	_refresh_car_visuals()
+	_update_audio(delta)
 	_update_drone_visual(delta)
 
 
@@ -1605,6 +1714,16 @@ func _process(_delta: float) -> void:
 	# rotor spin (visual only)
 	for r: MeshInstance3D in drone_rotors:
 		r.rotation.y += 28.0 * _delta
+	# Fix Pass 6 audio stall watchdog: if the physics loop has
+	# gone quiet (main loop stalled / app wedged), cut the gains
+	# so a looping buffer can never drone on unattended. Physics
+	# ticks clear the flag in _update_audio; a latched state is
+	# handled there too (players stopped, nothing to cut).
+	if race_started and not audio_latched and engine_player != null:
+		if Time.get_ticks_msec() - audio_last_physics_ms > AUDIO_STALL_MS:
+			audio_stalled = true
+			engine_player.volume_db = -60.0
+			skid_player.volume_db = -60.0
 
 
 func _update_drive(delta: float) -> void:
@@ -1643,6 +1762,11 @@ func _update_drive(delta: float) -> void:
 	var curv: float = float(fr["curv"])
 	grip_mult = _grip_for(curv)
 	var drift: float = curv * speed * speed * 0.22 / grip_mult
+	# Fix Pass 6: the tire slip state - how hard the tires are
+	# working laterally AFTER the grip modification (lean included):
+	# the sideways load the road imposes on the car. This is the
+	# skid audio's source and the model's honest "losing traction".
+	slip_state = clampf((absf(drift) - AUDIO_SLIP_ONSET) / AUDIO_SLIP_SPAN, 0.0, 1.0)
 	var target_lat_vel: float = steer * maxf(speed, 0.0) * 0.34 + drift
 	lat_vel = move_toward(lat_vel, target_lat_vel, 14.0 * delta)
 	car_lat += lat_vel * delta
@@ -1743,6 +1867,9 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	c_r = clampf(SUSP_REST + vy * 0.045 * 0.90, 0.0, SUSP_TRAVEL)
 	cv_f = vy * 0.35
 	cv_r = vy * 0.35
+	# Fix Pass 6: the same impact arrives in the DRIVER a beat
+	# later - an impulse into the body spring, scaled by impact.
+	_body_impulse(vy)
 	car_s = air_s_est
 	car_lat = lat
 	lat_vel = 0.0
@@ -1841,6 +1968,9 @@ func _catch_lines(fr: Dictionary) -> void:
 	pend_om_l = clampf(hang_vel.dot(fr["side"]) / (HANG_LEN * maxf(cos(pend_th_l), 0.3)), -2.0, 2.0)
 	catch_from = car.global_position
 	catch_t = 0.0
+	# Fix Pass 6: the catch thumps the DRIVER into the seat - a
+	# body-spring impulse as the lines take the car's weight.
+	body_sink_v += BODY_CATCH_IMPULSE
 
 
 func _step_pendulum(delta: float) -> void:
@@ -2050,13 +2180,217 @@ func _update_view_spring() -> void:
 	if view_node != null:
 		view_node.rotation = Vector3(v_pitch, 0.0, v_roll)
 		view_node.position = Vector3(0.0, v_y, 0.0)
+	# Fix Pass 6: the BODY layer rides on top of the car-spring view
+	# motion - the eyes sink INTO the seat on the body spring's own
+	# phase (see _update_body_spring). The fallback camera, parented
+	# to its mirror BodySpring node, gets the identical offsets.
+	var b_pitch: float = body_sink * BODY_PITCH_K \
+		+ clampf(-long_accel_f * BODY_BRAKE_PITCH_K, 0.0, 0.016)
+	if body_node != null:
+		body_node.position = Vector3(0.0, -body_sink, 0.0)
+		body_node.rotation = Vector3(b_pitch, 0.0, 0.0)
+	if body_node_fb != null:
+		body_node_fb.position = Vector3(0.0, -body_sink, 0.0)
+		body_node_fb.rotation = Vector3(b_pitch, 0.0, 0.0)
 	if fallback_cam != null:
 		fallback_cam.rotation = Vector3(v_pitch, 0.0, v_roll)
 		fallback_cam.position = EYE_ANCHOR + Vector3(0.0, v_y, 0.0)
 
 
+func _body_impulse(impact_vy: float) -> void:
+	# Fix Pass 6: a touchdown lands in the driver a beat after it
+	# lands in the car - converted to a sink velocity here, scaled
+	# by impact past a floor (soft arrivals barely register).
+	var over: float = maxf(impact_vy - BODY_MIN_IMPULSE, 0.0)
+	body_sink_v += over * BODY_IMPULSE_K
+
+
+func _update_body_spring(delta: float) -> void:
+	# Fix Pass 6 (Item 1): the driver-body spring. A soft, laggy
+	# oscillator for the viewpoint's sink INTO the seat, integrated
+	# independently of the car springs - its natural frequency
+	# (~1.6 Hz) is lower and its phase later, so on a touchdown the
+	# car compresses FIRST and the driver's peak sink follows.
+	# Longitudinal load gives it a moving rest point: acceleration
+	# presses the body into the seat, braking unloads it forward
+	# (the pitch half of that lives in _update_view_spring).
+	var rest_off: float = 0.0
+	if mode == MODE_DRIVE:
+		rest_off = clampf(long_accel_f * BODY_ACCEL_SINK_K, -0.012, 0.016)
+	# Suspension bottoming thumps through the seat: an axle at full
+	# travel and still compressing kicks the body spring (cooldown
+	# so a sustained bottomed state kicks once, not per frame).
+	body_bottom_cool = maxf(body_bottom_cool - delta, 0.0)
+	if body_bottom_cool <= 0.0 and mode == MODE_DRIVE:
+		if (c_f >= SUSP_TRAVEL - 0.001 and cv_f > 0.4) \
+				or (c_r >= SUSP_TRAVEL - 0.001 and cv_r > 0.4):
+			body_sink_v += 0.10
+			body_bottom_cool = 0.4
+	var acc: float = (rest_off - body_sink) * BODY_K - BODY_DAMP * body_sink_v
+	body_sink_v += acc * delta
+	body_sink = clampf(body_sink + body_sink_v * delta, -0.02, BODY_MAX_SINK)
+
+
 func denti_clamp() -> int:
 	return mini(dent_level, 3)
+
+
+# ---------------------------------------------------------------- audio
+# Fix Pass 6 (Item 3): synthesized engine + skid. Both streams are
+# generated in code at build time (no audio assets): the engine is
+# a one-second harmonic loop whose PLAYBACK RATE (pitch_scale) is
+# the rev counter; the skid is a looped, seam-crossfaded noise
+# buffer whose gain follows slip_state. Teardown discipline is
+# implemented in _notification + _set_audio_latched + the stall
+# watchdog in _process: latched OFF on focus-out / close / exit,
+# gains cut while the physics loop is stalled, never started
+# before a race is live, never resumed uninvited.
+
+func _build_audio() -> void:
+	engine_player = AudioStreamPlayer.new()
+	engine_player.name = "EngineAudio"
+	engine_player.stream = _make_engine_stream()
+	engine_player.volume_db = AUDIO_ENGINE_IDLE_DB
+	add_child(engine_player)
+	skid_player = AudioStreamPlayer.new()
+	skid_player.name = "SkidAudio"
+	skid_player.stream = _make_skid_stream()
+	skid_player.volume_db = -60.0
+	add_child(skid_player)
+
+
+func _make_engine_stream() -> AudioStreamWAV:
+	# 1 s at 22050 Hz holding exactly 55 cycles of a 55 Hz
+	# fundamental - the loop wraps seamlessly, and pitch_scale
+	# moves the whole harmonic stack like an engine note.
+	var rate: int = 22050
+	var frames: int = rate
+	var data := PackedByteArray()
+	data.resize(frames * 2)
+	for i: int in frames:
+		var ph: float = TAU * 55.0 * float(i) / float(rate)
+		var v: float = sin(ph) + 0.55 * sin(ph * 2.0) + 0.30 * sin(ph * 3.0) \
+			+ 0.16 * sin(ph * 4.0) + 0.08 * sin(ph * 7.0)
+		v = clampf(v * 0.42, -0.85, 0.85)
+		var s16: int = int(round(v * 32767.0))
+		if s16 < 0:
+			s16 += 65536
+		data[i * 2] = s16 & 0xFF
+		data[i * 2 + 1] = (s16 >> 8) & 0xFF
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = rate
+	stream.data = data
+	stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	stream.loop_begin = 0
+	stream.loop_end = frames
+	return stream
+
+
+func _make_skid_stream() -> AudioStreamWAV:
+	# 1 s of white noise (deterministic seed - same buffer every
+	# build), one-pole low-passed toward tire hiss, with the last
+	# 30 ms crossfaded into the head so the loop seam disappears.
+	var rate: int = 22050
+	var frames: int = rate
+	var raw: Array[float] = []
+	raw.resize(frames)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 777
+	var lp: float = 0.0
+	for i: int in frames:
+		var wht: float = rng.randf_range(-1.0, 1.0)
+		lp = lerpf(lp, wht, 0.35)
+		raw[i] = lp * 1.4
+	var fade: int = 660
+	for i2: int in fade:
+		var t: float = float(i2) / float(fade)
+		raw[frames - fade + i2] = lerpf(raw[frames - fade + i2], raw[i2], t)
+	var data := PackedByteArray()
+	data.resize(frames * 2)
+	for j: int in frames:
+		var s16b: int = int(round(clampf(raw[j], -0.8, 0.8) * 32767.0))
+		if s16b < 0:
+			s16b += 65536
+		data[j * 2] = s16b & 0xFF
+		data[j * 2 + 1] = (s16b >> 8) & 0xFF
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = rate
+	stream.data = data
+	stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	stream.loop_begin = 0
+	stream.loop_end = frames
+	return stream
+
+
+func _set_audio_latched(on: bool) -> void:
+	# The single door for the teardown latch (called from
+	# _notification and the smoke). Latching STOPS both players -
+	# not just gains down - so nothing can sound while latched.
+	audio_latched = on
+	if on:
+		if engine_player != null and engine_player.playing:
+			engine_player.stop()
+		if skid_player != null and skid_player.playing:
+			skid_player.stop()
+
+
+func _update_audio(delta: float) -> void:
+	# Runs on the physics tick: records the tick for the stall
+	# watchdog (_process) and drives both channels from sim state.
+	audio_last_physics_ms = Time.get_ticks_msec()
+	audio_stalled = false
+	if engine_player == null:
+		return
+	var running: bool = race_started and not audio_latched
+	if not running:
+		if engine_player.playing:
+			engine_player.stop()
+		if skid_player.playing:
+			skid_player.stop()
+		return
+	if not engine_player.playing:
+		engine_player.play()
+	if not skid_player.playing:
+		skid_player.play()
+	# Engine: the rev target follows speed first; throttle flares
+	# it, boost lifts it further, and AIRBORNE unloads it - with
+	# the throttle open the revs climb free of the road.
+	var rpm_target: float = 0.8
+	var gain_target: float = AUDIO_ENGINE_IDLE_DB
+	if mode == MODE_DRIVE or mode == MODE_DONE:
+		rpm_target = 0.8 + clampf(speed / 34.0, 0.0, 1.0) * 1.85 \
+			+ in_throttle * 0.22
+		if in_boost and boost_meter > 0.0:
+			rpm_target += 0.35
+		gain_target = AUDIO_ENGINE_DB
+	elif mode == MODE_AIR:
+		rpm_target = 1.05 + in_throttle * 1.45
+		gain_target = AUDIO_ENGINE_DB
+	audio_rpm = lerpf(audio_rpm, rpm_target,
+		clampf(delta * (3.2 if rpm_target > audio_rpm else 1.6), 0.0, 1.0))
+	engine_player.pitch_scale = audio_rpm
+	engine_player.volume_db = gain_target
+	# Skid: fast attack (tires speak the moment they slide), fast
+	# release (unloaded tires go quiet). slip_state is already 0
+	# outside DRIVE, so the skid is silent airborne by construction.
+	var rate_k: float = 16.0 if slip_state > audio_skid_now else 22.0
+	audio_skid_now = lerpf(audio_skid_now, slip_state, clampf(delta * rate_k, 0.0, 1.0))
+	if audio_skid_now < 0.01:
+		skid_player.volume_db = -60.0
+	else:
+		skid_player.volume_db = lerpf(AUDIO_SKID_FLOOR_DB, AUDIO_SKID_MAX_DB, audio_skid_now)
+
+
+func audio_engine_pitch() -> float:
+	# Test accessor: the engine's current pitch factor (rev state).
+	return audio_rpm
+
+
+func audio_skid_gain() -> float:
+	# Test accessor: the skid's current gain, 0..1 of full slip.
+	return audio_skid_now
 
 
 func _update_drone_visual(_delta: float) -> void:
@@ -2069,7 +2403,26 @@ func _update_drone_visual(_delta: float) -> void:
 		# the load, not parked above it).
 		var tilt: float = 0.16 if hang_phase == "carry" else 0.03 * sin(pend_th_f)
 		tilt += dip_vy * 0.05
-		drone.rotation_degrees = Vector3(rad_to_deg(tilt), 0.0,
+		# Fix Pass 6 (Item 4): the drone is a LIFT RIG, not a free
+		# quad - during the hang it holds its YAW aligned to the
+		# car's heading, so lift-line i runs drone corner i ->
+		# car corner i and no pair of lines can cross (Chris's
+		# run-6 photo: the wires crossed into an X). The corner
+		# ORDER in _drone_corners/_car_corners matches (x-major,
+		# then z); with yaw shared, the plan-view segments form a
+		# quad's sides, never its diagonals. The yaw source is the
+		# track frame at the drop target until the car is close
+		# under the drone, then the car's own heading (its swing
+		# yaw stays within a few degrees of the frame's - the
+		# pendulum swings in the frame's axes).
+		var fwd_src: Vector3 = _frame_at(drop_target_s)["tan"]
+		if hang_phase == "dangle":
+			fwd_src = -car.global_transform.basis.z
+		var flat_fwd: Vector3 = Vector3(fwd_src.x, 0.0, fwd_src.z)
+		var hang_yaw: float = drone.rotation.y
+		if flat_fwd.length() > 0.05:
+			hang_yaw = atan2(-flat_fwd.normalized().x, -flat_fwd.normalized().z)
+		drone.rotation_degrees = Vector3(rad_to_deg(tilt), rad_to_deg(hang_yaw),
 			rad_to_deg(pend_th_l * 0.4) + dip_vy * 2.2)
 		var dc: Array[Vector3] = _drone_corners()
 		var cc: Array[Vector3] = _car_corners()
