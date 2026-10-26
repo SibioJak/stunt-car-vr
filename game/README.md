@@ -193,6 +193,50 @@ and whether both boards are readable at a glance in the headset.
 Headless geometry says the sightlines are clear and the text is
 in frame; his eyes are the verdict.
 
+## Fix Pass 5 (after headset run 5: the feel pass — DIAG readable
+## and activation better, but levers fired only at the tip, the
+## dangle was too tame, the chains felt taut, lean was invisible,
+## and the car had no mass: "i'm missing the feeling that i'm in
+## something heavy on big beefy shocks... i want to feel that
+## suspension when it hits the road")
+
+- **Suspension and mass (headline).** A per-axle spring model now
+  lives in the driving model: front/rear compression states chase
+  road-geometry targets (wheelbase-filtered road rise at each
+  axle), scaled by a crest load factor (v²·κ vs gravity — the road
+  falling away unloads the springs) plus accel/brake weight
+  transfer. Body heave/pitch derive from the spring attach heights;
+  the wheels visibly travel; the view rides the same state on a
+  ViewSpring node in the seat stack (anchor untouched, offsets
+  transient, grounded modes only): compression dive on touchdown
+  scaled by landing grade, squat/dip under power/brakes, small
+  continuous working motion. **Rebound air is a result**: both
+  axles at full droop still extending (or a full crest unload at
+  speed) puts the car genuinely airborne — the original got "a lot
+  of air just bouncing"; so does this, now.
+- **Lever grab-zone activation.** Switches are measured to the
+  lever's grab segment (base→cap) at the same 0.15 m; buttons keep
+  the point measure. The tip is no longer the only live spot.
+- **Precarious sway, compliant chains.** The dangle is two pendulum
+  axes on different lengths (5.5 / 3.9 m) — a diagonal resultant
+  that never settles single-plane — with light damping, irregular
+  drone dips (the pivot drops and corrects; effective gravity in
+  the pendulum follows the pivot), brief line-slack free-falls on
+  hard dips with a blended catch, and a lagged car attitude (the
+  car settles a beat behind the swing). Release still converts the
+  full swing state into the drop: timing it stays the skill, and a
+  centred release still lands on the ribbon (smoke stage 6).
+- **Lean view tilt.** The experiment's "no camera roll" rule is
+  revised at Chris's direction: while lean is ON, the view rolls
+  with the lean at LEAN_VIEW_GAIN 2.5× a 10° step (symmetric, zero
+  at centre); OFF restores the level view exactly. Grip effects
+  unchanged.
+
+UNVERIFIED (live feel — only headset run 6 proves these): whether
+the suspension reads as HEAVY, whether the bounce and the dangle's
+new precariousness land as feel rather than motion, and whether
+the amplified lean tilt registers without fighting his head.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:

@@ -284,6 +284,22 @@ func _run() -> void:
 	var lat_rc: float = rel_rc.dot(fr_rc["side"])
 	check(absf(lat_rc) < 0.05,
 		"recovery hang centred over the centreline (lat offset %.3f m)" % lat_rc)
+	# Fix Pass 5: the lift proof now shoots the car hanging at a
+	# DIAGONAL - both pendulum axes displaced, so the hang direction
+	# (and with it the car attitude, via the lagged orientation)
+	# carries fore-aft AND lateral tilt, like the multi-axis dangle
+	# actually flies. The centred assertion above stays as the
+	# Fix Pass 2 guard; this is the portrait of the new hang.
+	main.pend_th_f = 0.30
+	main.pend_th_l = 0.24
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	for i3b: int in 30:
+		await physics_frame
+	var up_hang: Vector3 = main.car.global_transform.basis.y
+	check(absf(up_hang.dot(fr_rc["tan"])) > 0.10 and absf(up_hang.dot(fr_rc["side"])) > 0.10,
+		"car hangs at a diagonal (attitude tilt: fwd %.2f, lat %.2f)" % [
+			up_hang.dot(fr_rc["tan"]), up_hang.dot(fr_rc["side"])])
 	# Shoot from behind/above along the ribbon so the centring reads.
 	var cam2 := Camera3D.new()
 	main.add_child(cam2)
@@ -351,6 +367,38 @@ func _run() -> void:
 	cam5.look_at(main.diag_root.global_position, diag_up)
 	await snap(cam5, "diag_closeup.png")
 	cam5.queue_free()
+
+	# Capture 6 (Fix Pass 5): the landing. Stage a ballistic drop
+	# onto the landing straight through the production air/land
+	# path, sample the suspension through the hit, and shoot the
+	# car at peak compression - front wheels travelled up into the
+	# body, nose down: the visible bounce, caught in a frame.
+	main.debug_stage_landing(232.0, 1.3, 12.0)
+	var land_peak: float = 0.0
+	var land_frames: int = 0
+	while land_frames < 240:
+		await physics_frame
+		land_peak = maxf(land_peak, (main.c_f + main.c_r) * 0.5)
+		if main.mode == main.MODE_DRIVE:
+			break
+		land_frames += 1
+	check(main.mode == main.MODE_DRIVE, "staged landing touches down into DRIVE")
+	check(land_peak > main.SUSP_REST + 0.08,
+		"suspension travels at the staged touchdown (peak avg compression %.3f m)" % land_peak)
+	# Camera RIDES the car body (beside the front axle, tight lens):
+	# a world-parked camera loses the car during snap's frames
+	# (measured twice: speck in v1, ribbon skirt in v2). Riding the
+	# body also frames the travel honestly - the wheels move
+	# relative to the body the camera is bolted to.
+	var cam6 := Camera3D.new()
+	main.car_body.add_child(cam6)
+	cam6.fov = 42.0
+	cam6.position = Vector3(3.0, 1.05, -0.9)
+	var fwd6: Vector3 = -main.car.global_transform.basis.z
+	cam6.look_at(main.car.global_position
+		+ main.car.global_transform.basis.y * 0.2 + fwd6 * 0.8, Vector3.UP)
+	await snap(cam6, "landing_view.png")
+	cam6.queue_free()
 
 	print("---")
 	if failures == 0:

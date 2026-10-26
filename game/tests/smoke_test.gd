@@ -126,15 +126,37 @@ func _run() -> void:
 	# Stage 1: Drop Start dangle - the pendulum actually swings the car.
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
 		"stage1: race opens dangling at Drop Start")
-	var side_axis: Vector3 = main._frame_at(2.0)["side"]
-	var p_min: float = 1e9
-	var p_max: float = -1e9
-	for i: int in 120:
+	# Fix Pass 5 re-derivation: the dangle is now TWO pendulum axes on
+	# different lengths (resultant path diagonal, never a clean
+	# single-plane rhythm), amplitude clearly above the old 0.74 m
+	# single-axis sway. Sample 8 s and require real travel on BOTH
+	# frame axes plus a large resultant offset from the hang centre.
+	# (The old check measured the side axis only over 2 s.)
+	var fr_s1: Dictionary = main._frame_at(2.0)
+	var side_axis: Vector3 = fr_s1["side"]
+	var tan_axis: Vector3 = fr_s1["tan"]
+	var centre1: Vector3 = fr_s1["pos"]
+	var s_min: float = 1e9
+	var s_max: float = -1e9
+	var t_min: float = 1e9
+	var t_max: float = -1e9
+	var r_max: float = 0.0
+	for i: int in 480:
 		await physics_frame
-		var d: float = main.car.global_position.dot(side_axis)
-		p_min = minf(p_min, d)
-		p_max = maxf(p_max, d)
-	check(p_max - p_min > 0.25, "stage1: pendulum sway moves the car (range %.2f m)" % (p_max - p_min))
+		var rel1: Vector3 = main.car.global_position - centre1
+		var d_side: float = rel1.dot(side_axis)
+		var d_tan: float = rel1.dot(tan_axis)
+		s_min = minf(s_min, d_side)
+		s_max = maxf(s_max, d_side)
+		t_min = minf(t_min, d_tan)
+		t_max = maxf(t_max, d_tan)
+		r_max = maxf(r_max, Vector2(d_side, d_tan).length())
+	check(s_max - s_min > 1.2,
+		"stage1: dangle swings on the lateral axis (range %.2f m, floor 1.2)" % (s_max - s_min))
+	check(t_max - t_min > 1.5,
+		"stage1: dangle swings on the fore-aft axis (range %.2f m, floor 1.5)" % (t_max - t_min))
+	check(r_max > 1.4,
+		"stage1: resultant hang offset is diagonal and large (max %.2f m, floor 1.4)" % r_max)
 
 	# Stage 1b (Fix Pass 2): at swing centre the Drop Start hang point is
 	# centred over the ribbon centreline. Zero the pendulum (test-only
@@ -156,6 +178,40 @@ func _run() -> void:
 	var landed: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(landed, "stage2: release drops the car and it lands into DRIVE")
 	check(main.last_touchdown != "-", "stage2: touchdown scored (%s)" % main.last_touchdown)
+
+	# Stage 2c (Fix Pass 5, Item 1): suspension travel + rebound air.
+	# The Drop Start landing's rebound should throw the car briefly
+	# off the road on the flat start straight - air from BOUNCING,
+	# no crest, no gap (Crammond: "you get a lot of air in original
+	# game just bouncing"). Watch for a second airborne interval
+	# (not gap-flagged) that genuinely rises above the road.
+	var hop_seen: bool = false
+	var hop_peak: float = 0.0
+	for ih: int in 300:
+		await physics_frame
+		if main.mode == main.MODE_AIR and not main.air_from_gap:
+			hop_seen = true
+			var fr_h: Dictionary = main._frame_at(main.air_s_est)
+			var h_rel: float = (main.car.global_position - fr_h["pos"]).dot(fr_h["up"])
+			hop_peak = maxf(hop_peak, h_rel - main.CLEARANCE)
+	check(hop_seen and hop_peak > 0.05,
+		"stage2c: rebound throws the car airborne after the drop landing (peak %.2f m above road)" % hop_peak)
+	# Touchdown compression orders by landing grade, via the
+	# production _land path: a calm arrival compresses less than a
+	# rough one, and both travel well past rest.
+	main.mode = main.MODE_AIR
+	main.air_vel = Vector3(0.0, -3.0, 0.0)
+	main._land(main._frame_at(main.car_s), 0.0, main.CLEARANCE)
+	var c_calm: float = (main.c_f + main.c_r) * 0.5
+	main.mode = main.MODE_AIR
+	main.air_vel = Vector3(0.0, -8.0, 0.0)
+	main._land(main._frame_at(main.car_s), 0.0, main.CLEARANCE)
+	var c_rough: float = (main.c_f + main.c_r) * 0.5
+	check(c_calm > main.SUSP_REST + 0.08,
+		"stage2c: suspension travels at touchdown (calm avg compression %.3f m vs rest %.2f)" % [c_calm, main.SUSP_REST])
+	check(c_rough > c_calm + 0.05,
+		"stage2c: compression orders by grade (rough %.3f m > calm %.3f m)" % [c_rough, c_calm])
+	await frames(10)
 
 	# Stage 2b (Fix Pass 3, Item 5): phantom-lean guard. On the start
 	# straight, at standstill and at cruise with ZERO steering input,
@@ -189,28 +245,43 @@ func _run() -> void:
 	check(absf(rad_to_deg(float(main._frame_at(195.0)["bank"]))) < 1.0,
 		"stage2b: post-corner straight frame is flat (bank at s=195: %.2f deg)" % rad_to_deg(float(main._frame_at(195.0)["bank"])))
 
-	# Stage 2d (Fix Pass 4): dash/prep activation is near-touch. The
-	# radius constant is 0.15 m (was 0.32 insurance in Fix Pass 3 -
-	# run 4 proved the grip channels live, and Chris reported switches
-	# firing "fairly far away" from his hand), the wheel grab radius
-	# is unchanged at 0.40, and the production proximity query
-	# (_dash_ctl_near, the single place it is computed) honours it:
-	# a hand origin 0.10 m from a control finds it, 0.20 m does not.
+	# Stage 2d (Fix Pass 4, re-derived Fix Pass 5): dash/prep
+	# activation is near-touch at 0.15 m, the wheel grab radius is
+	# unchanged at 0.40 - and since Fix Pass 5 the LEVERS are
+	# measured to their grab SEGMENT (base->cap), not to the tip
+	# point: Chris's hand arrives at the shaft. A hand 0.10 m off
+	# the MID-SHAFT activates the switch; a hand 0.20 m past the cap
+	# (0.20 m from the whole segment) activates nothing. Buttons
+	# keep the point measure (restart button: 0.10 yes, 0.20 no).
 	check(absf(main.DASH_CTL_RADIUS - 0.15) < 0.001,
 		"stage2d: dash activation radius is 0.15 m (got %.2f)" % main.DASH_CTL_RADIUS)
 	check(absf(main.WHEEL_GRAB_RADIUS - 0.40) < 0.001,
 		"stage2d: wheel grab radius unchanged at 0.40 m (got %.2f)" % main.WHEEL_GRAB_RADIUS)
-	var ctl0_pos: Vector3 = main.dash_ctl_nodes[0].global_position
-	check(main._dash_ctl_near(ctl0_pos + Vector3(0.0, 0.10, 0.0)) == 0,
-		"stage2d: hand 0.10 m from a dash control activates it (near-touch)")
-	check(main._dash_ctl_near(ctl0_pos + Vector3(0.0, 0.20, 0.0)) == -1,
-		"stage2d: hand 0.20 m from every dash control activates nothing")
+	var seg0: Array = main._dash_ctl_segment(0)
+	var seg_base: Vector3 = seg0[0]
+	var seg_tip: Vector3 = seg0[1]
+	var seg_dir: Vector3 = (seg_tip - seg_base).normalized()
+	var seg_mid: Vector3 = (seg_base + seg_tip) * 0.5
+	var seg_perp: Vector3 = seg_dir.cross(Vector3.UP)
+	if seg_perp.length() < 0.1:
+		seg_perp = seg_dir.cross(Vector3.RIGHT)
+	seg_perp = seg_perp.normalized()
+	check(main._dash_ctl_near(seg_mid + seg_perp * 0.10) == 0,
+		"stage2d: hand 0.10 m off the lever's mid-shaft activates it (grab segment)")
+	check(main._dash_ctl_near(seg_tip + seg_dir * 0.20) == -1,
+		"stage2d: hand 0.20 m past the cap (from the whole segment) activates nothing")
+	var btn_pos: Vector3 = main.dash_ctl_nodes[3].global_position
+	check(main._dash_ctl_near(btn_pos + Vector3(0.0, 0.10, 0.0)) == 3,
+		"stage2d: hand 0.10 m from a dash button activates it (point measure)")
+	check(main._dash_ctl_near(btn_pos + Vector3(0.0, 0.20, 0.0)) == -1,
+		"stage2d: hand 0.20 m from a dash button activates nothing")
 
 	# Stage 3: drive, climb, hold the bank, cross the gap airborne.
 	main.test_throttle = 0.9
 	var start_h: float = main.car.global_position.y
 	var max_h: float = start_h
 	var saw_gap_air: bool = false
+	var max_travel: float = 0.0
 	var t: int = 0
 	var crossed: bool = false
 	while t < 4000:
@@ -222,7 +293,14 @@ func _run() -> void:
 		await physics_frame
 		t += 1
 		max_h = maxf(max_h, main.car.global_position.y)
-		if main.mode == main.MODE_AIR and main.air_from_gap:
+		max_travel = maxf(max_travel, (main.c_f + main.c_r) * 0.5)
+		# Fix Pass 5 re-derivation: at boost speed the launch lip's
+		# crest unload + spring rebound can put the car airborne
+		# BEFORE the gap (bounce-air, air_from_gap == false), and the
+		# same flight can carry the gap - the old assertion demanded
+		# the scripted gap entry specifically. What the stage must
+		# prove is unchanged: the car is AIRBORNE over the gap span.
+		if main.mode == main.MODE_AIR and main.air_s_est > main.gap_s0 - 8.0 and main.air_s_est < main.gap_s1 + 2.0:
 			saw_gap_air = true
 		if main.car_s > main.gap_s1 + 6.0 and main.mode == main.MODE_DRIVE:
 			crossed = true
@@ -230,7 +308,9 @@ func _run() -> void:
 		if main.mode == main.MODE_HANG:
 			break # fell somewhere - fail below with diagnostics
 	check(max_h > start_h + 11.0, "stage3: car climbs (rose %.1f m)" % (max_h - start_h))
-	check(saw_gap_air, "stage3: car goes airborne over the gap")
+	check(saw_gap_air, "stage3: car is airborne over the gap (either mechanism)")
+	check(max_travel > main.SUSP_REST + 0.05,
+		"stage3: suspension works over the course (peak avg compression %.3f m)" % max_travel)
 	check(crossed, "stage3: gap crossed and landed, still driving (s=%.0f mode=%d)" % [main.car_s, main.mode])
 	main.test_throttle = 0.0
 	main.test_boost = false
@@ -285,6 +365,22 @@ func _run() -> void:
 	await frames(12, true)
 	check(main.grip_mult < 0.95,
 		"stage7: lean the wrong way drops grip (x%.2f)" % main.grip_mult)
+	# Stage 7b (Fix Pass 5, Item 4): lean view-tilt amplification.
+	# With the experiment ON and a full lean, the ViewSpring node
+	# rolls by step x gain (10 deg x 2.5 = ~25 deg, sign opposed to
+	# the lean value: lean right tips the view right). With the
+	# experiment OFF the view roll is exactly zero - the original
+	# "no camera roll" behaviour is now the OFF state.
+	main.test_lean = -1.0
+	await frames(6, true)
+	var tilt_on: float = absf(main.view_node.rotation.z)
+	var tilt_expect: float = deg_to_rad(main.LEAN_TILT_STEP_DEG) * main.LEAN_VIEW_GAIN
+	check(tilt_on > tilt_expect * 0.75,
+		"stage7b: lean ON tilts the view (roll %.1f deg, expect ~%.1f)" % [rad_to_deg(tilt_on), rad_to_deg(tilt_expect)])
+	main._toggle_lean() # experiment OFF
+	await frames(6, true)
+	check(absf(main.view_node.rotation.z) < 0.01,
+		"stage7b: lean OFF leaves the view level (roll %.3f deg)" % rad_to_deg(main.view_node.rotation.z))
 	main.test_lean = -99.0
 
 	print("---")

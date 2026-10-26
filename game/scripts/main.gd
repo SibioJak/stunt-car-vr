@@ -52,6 +52,50 @@ const WHEEL_TILT_DEG: float = 68.0
 # tightening it would break rim grabs; the complaint named the levers.
 const WHEEL_GRAB_RADIUS: float = 0.40
 const DASH_CTL_RADIUS: float = 0.15
+# Fix Pass 5 (the feel pass) - suspension / mass model. Per-axle spring
+# states (front/rear compression in metres) chase geometry targets
+# derived from the road: how far the road surface at each axle sits
+# above/below the centre tangent plane (wheelbase filtering), scaled by
+# a crest load factor (the road falling away unloads the springs), plus
+# accel/brake weight transfer. Body heave/pitch are DERIVED from the
+# spring attach heights (attach = road rise - compression), so the
+# visible car, the wheel travel and the view all read the same state.
+# Rebound air is a result, not a script: when both axles reach full
+# droop still extending fast (or the crest load factor hits ~zero at
+# both axles), the car leaves the road ballistically.
+const SUSP_TRAVEL: float = 0.34 # full stroke, metres of compression
+const SUSP_REST: float = 0.10 # compression at rest under the car's weight
+const SUSP_K: float = 160.0 # spring rate toward target (1/s^2)
+const SUSP_DAMP: float = 4.6 # underdamped on purpose: it must overshoot
+const SUSP_TRANSFER_K: float = 0.0055 # compression shift per m/s^2 of long. accel
+const AXLE_F: float = 1.55 # front axle, metres ahead of car origin along s
+const AXLE_R: float = 1.45 # rear axle, metres behind
+const WHEELBASE: float = 3.0
+# Fix Pass 5 - suspension-driven view behaviour, applied on a dedicated
+# node in the seat stack (car -> SeatOffset -> ViewSpring -> XROrigin).
+# The anchor correction stays on SeatOffset and is never touched by
+# this; the view offsets are transient, zero at rest, and only exist
+# while grounded (DRIVE/AIR) - the hang has its own motion.
+const VIEW_PITCH_GAIN: float = 0.6
+const VIEW_HEAVE_GAIN: float = 0.35
+# Fix Pass 5 - lean view-tilt amplification (Chris, run 5: "i'm not
+# really getting a sense of leaning, the view would have to tilt
+# more"). This REVISES the experiment's original "input only, no
+# camera roll" rule at his direction: while the experiment is ON, the
+# view rolls LEAN_TILT_STEP_DEG per full lean times LEAN_VIEW_GAIN.
+const LEAN_VIEW_GAIN: float = 2.5
+const LEAN_TILT_STEP_DEG: float = 10.0
+# Fix Pass 5 - precarious dangle. Two pendulum axes on DIFFERENT
+# lengths (out of phase -> the resultant path is diagonal and never
+# settles into a single-plane rhythm), light damping, plus drone dips:
+# the pivot drops briefly and corrects; on a big dip the lines go
+# slack and the car free-falls a beat before they catch.
+const PEND_LEN_F: float = 5.5
+const PEND_LEN_L: float = 3.9
+const PEND_DAMP: float = 0.10
+const DIP_K: float = 30.0
+const DIP_DAMP: float = 6.5
+const DIP_SLACK_IMPULSE: float = -1.5 # dip impulse at/below this -> lines slack
 # Fix Pass 3: the seat anchor applies only on a STABLE tracked pose:
 # the camera's local position must move less than ANCHOR_STABLE_EPS
 # across ANCHOR_STABLE_FRAMES consecutive physics frames. The old code
@@ -67,6 +111,7 @@ var t_tan: Array[Vector3] = []
 var t_bank: Array[float] = []
 var t_curv: Array[float] = []
 var t_gap: Array[bool] = []
+var t_kv: Array[float] = [] # vertical curvature per sample (crest +)
 var track_len: float = 0.0
 var gap_s0: float = 0.0
 var gap_s1: float = 0.0
@@ -129,9 +174,43 @@ var test_brake: float = 0.0
 var test_boost: bool = false
 var test_release_queued: bool = false
 
-# suspension visual spring
-var susp_x: float = 0.0
-var susp_v: float = 0.0
+# Fix Pass 5 suspension state (per-axle spring model; see constants).
+# susp_x/susp_v are gone: compression lives in c_f/c_r now.
+var c_f: float = SUSP_REST
+var c_r: float = SUSP_REST
+var cv_f: float = 0.0
+var cv_r: float = 0.0
+var geom_f: float = 0.0 # road rise at the front axle rel. centre plane
+var geom_r: float = 0.0
+var load_f: float = 1.0 # crest load factors (1 = fully planted)
+var load_r: float = 1.0
+var pitch_extra: float = 0.0 # body pitch from spring attach heights, rad
+var heave_off: float = 0.0 # body height offset from springs, m
+var long_accel_f: float = 0.0 # filtered longitudinal accel, m/s^2
+var prev_speed: float = 0.0
+var bounce_pending: bool = false # suspension asked to go airborne
+var bounce_vy: float = 0.0
+var susp_peak_c: float = SUSP_REST # recent peak avg compression (decays)
+var wheel_mis: Array[MeshInstance3D] = []
+var wheel_axle: Array[int] = [] # 0 = front, 1 = rear, parallel to wheel_mis
+var view_node: Node3D # seat-stack node carrying suspension view motion
+
+# Fix Pass 5 dangle state: drone dips, line slack, catch blend, and a
+# lagged orientation direction (compliance - the car settles a beat
+# behind the swing instead of being rigidly framed to the pivot).
+var pivot_pos: Vector3 = Vector3.ZERO # effective hang pivot (anchor + dip)
+var dip_y: float = 0.0
+var dip_vy: float = 0.0
+var dip_accel: float = 0.0
+var dip_timer: float = 2.0
+var dip_seed: int = 0
+var slack_t: float = 0.0
+var hang_pos: Vector3 = Vector3.ZERO # car position while lines are slack
+var hang_vel: Vector3 = Vector3.ZERO
+var catch_t: float = 1.0
+var catch_from: Vector3 = Vector3.ZERO
+var orient_dir: Vector3 = Vector3.DOWN
+var orient_have: bool = false
 
 # --- nodes ---
 var car: Node3D
@@ -235,9 +314,15 @@ func _build_rig() -> void:
 	seat_offset = Node3D.new()
 	seat_offset.name = "SeatOffset"
 	car.add_child(seat_offset)
+	# Fix Pass 5: ViewSpring sits between the anchor correction and
+	# the origin and carries ONLY transient suspension/lean view
+	# motion (zero at rest). The anchor math never sees it.
+	view_node = Node3D.new()
+	view_node.name = "ViewSpring"
+	seat_offset.add_child(view_node)
 	origin = XROrigin3D.new()
 	origin.name = "Origin"
-	seat_offset.add_child(origin)
+	view_node.add_child(origin)
 	xr_cam = XRCamera3D.new()
 	origin.add_child(xr_cam)
 	var xr_interface: XRInterface = XRServer.find_interface("OpenXR")
@@ -389,6 +474,16 @@ func _build_track() -> void:
 	_walk(90, 0.0, deg_to_rad(-13.7), 0.0, false) # descent
 	_walk(50, 0.0, 0.0, 0.0, false) # finish straight
 	track_len = float(t_pts.size() - 1)
+	# Fix Pass 5: per-sample vertical curvature of the road profile,
+	# kv = -d(elevation angle)/ds. Positive over a crest (the road
+	# falls away); the suspension's crest load factor reads it.
+	t_kv.clear()
+	for ki: int in t_tan.size():
+		var km: int = maxi(ki - 1, 0)
+		var kp: int = mini(ki + 1, t_tan.size() - 1)
+		var phi_m: float = asin(clampf(t_tan[km].y, -1.0, 1.0))
+		var phi_p: float = asin(clampf(t_tan[kp].y, -1.0, 1.0))
+		t_kv.append(-(phi_p - phi_m) / float(kp - km))
 
 	# --- ribbon mesh (box section: dark top + orange skirt sides/bottom,
 	# unshaded edge strips) and stilts, merged ---
@@ -548,6 +643,7 @@ func _frame_at(s: float) -> Dictionary:
 		"pos": pos, "tan": tanv, "side": side_b, "up": up_b,
 		"bank": bank, "curv": lerpf(t_curv[i0], t_curv[i1], fr),
 		"gap": t_gap[i0] or t_gap[i1],
+		"kv": lerpf(t_kv[i0], t_kv[i1], fr),
 	}
 
 
@@ -577,7 +673,10 @@ func _build_car() -> void:
 	_box(car_body, Vector3(0.08, 0.62, 0.08), Vector3(0.42, 1.05, 0.78), dark)
 	_box(car_body, Vector3(0.92, 0.08, 0.08), Vector3(0, 1.36, 0.78), dark)
 	_box(car_body, Vector3(1.15, 0.30, 0.85), Vector3(0, 0.52, 1.55), paint)
-	# Wheels (visual; front pair yaws with steering)
+	# Wheels (visual). Fix Pass 5: references are kept, tagged by axle,
+	# so the suspension model can move them through their travel
+	# relative to the body (the bounce you can SEE from the cockpit:
+	# the nose and front tires working against the fixed surround).
 	for wx: float in [-0.78, 0.78]:
 		for wz: float in [-1.55, 1.45]:
 			var w := MeshInstance3D.new()
@@ -591,6 +690,8 @@ func _build_car() -> void:
 			w.material_override = dark
 			w.name = "WheelF" if wz < 0.0 else "WheelR"
 			car_body.add_child(w)
+			wheel_mis.append(w)
+			wheel_axle.append(0 if wz < 0.0 else 1)
 	# Smoke puff (basic dent carnage placeholder)
 	smoke_mi = MeshInstance3D.new()
 	var sph := SphereMesh.new()
@@ -1220,9 +1321,34 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 		wheel_angle = move_toward(wheel_angle, 0.0, 1.6 * _delta)
 
 
+# Fix Pass 5 (Item 2): lever-shaped controls (the prep switches) are
+# measured to their GRAB SEGMENT - base of the shaft to the cap - not
+# to a point at the tip. Chris's hand arrives at the shaft; the old
+# point measure (at the pivot origin the coloured cap sits ~0.19 m
+# along the lever from) left the tip as the only reliably live spot.
+# Buttons keep the point measure.
+func _dash_ctl_segment(i: int) -> Array[Vector3]:
+	var node: Node3D = dash_ctl_nodes[i]
+	if dash_ctl_kinds[i].begins_with("switch"):
+		var xf: Transform3D = node.global_transform
+		return [xf * Vector3(0.0, -0.02, 0.0), xf * Vector3(0.0, 0.19, 0.0)]
+	var p: Vector3 = node.global_position
+	return [p, p]
+
+
+func _seg_point_dist(a: Vector3, b: Vector3, p: Vector3) -> float:
+	var ab: Vector3 = b - a
+	var len2: float = ab.length_squared()
+	if len2 < 1e-9:
+		return p.distance_to(a)
+	var t: float = clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
+
+
 func _dash_ctl_near(world_pos: Vector3) -> int:
 	for i: int in dash_ctl_nodes.size():
-		if world_pos.distance_to(dash_ctl_nodes[i].global_position) < DASH_CTL_RADIUS:
+		var seg: Array[Vector3] = _dash_ctl_segment(i)
+		if _seg_point_dist(seg[0], seg[1], world_pos) < DASH_CTL_RADIUS:
 			return i
 	return -1
 
@@ -1254,8 +1380,8 @@ func start_race() -> void:
 	was_airborne = false
 	race_time = 0.0
 	finished_time = 0.0
-	susp_x = 0.0
-	susp_v = 0.0
+	_reset_suspension()
+	_reset_dangle_feel()
 	drop_target_s = 2.0
 	_arm_anchor()
 	var fr: Dictionary = _frame_at(drop_target_s)
@@ -1264,13 +1390,43 @@ func start_race() -> void:
 	# section's slope/bank (the frame-up offset drifted sideways).
 	anchor_pos = fr["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR)
 	anchor_target = anchor_pos
-	pend_th_f = 0.30
-	pend_th_l = 0.12
+	pivot_pos = anchor_pos
+	# Fix Pass 5: bigger, out-of-phase starting swing (see PEND_LEN_*).
+	pend_th_f = 0.34
+	pend_th_l = 0.26
 	pend_om_f = 0.0
 	pend_om_l = 0.0
 	_prep_new_sequence()
 	_capture_lean_neutral()
 	_refresh_car_visuals()
+
+
+func _reset_suspension() -> void:
+	c_f = SUSP_REST
+	c_r = SUSP_REST
+	cv_f = 0.0
+	cv_r = 0.0
+	geom_f = 0.0
+	geom_r = 0.0
+	load_f = 1.0
+	load_r = 1.0
+	pitch_extra = 0.0
+	heave_off = 0.0
+	long_accel_f = 0.0
+	prev_speed = 0.0
+	bounce_pending = false
+	bounce_vy = 0.0
+	susp_peak_c = SUSP_REST
+
+
+func _reset_dangle_feel() -> void:
+	dip_y = 0.0
+	dip_vy = 0.0
+	dip_accel = 0.0
+	dip_timer = 2.0
+	slack_t = 0.0
+	catch_t = 1.0
+	orient_have = false
 
 
 func _prep_new_sequence() -> void:
@@ -1358,6 +1514,8 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 	# hang centred over the ribbon, not offset along a tilted frame up.
 	anchor_target = fr["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR)
 	anchor_pos = catch_pos + Vector3.UP * (HANG_LEN + 1.6)
+	pivot_pos = anchor_pos
+	_reset_dangle_feel()
 	# initial pendulum angles from the catch offset
 	var off: Vector3 = catch_pos - anchor_pos
 	pend_th_f = clampf(off.dot(fr["tan"]) / HANG_LEN, -0.6, 0.6)
@@ -1403,7 +1561,13 @@ func _do_release() -> void:
 	var r: Vector3 = fr["side"]
 	# pendulum tip velocity + a little forward push: you drop swinging
 	var tip: Vector3 = (f * (pend_om_f * cos(pend_th_f)) + r * (pend_om_l * cos(pend_th_l))) * HANG_LEN
+	# Fix Pass 5: the swing state at release IS the drop - both axes'
+	# tip velocity carries in (timing the release stays the skill),
+	# and a release mid-slack keeps the car's free-fall velocity.
 	air_vel = tip + f * 3.0
+	if slack_t > 0.0:
+		air_vel = hang_vel + f * 3.0
+	air_vel.y += dip_vy * 0.5
 	air_s_est = drop_target_s
 	air_time = 0.0
 	air_from_gap = false
@@ -1444,6 +1608,21 @@ func _process(_delta: float) -> void:
 
 
 func _update_drive(delta: float) -> void:
+	# Fix Pass 5: the suspension asked to leave the road (rebound
+	# droop or a full crest unload, decided in _update_suspension).
+	# The car's velocity at separation is the road velocity plus the
+	# rebound's upward throw; from here it is plain ballistics and
+	# the existing touchdown grading decides the landing.
+	if bounce_pending:
+		bounce_pending = false
+		var fr_b: Dictionary = _frame_at(car_s)
+		air_vel = fr_b["tan"] * speed + fr_b["up"] * bounce_vy
+		air_s_est = car_s
+		air_time = 0.0
+		air_from_gap = false
+		was_airborne = true
+		mode = MODE_AIR
+		return
 	var fr: Dictionary = _frame_at(car_s)
 	var tanv: Vector3 = fr["tan"]
 	# longitudinal
@@ -1508,7 +1687,10 @@ func _grip_for(curv: float) -> float:
 
 
 func _place_car_on_track(fr: Dictionary) -> void:
-	var pos: Vector3 = fr["pos"] + fr["side"] * car_lat + fr["up"] * (CLEARANCE + susp_x * 0.06)
+	# Fix Pass 5: the body rides on its springs - heave_off is the
+	# spring attach height (0 at rest, negative compressed, positive
+	# at droop), so the whole car settles/rises with the suspension.
+	var pos: Vector3 = fr["pos"] + fr["side"] * car_lat + fr["up"] * (CLEARANCE + heave_off)
 	var basis := Basis(fr["side"], fr["up"], -fr["tan"])
 	car.global_transform = Transform3D(basis, pos)
 
@@ -1550,7 +1732,17 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	if quality == "HARD":
 		dent_level += 1
 		smoke_on = true
-	susp_v = -vy * 0.55
+	# Fix Pass 5: the impact goes INTO the springs. Compression is set
+	# from impact speed (front biased - the nose arrives first, so it
+	# dives first), with compressing velocity so the spring dynamics
+	# continue honestly from the hit: deep smooth compression on a
+	# clean landing, clamped at full travel (bottoming out) on a hard
+	# one, then an underdamped rebound - which is where bounce-air
+	# comes from. The view dive reads this same state.
+	c_f = clampf(SUSP_REST + vy * 0.045 * 1.15, 0.0, SUSP_TRAVEL)
+	c_r = clampf(SUSP_REST + vy * 0.045 * 0.90, 0.0, SUSP_TRAVEL)
+	cv_f = vy * 0.35
+	cv_r = vy * 0.35
 	car_s = air_s_est
 	car_lat = lat
 	lat_vel = 0.0
@@ -1561,6 +1753,7 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 
 
 func _update_hang(delta: float) -> void:
+	_update_dip(delta)
 	match hang_phase:
 		"attach":
 			anchor_t += delta / 1.0
@@ -1569,7 +1762,7 @@ func _update_hang(delta: float) -> void:
 			var t: float = clampf(anchor_t, 0.0, 1.0)
 			var e: float = t * t * (3.0 - 2.0 * t)
 			car.global_position = hang_from_pos.lerp(target_car, e)
-			_orient_car_hang()
+			_orient_car_hang(delta, true)
 			if anchor_t >= 1.0:
 				hang_phase = "carry"
 				anchor_from = anchor_pos
@@ -1587,15 +1780,82 @@ func _update_hang(delta: float) -> void:
 			pass
 	_step_pendulum(delta)
 	var fr: Dictionary = _frame_at(drop_target_s)
-	car.global_position = _hang_car_pos(fr)
-	_orient_car_hang()
+	if hang_phase == "dangle" and slack_t > 0.0:
+		# Lines slack: the car is in free fall for a beat, pendulum
+		# frozen. When the lines catch, the pendulum state is
+		# re-derived from where the car actually is (below).
+		slack_t -= delta
+		hang_vel.y -= GRAV * delta
+		hang_pos += hang_vel * delta
+		car.global_position = hang_pos
+		if slack_t <= 0.0:
+			_catch_lines(fr)
+	elif hang_phase == "dangle" and catch_t < 1.0:
+		# Just caught: blend from the fallen position back onto the
+		# pendulum sphere so the catch reads as a settle, not a snap.
+		catch_t = minf(catch_t + delta / 0.18, 1.0)
+		var e2: float = catch_t * catch_t * (3.0 - 2.0 * catch_t)
+		car.global_position = catch_from.lerp(_hang_car_pos(fr), e2)
+	else:
+		car.global_position = _hang_car_pos(fr)
+	_orient_car_hang(delta, hang_phase == "attach")
+
+
+func _update_dip(delta: float) -> void:
+	# Drone dips (dangle only): irregular brief drops of the pivot with
+	# a spring correction - the drone is visibly working to hold the
+	# load. Deterministic hash scheduling (same dangle, same dips -
+	# the smoke depends on reproducible behaviour). A hard dip drops
+	# the pivot out from under the car faster than the car can
+	# follow: the lines go slack (see the dangle branch above).
+	if hang_phase == "dangle":
+		dip_timer -= delta
+		if dip_timer <= 0.0:
+			dip_seed += 1
+			var h1: float = sin(float(dip_seed) * 12.9898) * 43758.5453
+			var frac1: float = h1 - floor(h1)
+			var h2: float = sin(float(dip_seed) * 78.233) * 12543.21
+			var frac2: float = h2 - floor(h2)
+			dip_vy = -(0.9 + 1.1 * frac1)
+			dip_timer = 2.4 + 2.2 * frac2
+			if dip_vy <= DIP_SLACK_IMPULSE and slack_t <= 0.0 and catch_t >= 1.0:
+				slack_t = 0.15
+				hang_pos = car.global_position
+				var fr_s: Dictionary = _frame_at(drop_target_s)
+				hang_vel = (fr_s["tan"] * (pend_om_f * cos(pend_th_f))
+					+ fr_s["side"] * (pend_om_l * cos(pend_th_l))) * HANG_LEN
+				hang_vel.y += dip_vy
+	dip_accel = -DIP_K * dip_y - DIP_DAMP * dip_vy
+	dip_vy += dip_accel * delta
+	dip_y += dip_vy * delta
+	pivot_pos = anchor_pos + Vector3(0.0, dip_y, 0.0)
+
+
+func _catch_lines(fr: Dictionary) -> void:
+	# Re-derive the pendulum from the car's real offset/velocity so
+	# the swing continues from the fall, not from stale angles.
+	var dirv: Vector3 = (car.global_position - pivot_pos).normalized()
+	pend_th_f = asin(clampf(dirv.dot(fr["tan"]), -1.0, 1.0))
+	pend_th_l = asin(clampf(dirv.dot(fr["side"]), -1.0, 1.0))
+	pend_om_f = clampf(hang_vel.dot(fr["tan"]) / (HANG_LEN * maxf(cos(pend_th_f), 0.3)), -2.0, 2.0)
+	pend_om_l = clampf(hang_vel.dot(fr["side"]) / (HANG_LEN * maxf(cos(pend_th_l), 0.3)), -2.0, 2.0)
+	catch_from = car.global_position
+	catch_t = 0.0
 
 
 func _step_pendulum(delta: float) -> void:
-	# damped pendulum, spring form; anchor motion excites it a little
-	var k: float = GRAV / HANG_LEN
-	pend_om_f += (-k * sin(pend_th_f) - 0.30 * pend_om_f) * delta
-	pend_om_l += (-k * sin(pend_th_l) - 0.30 * pend_om_l) * delta
+	# Fix Pass 5: two axes on DIFFERENT pendulum lengths (PEND_LEN_F /
+	# PEND_LEN_L), so the resultant path is a diagonal Lissajous that
+	# never settles into a clean single-plane rhythm, with light
+	# damping so the swing persists. The pivot's own acceleration
+	# modulates effective gravity (drone dip = the swing goes soft;
+	# the correction = it firms up) - the compliance lives here and
+	# in the slack/catch path, not in a cosmetic wobble.
+	if slack_t > 0.0:
+		return
+	var g_eff: float = clampf(GRAV + dip_accel, 2.0, 22.0)
+	pend_om_f += (-(g_eff / PEND_LEN_F) * sin(pend_th_f) - PEND_DAMP * pend_om_f) * delta
+	pend_om_l += (-(g_eff / PEND_LEN_L) * sin(pend_th_l) - PEND_DAMP * pend_om_l) * delta
 	pend_th_f += pend_om_f * delta
 	pend_th_l += pend_om_l * delta
 
@@ -1603,12 +1863,21 @@ func _step_pendulum(delta: float) -> void:
 func _hang_car_pos(fr: Dictionary) -> Vector3:
 	var dirv: Vector3 = (fr["tan"] * sin(pend_th_f) + fr["side"] * sin(pend_th_l)
 		- Vector3.UP * (cos(pend_th_f) * cos(pend_th_l))).normalized()
-	return anchor_pos + dirv * HANG_LEN
+	return pivot_pos + dirv * HANG_LEN
 
 
-func _orient_car_hang() -> void:
+func _orient_car_hang(delta: float, snap: bool) -> void:
 	var fr: Dictionary = _frame_at(drop_target_s)
-	var down_dir: Vector3 = (car.global_position - anchor_pos).normalized()
+	var down_dir: Vector3 = (car.global_position - pivot_pos).normalized()
+	# Fix Pass 5 compliance: the car's attitude follows a LAGGED hang
+	# direction - it settles a beat behind the swing instead of being
+	# rigidly framed to the pivot (Chris: "chains feel too taut").
+	if snap or not orient_have:
+		orient_dir = down_dir
+		orient_have = true
+	else:
+		orient_dir = orient_dir.lerp(down_dir, clampf(7.0 * delta, 0.0, 1.0)).normalized()
+	down_dir = orient_dir
 	var y_axis: Vector3 = -down_dir
 	var facing: Vector3 = fr["tan"]
 	var z_raw: Vector3 = -facing - y_axis * ((-facing).dot(y_axis))
@@ -1632,11 +1901,86 @@ func _update_lean_reading() -> void:
 		lean_needle.position.x = lean_value * 0.16
 
 
+func _lean_effective() -> float:
+	# The lean the game acts on: test override wins (same pattern as
+	# _grip_for), else the live head/body reading.
+	if test_lean > -50.0:
+		return test_lean
+	return lean_value
+
+
+func _susp_integrate(target_f: float, target_r: float, delta: float) -> void:
+	cv_f += ((target_f - c_f) * SUSP_K - SUSP_DAMP * cv_f) * delta
+	cv_r += ((target_r - c_r) * SUSP_K - SUSP_DAMP * cv_r) * delta
+	c_f = clampf(c_f + cv_f * delta, 0.0, SUSP_TRAVEL)
+	c_r = clampf(c_r + cv_r * delta, 0.0, SUSP_TRAVEL)
+	# Body pose derives from the spring ATTACH heights (road rise
+	# minus compression at each axle): steady state on a steady slope
+	# is level with the frame (springs absorb the shape); transients -
+	# slope breaks, landings, transfer - pitch and settle the body.
+	var attach_f: float = geom_f - c_f
+	var attach_r: float = geom_r - c_r
+	pitch_extra = atan2(attach_f - attach_r, WHEELBASE)
+	heave_off = (attach_f + attach_r) * 0.5 + SUSP_REST
+
+
 func _update_suspension(delta: float) -> void:
-	# spring toward 0; kicks come from _land
-	susp_v += (-120.0 * susp_x - 11.0 * susp_v) * delta
-	susp_x += susp_v * delta
-	susp_x = clampf(susp_x, -1.0, 1.0)
+	# Fix Pass 5: per-axle spring model (see the constants block).
+	if mode == MODE_DRIVE:
+		var fr: Dictionary = _frame_at(car_s)
+		var fr_f: Dictionary = _frame_at(car_s + AXLE_F)
+		var fr_r: Dictionary = _frame_at(car_s - AXLE_R)
+		geom_f = (fr_f["pos"] - fr["pos"]).dot(fr["up"])
+		geom_r = (fr_r["pos"] - fr["pos"]).dot(fr["up"])
+		# Crest load: following the road over a crest needs downward
+		# acceleration v^2 * kv; what gravity cannot supply unloads
+		# the springs. Computed per axle from the road's own profile.
+		var cos_phi: float = maxf(sqrt(maxf(1.0 - fr["tan"].y * fr["tan"].y, 0.0)), 0.5)
+		load_f = clampf(1.0 - speed * speed * float(fr_f["kv"]) / (GRAV * cos_phi), 0.0, 1.25)
+		load_r = clampf(1.0 - speed * speed * float(fr_r["kv"]) / (GRAV * cos_phi), 0.0, 1.25)
+		# Weight transfer from filtered longitudinal acceleration:
+		# accelerating loads the rear (squat), braking loads the
+		# front (dive).
+		if delta > 0.0:
+			var la: float = clampf((speed - prev_speed) / delta, -12.0, 12.0)
+			long_accel_f = lerpf(long_accel_f, la, 0.25)
+		prev_speed = speed
+		var transfer: float = long_accel_f * SUSP_TRANSFER_K
+		var target_f: float = clampf((SUSP_REST + geom_f) * load_f - transfer, 0.0, SUSP_TRAVEL)
+		var target_r: float = clampf((SUSP_REST + geom_r) * load_r + transfer, 0.0, SUSP_TRAVEL)
+		_susp_integrate(target_f, target_r, delta)
+		susp_peak_c = maxf((c_f + c_r) * 0.5, susp_peak_c - 0.10 * delta)
+		# Rebound air, two honest routes in:
+		# (1) REBOUND: a real hit recently drove the springs deep
+		# (peak gate) and they have now thrown back to full droop
+		# still extending fast - stored spring energy leaves the
+		# road. The peak gate is what separates this from a crest
+		# the springs merely bleed down over: at the climb-top
+		# crest (load ~0.27 sustained) compressions sag to ~0 too,
+		# but from ~rest, with no stored energy - the wheels stay
+		# planted, as they should at 27% weight.
+		# (2) CREST: the unload factor is ~zero at both axles - the
+		# road is falling away faster than gravity can follow.
+		if susp_peak_c > 0.19 and (c_f + c_r) * 0.5 <= 0.010 and cv_f + cv_r < -0.6:
+			bounce_pending = true
+			bounce_vy = clampf(-(cv_f + cv_r) * 0.55, 0.5, 2.6)
+		elif load_f <= 0.03 and load_r <= 0.03 and speed > 8.0:
+			bounce_pending = true
+			bounce_vy = 0.35
+	elif mode == MODE_DONE:
+		geom_f = 0.0
+		geom_r = 0.0
+		load_f = 1.0
+		load_r = 1.0
+		_susp_integrate(SUSP_REST, SUSP_REST, delta)
+	else:
+		# AIR / HANG: no road contact - springs extend to full droop
+		# (the dangling car's wheels hang; the flying car's settle).
+		geom_f = 0.0
+		geom_r = 0.0
+		load_f = 1.0
+		load_r = 1.0
+		_susp_integrate(0.0, 0.0, delta)
 
 
 func _refresh_car_visuals() -> void:
@@ -1648,7 +1992,15 @@ func _refresh_car_visuals() -> void:
 	if car_body != null:
 		var steer: float = clampf(wheel_angle / PI, -1.0, 1.0)
 		car_body.rotation.z = -steer * 0.05 - lat_vel * 0.012
-		car_body.rotation.x = susp_x * 0.05
+		# Fix Pass 5: body pitch IS the suspension pitch (nose dives
+		# on landing, squats under power, works over slope breaks).
+		car_body.rotation.x = pitch_extra
+	# Fix Pass 5: wheel travel - each wheel rides its axle's spring:
+	# compressed = up into the body, drooped = hanging low.
+	for wi: int in wheel_mis.size():
+		var c_axle: float = c_f if wheel_axle[wi] == 0 else c_r
+		wheel_mis[wi].position.y = 0.34 + (c_axle - SUSP_REST)
+	_update_view_spring()
 	# dent carnage placeholder: nose crumples/tilts with dent level
 	if nose_mi != null:
 		nose_mi.rotation_degrees.z = float(dent_level) * 4.0
@@ -1672,6 +2024,37 @@ func _refresh_car_visuals() -> void:
 	_update_panel()
 
 
+func _update_view_spring() -> void:
+	# Fix Pass 5 (Items 1c + 4): the view rides the suspension, on the
+	# ViewSpring node between the anchor and the origin (the desktop
+	# fallback camera gets the same offsets). All offsets are
+	# transient and zero at rest; they exist only while grounded
+	# (DRIVE/AIR) - the hang has its own motion and the anchor framing
+	# stays clean there.
+	# - pitch follows the spring pitch (dive on landing, squat under
+	#   acceleration, dip under braking) at VIEW_PITCH_GAIN;
+	# - heave adds a fraction of the spring compression on top of the
+	#   body's own ride motion;
+	# - roll is the lean experiment's amplified tilt (Item 4): view
+	#   roll = -lean * step * gain (lean right tips the view right),
+	#   present only while the experiment is ON.
+	var active: bool = mode == MODE_DRIVE or mode == MODE_AIR
+	var v_pitch: float = 0.0
+	var v_y: float = 0.0
+	var v_roll: float = 0.0
+	if active:
+		v_pitch = pitch_extra * VIEW_PITCH_GAIN
+		v_y = -((c_f + c_r) * 0.5 - SUSP_REST) * VIEW_HEAVE_GAIN
+		if lean_on:
+			v_roll = -_lean_effective() * deg_to_rad(LEAN_TILT_STEP_DEG) * LEAN_VIEW_GAIN
+	if view_node != null:
+		view_node.rotation = Vector3(v_pitch, 0.0, v_roll)
+		view_node.position = Vector3(0.0, v_y, 0.0)
+	if fallback_cam != null:
+		fallback_cam.rotation = Vector3(v_pitch, 0.0, v_roll)
+		fallback_cam.position = EYE_ANCHOR + Vector3(0.0, v_y, 0.0)
+
+
 func denti_clamp() -> int:
 	return mini(dent_level, 3)
 
@@ -1680,10 +2063,14 @@ func _update_drone_visual(_delta: float) -> void:
 	if drone == null:
 		return
 	if mode == MODE_HANG:
-		drone.global_position = anchor_pos + Vector3.UP * 0.35
-		# tilt toward travel while carrying
+		drone.global_position = pivot_pos + Vector3.UP * 0.35
+		# tilt toward travel while carrying; Fix Pass 5: a dip tilts
+		# the drone as it drops and corrects (it is WORKING to hold
+		# the load, not parked above it).
 		var tilt: float = 0.16 if hang_phase == "carry" else 0.03 * sin(pend_th_f)
-		drone.rotation_degrees = Vector3(rad_to_deg(tilt), 0.0, rad_to_deg(pend_th_l * 0.4))
+		tilt += dip_vy * 0.05
+		drone.rotation_degrees = Vector3(rad_to_deg(tilt), 0.0,
+			rad_to_deg(pend_th_l * 0.4) + dip_vy * 2.2)
 		var dc: Array[Vector3] = _drone_corners()
 		var cc: Array[Vector3] = _car_corners()
 		for i: int in 4:
@@ -1712,3 +2099,19 @@ func debug_set_hang_dangle() -> void:
 	if mode == MODE_HANG:
 		hang_phase = "dangle"
 		anchor_pos = anchor_target
+		pivot_pos = anchor_pos
+
+
+func debug_stage_landing(s: float, height: float, fwd_speed: float) -> void:
+	# Fix Pass 5 render-proof staging: put the car ballistic above
+	# the ribbon at s, falling - the production _update_air/_land
+	# path (and its suspension impulse) does the rest.
+	var fr: Dictionary = _frame_at(s)
+	mode = MODE_AIR
+	air_from_gap = false
+	air_time = 0.0
+	air_s_est = s
+	air_vel = fr["tan"] * fwd_speed
+	car.global_transform = Transform3D(
+		Basis(fr["side"], fr["up"], -fr["tan"]),
+		fr["pos"] + fr["up"] * (CLEARANCE + height))
