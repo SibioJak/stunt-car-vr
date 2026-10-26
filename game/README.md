@@ -228,7 +228,7 @@ in frame; his eyes are the verdict.
   centred release still lands on the ribbon (smoke stage 6).
 - **Lean view tilt.** The experiment's "no camera roll" rule is
   revised at Chris's direction: while lean is ON, the view rolls
-  with the lean at LEAN_VIEW_GAIN 2.5× a 10° step (symmetric, zero
+  with the lean at LEAN_VIEW_GAIN 1.25× a 10° step (symmetric, zero
   at centre); OFF restores the level view exactly. Grip effects
   unchanged.
 

@@ -83,7 +83,7 @@ const VIEW_HEAVE_GAIN: float = 0.35
 # more"). This REVISES the experiment's original "input only, no
 # camera roll" rule at his direction: while the experiment is ON, the
 # view rolls LEAN_TILT_STEP_DEG per full lean times LEAN_VIEW_GAIN.
-const LEAN_VIEW_GAIN: float = 2.5
+const LEAN_VIEW_GAIN: float = 1.25
 const LEAN_TILT_STEP_DEG: float = 10.0
 # Fix Pass 5 - precarious dangle. Two pendulum axes on DIFFERENT
 # lengths (out of phase -> the resultant path is diagonal and never
