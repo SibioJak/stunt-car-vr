@@ -900,9 +900,26 @@ func _process_anchor_pending() -> void:
 	anchor_wait_frames += 1
 	# Wait for a live tracked pose so the correction is computed from the
 	# player's real seated position; give up gracefully after ~10 s.
-	if xr_cam.get_is_tracking() or anchor_wait_frames > 600:
+	if _hmd_has_tracking_data() or anchor_wait_frames > 600:
 		_apply_seat_anchor()
 		anchor_pending = false
+
+
+func _hmd_has_tracking_data() -> bool:
+	# XRCamera3D has NO tracking query in Godot 4.7: get_is_tracking does
+	# not exist anywhere, and get_has_tracking_data is XRNode3D-only -
+	# XRCamera3D is not an XRNode3D (Hotfix 1: the old call error-spammed
+	# every physics frame in XR mode and wedged the run). Ask the head
+	# tracker's pose directly instead; tests/api_guard in the smoke test
+	# asserts every XR API name used here against ClassDB.
+	var head_tracker: XRTracker = XRServer.get_tracker(&"head")
+	if head_tracker == null:
+		return false
+	var pose_tracker: XRPositionalTracker = head_tracker as XRPositionalTracker
+	if pose_tracker == null:
+		return false
+	var head_pose: XRPose = pose_tracker.get_pose(&"default")
+	return head_pose != null and head_pose.has_tracking_data
 
 
 func _apply_seat_anchor() -> void:

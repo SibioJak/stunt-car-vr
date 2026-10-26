@@ -12,9 +12,20 @@ extends SceneTree
 ## NOT covered here (XR layer, reported UNVERIFIED, never passed
 ## silently): grab-wheel hand tracking, switch flipping by hand
 ## proximity, HMD lean reading, panel legibility in the headset.
+##
+## Also runs the API GUARD (check_api_surface, reported separately
+## below): every XR API method/property the game code calls by name is
+## asserted against ClassDB in the running engine. Hotfix 1 exists
+## because main.gd called XRCamera3D.get_is_tracking() - a method that
+## does not exist in Godot 4.7 - on a line that only executes in XR
+## mode, so no headless check ever reached it and the invalid call
+## error-spammed the live headset run into a wedge. This guard makes
+## that class of bug fail loudly HERE, forever.
 
 var failures: int = 0
 var checks: int = 0
+var guard_failures: int = 0
+var guard_checks: int = 0
 var main: Node
 
 
@@ -25,6 +36,42 @@ func check(cond: bool, stage: String) -> void:
 	else:
 		failures += 1
 		print("FAIL  ", stage)
+
+
+func guard_check(cond: bool, api: String) -> void:
+	guard_checks += 1
+	if cond:
+		print("GUARD PASS  ", api)
+	else:
+		guard_failures += 1
+		print("GUARD FAIL  ", api)
+
+
+func check_api_surface() -> void:
+	# Each entry: the class that defines the API in Godot 4.7 and the
+	# method the game code calls by name (receiver expressions noted).
+	# ClassDB.class_has_method walks inheritance, so asserting on the
+	# defining class is the honest form of "this call can resolve".
+	var methods: Array = [
+		["XRServer", "find_interface"], # main.gd: XRServer.find_interface("OpenXR")
+		["XRInterface", "is_initialized"], # main.gd: xr_interface.is_initialized()
+		["XRController3D", "get_input"], # main.gd: ctrl.get_input(action)
+		["XRServer", "get_tracker"], # main.gd: XRServer.get_tracker(&"head")
+		["XRPositionalTracker", "get_pose"], # main.gd: pose_tracker.get_pose(&"default")
+		["XRNode3D", "get_has_tracking_data"], # XRNode3D surface the controllers/camera rig conceptually relies on
+	]
+	for entry: Variant in methods:
+		var pair: Array = entry
+		guard_check(ClassDB.class_has_method(pair[0], pair[1]),
+			"%s.%s exists in this engine" % [pair[0], pair[1]])
+	# XRPose.has_tracking_data is a PROPERTY, not a method (main.gd
+	# reads head_pose.has_tracking_data) - assert it via the property
+	# list instead.
+	var pose_has_prop: bool = false
+	for prop: Dictionary in ClassDB.class_get_property_list("XRPose", true):
+		if String(prop["name"]) == "has_tracking_data":
+			pose_has_prop = true
+	guard_check(pose_has_prop, "XRPose.has_tracking_data property exists in this engine")
 
 
 func autopilot() -> void:
@@ -61,6 +108,7 @@ func _init() -> void:
 
 
 func _run() -> void:
+	check_api_surface()
 	var ps: PackedScene = load("res://main.tscn")
 	main = ps.instantiate()
 	root.add_child(main)
@@ -184,8 +232,12 @@ func _run() -> void:
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; hand-proximity switch flips; HMD lean reading; in-headset panel legibility")
+	if guard_failures == 0:
+		print("API GUARD: ALL %d CHECKS PASSED" % guard_checks)
+	else:
+		print("API GUARD: %d of %d CHECKS FAILED" % [guard_failures, guard_checks])
 	if failures == 0:
 		print("SMOKE: ALL %d CHECKS PASSED" % checks)
 	else:
 		print("SMOKE: %d of %d CHECKS FAILED" % [failures, checks])
-	quit(1 if failures > 0 else 0)
+	quit(1 if failures > 0 or guard_failures > 0 else 0)

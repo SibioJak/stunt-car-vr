@@ -63,6 +63,14 @@ automatically (window 1280×800, mouse/keyboard as above).
 # logic smoke: drop start -> release -> touchdown scored -> climb ->
 # bank held -> gap crossed airborne -> drone lift on demand -> prep
 # sequence -> boost credit -> release -> driving -> lean grip A/B
+# The smoke run first executes the API GUARD (reported separately):
+# every XR API method/property the game code calls by name is asserted
+# against ClassDB in the running engine. Hotfix 1 added it after
+# main.gd called the nonexistent XRCamera3D.get_is_tracking() on a
+# line that only executes in XR mode, wedging the live headset run;
+# the HMD tracking check now goes through the head tracker's pose
+# (XRServer.get_tracker("head") -> XRPositionalTracker.get_pose ->
+# XRPose.has_tracking_data).
 Godot --headless --path . --script tests/smoke_test.gd
 
 # rendered-frame proof (needs GL; use Xvfb, NOT --headless):
