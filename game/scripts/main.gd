@@ -21,6 +21,7 @@ const MODE_AIR: int = 2
 const MODE_DONE: int = 3
 
 const HALF_WIDTH: float = 2.3
+const RIBBON_DEPTH: float = 0.45 # box-section depth so the ribbon reads edge-on
 const CLEARANCE: float = 0.35
 const HANG_LEN: float = 5.5
 const HANG_CLEAR: float = 1.2
@@ -226,7 +227,9 @@ func _build_environment() -> void:
 	env.ambient_light_energy = 0.7
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.55, 0.68, 0.88)
-	env.fog_density = 0.0016
+	# Fix Pass 1: fog cut back hard (was 0.0016) - distant ribbon segments
+	# washed out into the sky and the track read as invisible.
+	env.fog_density = 0.00015
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
@@ -305,10 +308,19 @@ func _build_track() -> void:
 	_walk(50, 0.0, 0.0, 0.0, false) # finish straight
 	track_len = float(t_pts.size() - 1)
 
-	# --- ribbon mesh (surface + bright edge strips) and stilts, merged ---
+	# --- ribbon mesh (box section: dark top + orange skirt sides/bottom,
+	# unshaded edge strips) and stilts, merged ---
+	# Fix Pass 1: the flat grey ribbon washed out against the sky and read
+	# edge-on as nothing but pylons. It is now a 0.45 m deep box section:
+	# near-black top against the light sky, saturated orange skirts so it
+	# reads as a solid object from the cockpit and from above, unshaded
+	# amber edge strips marking the driving line at distance.
 	var surf_pos := PackedVector3Array()
 	var surf_nrm := PackedVector3Array()
 	var surf_col := PackedColorArray()
+	var skirt_pos := PackedVector3Array()
+	var skirt_nrm := PackedVector3Array()
+	var skirt_col := PackedColorArray()
 	var edge_pos := PackedVector3Array()
 	var edge_nrm := PackedVector3Array()
 	var edge_col := PackedColorArray()
@@ -316,6 +328,10 @@ func _build_track() -> void:
 	var stilt_nrm := PackedVector3Array()
 	var stilt_col := PackedColorArray()
 	var hw: float = HALF_WIDTH
+	var surf_c := Color(0.07, 0.07, 0.09)
+	var skirt_c := Color(1.0, 0.5, 0.05)
+	var bot_c := Color(0.55, 0.27, 0.03)
+	var edge_c := Color(1.0, 0.72, 0.10)
 	for i: int in t_pts.size() - 1:
 		if t_gap[i] or t_gap[i + 1]:
 			continue
@@ -331,19 +347,24 @@ func _build_track() -> void:
 		var r0: Vector3 = p0 + s0 * hw
 		var l1: Vector3 = p1 - s1 * hw
 		var r1: Vector3 = p1 + s1 * hw
-		var base_col := Color(0.30, 0.30, 0.34)
-		if i > 50 and i <= 130:
-			base_col = Color(0.36, 0.32, 0.30) # climb tint
-		if absf(t_bank[i]) > 0.1:
-			base_col = Color(0.30, 0.34, 0.42) # bank tint
-		_add_quad(surf_pos, surf_nrm, surf_col, l0, r0, r1, l1, (u0 + u1) * 0.5, base_col)
-		# edge strips, raised 0.02
+		var bl0: Vector3 = l0 - u0 * RIBBON_DEPTH
+		var br0: Vector3 = r0 - u0 * RIBBON_DEPTH
+		var bl1: Vector3 = l1 - u1 * RIBBON_DEPTH
+		var br1: Vector3 = r1 - u1 * RIBBON_DEPTH
+		var up_avg: Vector3 = (u0 + u1) * 0.5
+		var side_avg: Vector3 = (s0 + s1) * 0.5
+		_add_quad(surf_pos, surf_nrm, surf_col, l0, r0, r1, l1, up_avg, surf_c)
+		# box-section sides (skirts) + underside
+		_add_quad(skirt_pos, skirt_nrm, skirt_col, l0, l1, bl1, bl0, -side_avg, skirt_c)
+		_add_quad(skirt_pos, skirt_nrm, skirt_col, r1, r0, br0, br1, side_avg, skirt_c)
+		_add_quad(skirt_pos, skirt_nrm, skirt_col, bl1, br1, br0, bl0, -up_avg, bot_c)
+		# edge strips, raised 0.02 (unshaded: they stay bright at distance)
 		_add_quad(edge_pos, edge_nrm, edge_col,
 			l0 + u0 * 0.02, l0 + s0 * 0.36 + u0 * 0.02, l1 + s1 * 0.36 + u1 * 0.02, l1 + u1 * 0.02,
-			(u0 + u1) * 0.5, Color(1.0, 0.75, 0.15))
+			up_avg, edge_c)
 		_add_quad(edge_pos, edge_nrm, edge_col,
 			r0 - s0 * 0.36 + u0 * 0.02, r0 + u0 * 0.02, r1 + u1 * 0.02, r1 - s1 * 0.36 + u1 * 0.02,
-			(u0 + u1) * 0.5, Color(1.0, 0.75, 0.15))
+			up_avg, edge_c)
 		# stilts every 10 m down to the ground
 		if i % 10 == 0:
 			var top: Vector3 = p0
@@ -351,7 +372,8 @@ func _build_track() -> void:
 			_add_box_verts(stilt_pos, stilt_nrm, stilt_col, (top + bot) * 0.5,
 				Vector3(0.55, top.y - bot.y, 0.55), Color(0.42, 0.42, 0.46))
 	_add_mesh(surf_pos, surf_nrm, surf_col, "TrackSurface")
-	_add_mesh(edge_pos, edge_nrm, edge_col, "TrackEdges")
+	_add_mesh(skirt_pos, skirt_nrm, skirt_col, "TrackSkirt")
+	_add_mesh(edge_pos, edge_nrm, edge_col, "TrackEdges", true)
 	_add_mesh(stilt_pos, stilt_nrm, stilt_col, "Stilts")
 	_build_gantry(2.0, Color(0.15, 0.6, 0.2), "START")
 	_build_gantry(track_len - 2.0, Color(0.7, 0.15, 0.15), "FINISH")
@@ -389,7 +411,7 @@ func _add_box_verts(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedCo
 			cc.append(col)
 
 
-func _add_mesh(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorArray, mname: String) -> void:
+func _add_mesh(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorArray, mname: String, unshaded: bool = false) -> void:
 	if pp.is_empty():
 		return
 	var arrays: Array = []
@@ -405,6 +427,8 @@ func _add_mesh(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorAr
 	var m := StandardMaterial3D.new()
 	m.vertex_color_use_as_albedo = true
 	m.roughness = 0.9
+	if unshaded:
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mi.material_override = m
 	add_child(mi)
 
@@ -506,19 +530,23 @@ func _build_cockpit() -> void:
 	# Dash slab
 	_box(car_body, Vector3(1.24, 0.30, 0.14), Vector3(0, 0.78, -0.62), _mat(Color(0.10, 0.10, 0.11)))
 	# Steering column + grab wheel (wood-rimmed three-spoke: this car's character)
+	# Fix Pass 1: wheel raised ~13.5 cm (hub 0.92 -> 1.055) and tipped a
+	# little more toward the driver (-18 -> -22 deg) - Chris's field note
+	# was "wheel is too low" for a comfortable seated grab. Column
+	# lengthened/re-aimed to meet the new hub.
 	var col := MeshInstance3D.new()
 	var colm := CylinderMesh.new()
 	colm.top_radius = 0.03
 	colm.bottom_radius = 0.03
-	colm.height = 0.30
+	colm.height = 0.38
 	col.mesh = colm
-	col.position = Vector3(0, 0.80, -0.50)
+	col.position = Vector3(0, 0.90, -0.54)
 	col.rotation_degrees = Vector3(90, 0, 0)
 	car_body.add_child(col)
 	wheel_node = Node3D.new()
 	wheel_node.name = "Wheel"
-	wheel_node.position = Vector3(0, 0.92, -0.38)
-	wheel_node.rotation_degrees = Vector3(-18, 0, 0)
+	wheel_node.position = Vector3(0, 1.055, -0.40)
+	wheel_node.rotation_degrees = Vector3(-22, 0, 0)
 	car_body.add_child(wheel_node)
 	var rim := MeshInstance3D.new()
 	var torus := TorusMesh.new()
@@ -576,7 +604,8 @@ func _build_cockpit() -> void:
 	lnt.add_child(ln_mi)
 	_register_dash_ctl(lnt, "lean")
 	# Lean indicator needle on the dash (experiment feedback)
-	lean_needle = _box(car_body, Vector3(0.03, 0.13, 0.02), Vector3(0, 1.02, -0.615), _mat_unshaded(Color(0.2, 0.9, 1.0)))
+	# (rides up with the raised wheel so it stays clear of the rim)
+	lean_needle = _box(car_body, Vector3(0.03, 0.13, 0.02), Vector3(0, 1.155, -0.615), _mat_unshaded(Color(0.2, 0.9, 1.0)))
 	# Big state label above the dash
 	state_label = Label3D.new()
 	state_label.position = Vector3(0, 1.52, -0.85)
@@ -857,7 +886,8 @@ func _capture_lean_neutral() -> void:
 
 # --- grab wheel ---
 func _wheel_hub_local() -> Vector3:
-	return Vector3(0, 0.92, -0.38)
+	# must match wheel_node.position in _build_cockpit (raised in Fix Pass 1)
+	return Vector3(0, 1.055, -0.40)
 
 
 func _hand_wheel_angle(hand: String) -> float:
@@ -887,7 +917,7 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 		elif grab_hand == hand:
 			var ang: float = _hand_wheel_angle(hand)
 			var d: float = wrapf(ang - grab_prev_ang, -PI, PI)
-			# wheel is tilted -18 deg about X; hand rotation about the
+			# wheel is tilted -22 deg about X; hand rotation about the
 			# car's Z still tracks the rim closely enough for a feel test.
 			wheel_angle = clampf(wheel_angle - d, -PI, PI)
 			grab_prev_ang = ang

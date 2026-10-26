@@ -91,6 +91,47 @@ func _run() -> void:
 	cam2.position = car_pos + Vector3(6.0, 2.6, 6.0)
 	cam2.look_at(car_pos + Vector3(0, 1.6, 0), Vector3.UP)
 	await snap(cam2, "lift_view.png")
+	cam2.queue_free()
+
+	# Fix Pass 1 proofs: the ribbon must visibly exist.
+	check(main.get_node_or_null("TrackSkirt") != null, "ribbon box-section skirt mesh exists")
+
+	# Capture 3: long sightline - offset shot from beside the climb,
+	# looking through the banked corner toward the lip: surface, edge
+	# strips and skirts legible at distance. (On-path vantages were tried
+	# first: on the climb the near ribbon fills the frame edge-on; on the
+	# descent the far ribbon converges to sub-pixel. The offset shot is
+	# the honest proof - it is also what a driver who just left the
+	# track would see.)
+	main.debug_warp_to_s(60.0)
+	for i4: int in 10:
+		await physics_frame
+	var fr_a: Dictionary = main._frame_at(90.0)
+	var fr_b: Dictionary = main._frame_at(168.0)
+	var pa: Vector3 = fr_a["pos"]
+	var sa: Vector3 = fr_a["side"]
+	var ua: Vector3 = fr_a["up"]
+	var pb: Vector3 = fr_b["pos"]
+	var ub: Vector3 = fr_b["up"]
+	var cam3 := Camera3D.new()
+	main.add_child(cam3)
+	cam3.position = pa + sa * 9.0 + ua * 3.0
+	cam3.look_at(pb + ub * 0.3, Vector3.UP)
+	await snap(cam3, "sightline_view.png")
+	cam3.queue_free()
+
+	# Capture 4: grazing side angle on the start straight - ribbon
+	# thickness and skirt band must read, not just the pylons.
+	var fr30: Dictionary = main._frame_at(30.0)
+	var p30: Vector3 = fr30["pos"]
+	var sd30: Vector3 = fr30["side"]
+	var up30: Vector3 = fr30["up"]
+	var cam4 := Camera3D.new()
+	main.add_child(cam4)
+	cam4.position = p30 + sd30 * 7.0 + up30 * 0.8
+	cam4.look_at(p30 - up30 * 0.2, Vector3.UP)
+	await snap(cam4, "ribbon_side_view.png")
+	cam4.queue_free()
 
 	print("---")
 	if failures == 0:

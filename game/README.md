@@ -67,7 +67,10 @@ Godot --headless --path . --script tests/smoke_test.gd
 
 # rendered-frame proof (needs GL; use Xvfb, NOT --headless):
 # writes tests/cockpit_view.png and tests/lift_view.png and asserts
-# the panel lists every command
+# the panel lists every command. Fix Pass 1 added two more captures:
+# tests/sightline_view.png (long offset sightline, climb -> bank -> lip)
+# and tests/ribbon_side_view.png (grazing side angle: ribbon thickness
+# and skirt) - the track must visibly exist, not read as pylons only.
 xvfb-run -a Godot --path . --script tests/render_proof.gd
 
 # frame discipline probe (nodes / draw calls / primitives)
