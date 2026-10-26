@@ -11,6 +11,13 @@ extends SceneTree
 ## shot along the ribbon so the (Fix Pass 2) centreline centring shows.
 ## Also asserts the panel lists every accepted command and the lines
 ## are actually visible during the lift.
+## Fix Pass 4: the panel is TWO boards (commands ahead-right, DIAG
+## low-left). From the anchor this proof checks both labels
+## geometrically: text fits its board, every text corner projects
+## inside the frame with >= 8% margin, and no car geometry crosses
+## the sightlines to a grid of text points (car meshes via segment vs
+## global-AABB; the wheel rim/hub via a plane-crossing annulus test).
+## Capture 5 is a close-up of the DIAG board for legibility.
 
 var failures: int = 0
 var checks: int = 0
@@ -42,6 +49,130 @@ func snap(cam: Camera3D, out_name: String) -> void:
 	check(distinct.size() > 25, "frame is a real scene, not a void (%d colors in %s)" % [distinct.size(), out_name])
 
 
+# --- Fix Pass 4 panel geometry helpers ---------------------------------
+# Occluders: every visible MeshInstance3D under the car body EXCEPT the
+# two boards themselves and the wheel assembly. The wheel is handled
+# analytically (its AABB is the full disc - a sightline through the
+# open centre would false-flag): a sightline counts as wheel-blocked
+# only if it crosses the wheel plane inside the rim tube band or the
+# hub disc.
+# The occlusion test transforms each sightline into every occluder's
+# OWN local space and tests it against the mesh's local AABB, which is
+# exact for this box-built car. World- or body-space AABBs inflate for
+# every rotated part (the dangling car's tilt balloons the 1.5 m
+# nose's AABB by ~0.2 m; a tilted switch lever's AABB is 3x its
+# thickness) and false-flag sightlines that pass centimetres clear of
+# the actual mesh - measured, not hypothetical: the nose and both
+# switch levers did exactly that during this pass's development.
+
+func _collect_occluders(n: Node, inv_arr: Array[Transform3D], box_arr: Array[AABB], to_body: Transform3D) -> void:
+	for child: Node in n.get_children():
+		if child == main.panel_root or child == main.diag_root or child == main.wheel_node:
+			continue
+		if child is MeshInstance3D:
+			var mi: MeshInstance3D = child as MeshInstance3D
+			if mi.is_visible_in_tree():
+				inv_arr.append((to_body * mi.global_transform).affine_inverse())
+				box_arr.append(mi.get_aabb())
+		_collect_occluders(child, inv_arr, box_arr, to_body)
+
+
+func _seg_hits_aabb(a: Vector3, b: Vector3, box: AABB) -> bool:
+	var av: Array[float] = [a.x, a.y, a.z]
+	var dv: Array[float] = [b.x - a.x, b.y - a.y, b.z - a.z]
+	var lo: Array[float] = [box.position.x, box.position.y, box.position.z]
+	var hi: Array[float] = [box.end.x, box.end.y, box.end.z]
+	var tmin: float = 0.02
+	var tmax: float = 0.98
+	for axis: int in 3:
+		if absf(dv[axis]) < 1e-9:
+			if av[axis] < lo[axis] or av[axis] > hi[axis]:
+				return false
+		else:
+			var t1: float = (lo[axis] - av[axis]) / dv[axis]
+			var t2: float = (hi[axis] - av[axis]) / dv[axis]
+			if t1 > t2:
+				var tmp: float = t1
+				t1 = t2
+				t2 = tmp
+			tmin = maxf(tmin, t1)
+			tmax = minf(tmax, t2)
+			if tmin > tmax:
+				return false
+	return true
+
+
+func _seg_hits_wheel(a: Vector3, b: Vector3, hub: Vector3, axis_n: Vector3) -> bool:
+	var d: Vector3 = b - a
+	var denom: float = d.dot(axis_n)
+	if absf(denom) < 1e-9:
+		return false
+	var t: float = (hub - a).dot(axis_n) / denom
+	if t < 0.02 or t > 0.98:
+		return false
+	var p: Vector3 = a + d * t
+	var rel: Vector3 = p - hub
+	var radial: float = (rel - axis_n * rel.dot(axis_n)).length()
+	return (radial >= 0.155 and radial <= 0.245) or radial <= 0.075
+
+
+func _label_view_check(label: Label3D, board: MeshInstance3D, cam: Camera3D, tag: String) -> void:
+	var ab: AABB = label.get_aabb()
+	var bsize: Vector3 = (board.mesh as BoxMesh).size
+	check(ab.size.x <= bsize.x + 0.02 and ab.size.y <= bsize.y + 0.02,
+		"%s: text (%.2f x %.2f m) fits its board (%.2f x %.2f m)" % [tag, ab.size.x, ab.size.y, bsize.x, bsize.y])
+	var vp: Vector2 = Vector2(root.size)
+	var eye: Vector3 = cam.global_position
+	var fwd: Vector3 = -cam.global_transform.basis.z
+	# Corners: all in front of the camera and inside the frame with an
+	# 8% margin on every side (the fallback frame is NARROWER than the
+	# Quest's, so passing here passes in the headset with more room).
+	var worst: float = 1e9
+	var all_front: bool = true
+	for ci: int in 8:
+		var corner_local: Vector3 = ab.get_endpoint(ci)
+		var corner_world: Vector3 = label.global_transform * corner_local
+		if (corner_world - eye).dot(fwd) <= 0.0:
+			all_front = false
+			continue
+		var sp: Vector2 = cam.unproject_position(corner_world)
+		worst = minf(worst, minf(minf(sp.x, vp.x - sp.x) / vp.x, minf(sp.y, vp.y - sp.y) / vp.y))
+	check(all_front, "%s: every text corner is in front of the anchored eye" % tag)
+	check(worst >= 0.08,
+		"%s: every text corner inside the frame with >= 8%% margin (worst %.1f%%)" % [tag, worst * 100.0])
+	# Occlusion: grid of points over the text face; no car mesh and
+	# not the wheel rim/hub may cross the sightline from the eye.
+	# Each sightline is tested in every occluder's own local space
+	# against its exact local AABB (see the helpers note); the wheel
+	# test runs in car-body space.
+	var to_body: Transform3D = main.car_body.global_transform.affine_inverse()
+	var occ_inv: Array[Transform3D] = []
+	var occ_box: Array[AABB] = []
+	_collect_occluders(main.car_body, occ_inv, occ_box, to_body)
+	var eye_b: Vector3 = to_body * eye
+	var hub_b: Vector3 = to_body * main.wheel_node.global_position
+	var axis_b: Vector3 = (to_body.basis * main.wheel_node.global_transform.basis.y).normalized()
+	var blocked: int = 0
+	var samples: int = 0
+	for ix: int in 7:
+		for iy: int in 9:
+			var lp: Vector3 = Vector3(
+				ab.position.x + ab.size.x * float(ix) / 6.0,
+				ab.position.y + ab.size.y * float(iy) / 8.0,
+				ab.position.z)
+			var wp: Vector3 = (to_body * label.global_transform) * lp
+			samples += 1
+			if _seg_hits_wheel(eye_b, wp, hub_b, axis_b):
+				blocked += 1
+				continue
+			for oi: int in occ_inv.size():
+				if _seg_hits_aabb(occ_inv[oi] * eye_b, occ_inv[oi] * wp, occ_box[oi]):
+					blocked += 1
+					break
+	check(blocked == 0,
+		"%s: no car geometry occludes the text (%d of %d sightlines blocked)" % [tag, blocked, samples])
+
+
 func _init() -> void:
 	_run()
 
@@ -56,7 +187,12 @@ func _run() -> void:
 		await physics_frame
 
 	# Panel completeness: every accepted command must be listed.
-	var ptxt: String = main.panel_label.text
+	# Fix Pass 4: the text lives on two labels - commands on
+	# panel_label, the DIAG block on diag_label. Force a DIAG refresh
+	# so both hold their full text before the keyword sweep.
+	main.diag_block = main._build_diag_block()
+	main._update_panel()
+	var ptxt: String = main.panel_label.text + "\n" + main.diag_label.text
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call drone",
 			"restart", "lean", "Recenter", "SPACE", "1/2/3", "W/S",
 			"DIAG", "ANCHOR", "CAMH", "FRC"]:
@@ -80,6 +216,14 @@ func _run() -> void:
 
 	# Capture 1: cockpit from the eye anchor itself, at the Drop Start.
 	await snap(main.fallback_cam, "cockpit_view.png")
+
+	# Fix Pass 4: both boards fully in frame and unobstructed from the
+	# anchored eye (the fallback camera sits exactly on the anchor).
+	_label_view_check(main.panel_label,
+		main.panel_root.get_node("PanelBoard") as MeshInstance3D, main.fallback_cam, "commands panel")
+	_label_view_check(main.diag_label,
+		main.diag_root.get_node("DiagBoard") as MeshInstance3D, main.fallback_cam, "DIAG board")
+	check(main.diag_label.text.contains("ANCHOR"), "DIAG board shows the live DIAG block")
 
 	# Fix Pass 3 (Item 4): the stood-up wheel must FACE the driver.
 	# Project the rim circle (in the tilt node's local XZ plane)
@@ -192,6 +336,21 @@ func _run() -> void:
 	cam4.look_at(p30 - up30 * 0.2, Vector3.UP)
 	await snap(cam4, "ribbon_side_view.png")
 	cam4.queue_free()
+
+	# Capture 5 (Fix Pass 4): DIAG board close-up - the legibility
+	# proof for the smaller type on the split board. The camera is a
+	# CHILD of the DIAG board (0.55 m in front of its face): at this
+	# point in the sequence the car is driving, and a world-parked
+	# camera was left behind by ~5 m during snap's frames - measured
+	# during this pass's development; the first close-up attempt
+	# rendered the car's rear from down the track.
+	var diag_up: Vector3 = main.diag_root.global_transform.basis.y
+	var cam5 := Camera3D.new()
+	main.diag_root.add_child(cam5)
+	cam5.position = Vector3(0.0, 0.03, 0.55)
+	cam5.look_at(main.diag_root.global_position, diag_up)
+	await snap(cam5, "diag_closeup.png")
+	cam5.queue_free()
 
 	print("---")
 	if failures == 0:

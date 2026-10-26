@@ -43,8 +43,15 @@ const WHEEL_HUB: Vector3 = Vector3(0.0, 0.88, -0.40)
 const WHEEL_TILT_DEG: float = 68.0
 # Fix Pass 3: grip proximity radii widened (live hands land where they
 # land; the origin-true controller reps are the other half of this).
+# Fix Pass 4: run 4 live-verified the grip channels, so the dash
+# insurance radius became the defect (Chris: switches "activated fairly
+# far away from my hand") - dash/prep activation is now near-touch at
+# 0.15 m, applied in the one place proximity is computed
+# (_dash_ctl_near). The wheel radius STAYS 0.40: it measures hand to
+# hub centre, and a hand ON the rim already reads ~0.2 m, so
+# tightening it would break rim grabs; the complaint named the levers.
 const WHEEL_GRAB_RADIUS: float = 0.40
-const DASH_CTL_RADIUS: float = 0.32
+const DASH_CTL_RADIUS: float = 0.15
 # Fix Pass 3: the seat anchor applies only on a STABLE tracked pose:
 # the camera's local position must move less than ANCHOR_STABLE_EPS
 # across ANCHOR_STABLE_FRAMES consecutive physics frames. The old code
@@ -143,6 +150,11 @@ var dash_ctl_kinds: Array[String] = []
 var state_label: Label3D
 var panel_label: Label3D
 var prep_label: Label3D
+# Fix Pass 4: the DIAG block lives on its own small board (diag_label
+# under diag_root); panel_label keeps the status + command list.
+var diag_label: Label3D
+var panel_root: Node3D
+var diag_root: Node3D
 
 var seat_offset: Node3D
 var anchor_pending: bool = false
@@ -705,30 +717,57 @@ func _build_cockpit() -> void:
 	prep_label.modulate = Color(0.6, 0.95, 1.0)
 	prep_label.outline_size = 6
 	car_body.add_child(prep_label)
-	# Controls panel placard (right side, angled toward the driver, on a
-	# dark backing board so it stays legible against the sky).
-	# STANDING RULE: this lists EVERY command the game accepts.
-	var panel_root := Node3D.new()
-	panel_root.position = Vector3(0.80, 1.08, -0.38)
-	panel_root.rotation_degrees = Vector3(-6, -38, 0)
+	# Controls panel placard + separate DIAG board (Fix Pass 4 rework).
+	# STANDING RULE: the panel lists EVERY command the game accepts.
+	# Run 4 verdict on the Fix Pass 3 layout: "Panel isn't readable" -
+	# the single 0.76x1.56 board at 0.9 m subtended ~80 deg vertically
+	# (clipped at the view edge) and its lower DIAG lines sat behind
+	# the car's right side pod from the anchored eye. Fix Pass 4 splits
+	# the boards and moves them onto clear sightlines:
+	# - Commands board (status + full command list, 20 lines, measured
+	#   text 0.74 x 1.01 m at font 30) sits ahead-right at ~1.8 m, yawed
+	#   toward the driver: every text corner projects inside the
+	#   central view with margin, and the sightlines clear the dash,
+	#   nose, wheel rim and switch knobs (proven geometrically in
+	#   tests/render_proof.gd - the knobs dictated the height: the
+	#   bottom text row's sightlines pass just over the right knob).
+	# - DIAG board (5 lines, smaller type) sits low-left above the
+	#   dash like an instrument cluster, clear of the wheel rim's left
+	#   arc and the dash slab.
+	panel_root = Node3D.new()
+	panel_root.name = "PanelRoot"
+	panel_root.position = Vector3(0.78, 1.53, -1.66)
+	panel_root.rotation_degrees = Vector3(-2, -24, 0)
 	car_body.add_child(panel_root)
-	# Fix Pass 3: the board grows (0.66x0.90 -> 0.76x1.56) and the
-	# label widens (540 -> 600 px) so the command list PLUS the DIAG
-	# block physically fit on it. Sized from MEASUREMENT, not
-	# estimates: the full label's rendered AABB is 1.40 m tall
-	# (Label3D.get_aabb), so the board carries it with margin.
-	_box(panel_root, Vector3(0.76, 1.56, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)))
+	_box(panel_root, Vector3(0.80, 1.24, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)), "PanelBoard")
 	panel_label = Label3D.new()
-	panel_label.position = Vector3(-0.345, 0.75, 0.02)
+	panel_label.position = Vector3(-0.368, 0.555, 0.02)
 	panel_label.font_size = 30
 	panel_label.pixel_size = 0.00115
-	panel_label.width = 600.0
+	panel_label.width = 640.0
 	panel_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel_label.modulate = Color(0.92, 0.95, 1.0)
 	panel_label.outline_size = 5
 	panel_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	panel_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	panel_root.add_child(panel_label)
+	diag_root = Node3D.new()
+	diag_root.name = "DiagRoot"
+	diag_root.position = Vector3(-0.53, 1.17, -0.85)
+	diag_root.rotation_degrees = Vector3(-10, 28, 0)
+	car_body.add_child(diag_root)
+	_box(diag_root, Vector3(0.68, 0.34, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)), "DiagBoard")
+	diag_label = Label3D.new()
+	diag_label.position = Vector3(-0.28, 0.125, 0.02)
+	diag_label.font_size = 26
+	diag_label.pixel_size = 0.00105
+	diag_label.width = 600.0
+	diag_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	diag_label.modulate = Color(0.92, 0.95, 1.0)
+	diag_label.outline_size = 5
+	diag_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	diag_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	diag_root.add_child(diag_label)
 	_update_panel()
 
 
@@ -760,26 +799,26 @@ func _panel_text() -> String:
 	lines.append("SPACE release, 1/2/3 flip FUEL/SPARK/BOOST")
 	lines.append("L call lift, T lean on/off, Q/E lean body")
 	lines.append("R restart race, C recenter view")
-	# Fix Pass 3: live DIAG block (cached string, refreshed ~5 Hz -
-	# see _build_diag_block). This is how a headset screenshot reports
-	# machine state instead of impressions.
-	if diag_block != "":
-		for dl: String in diag_block.split("\n"):
-			lines.append(dl)
+	# Fix Pass 4: the DIAG block no longer appends here - it renders
+	# on its own board (diag_label) via _update_panel.
 	return "\n".join(lines)
 
 
 func _update_panel() -> void:
 	if panel_label != null:
 		panel_label.text = _panel_text()
+	if diag_label != null:
+		diag_label.text = diag_block
 
 
 # Fix Pass 3 (Item 1): the DIAG block. Refreshed at ~5 Hz from
-# _physics_process into the cached diag_block string; _panel_text
-# appends it under the command list. Everything live-only reports its
-# RAW values here (anchor state + which apply path fired, HMD tracking,
-# camera height in car space, per-hand grip channels and hub distance,
-# wheel angle) so Chris's next screenshot is a bug report by itself.
+# _physics_process into the cached diag_block string; since Fix
+# Pass 4 it renders on its own board (diag_label, set in
+# _update_panel) instead of under the command list. Everything
+# live-only reports its RAW values here (anchor state + which apply
+# path fired, HMD tracking, camera height in car space, per-hand
+# grip channels and hub distance, wheel angle) so Chris's next
+# screenshot is a bug report by itself.
 func _build_diag_block() -> String:
 	var lines: Array[String] = []
 	lines.append("-- DIAG --")

@@ -189,6 +189,23 @@ func _run() -> void:
 	check(absf(rad_to_deg(float(main._frame_at(195.0)["bank"]))) < 1.0,
 		"stage2b: post-corner straight frame is flat (bank at s=195: %.2f deg)" % rad_to_deg(float(main._frame_at(195.0)["bank"])))
 
+	# Stage 2d (Fix Pass 4): dash/prep activation is near-touch. The
+	# radius constant is 0.15 m (was 0.32 insurance in Fix Pass 3 -
+	# run 4 proved the grip channels live, and Chris reported switches
+	# firing "fairly far away" from his hand), the wheel grab radius
+	# is unchanged at 0.40, and the production proximity query
+	# (_dash_ctl_near, the single place it is computed) honours it:
+	# a hand origin 0.10 m from a control finds it, 0.20 m does not.
+	check(absf(main.DASH_CTL_RADIUS - 0.15) < 0.001,
+		"stage2d: dash activation radius is 0.15 m (got %.2f)" % main.DASH_CTL_RADIUS)
+	check(absf(main.WHEEL_GRAB_RADIUS - 0.40) < 0.001,
+		"stage2d: wheel grab radius unchanged at 0.40 m (got %.2f)" % main.WHEEL_GRAB_RADIUS)
+	var ctl0_pos: Vector3 = main.dash_ctl_nodes[0].global_position
+	check(main._dash_ctl_near(ctl0_pos + Vector3(0.0, 0.10, 0.0)) == 0,
+		"stage2d: hand 0.10 m from a dash control activates it (near-touch)")
+	check(main._dash_ctl_near(ctl0_pos + Vector3(0.0, 0.20, 0.0)) == -1,
+		"stage2d: hand 0.20 m from every dash control activates nothing")
+
 	# Stage 3: drive, climb, hold the bank, cross the gap airborne.
 	main.test_throttle = 0.9
 	var start_h: float = main.car.global_position.y

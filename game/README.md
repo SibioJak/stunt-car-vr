@@ -79,6 +79,12 @@ Godot --headless --path . --script tests/smoke_test.gd
 # tests/sightline_view.png (long offset sightline, climb -> bank -> lip)
 # and tests/ribbon_side_view.png (grazing side angle: ribbon thickness
 # and skirt) - the track must visibly exist, not read as pylons only.
+# Fix Pass 4 added tests/diag_closeup.png (the split DIAG board shot
+# from a camera parented to the board) plus geometric panel checks
+# from the eye anchor: text fits its board, all text corners project
+# inside the frame with >= 8% margin, and no car mesh crosses the
+# sightlines to the text (segment vs each mesh's local AABB; the
+# wheel rim/hub via a plane-crossing annulus test).
 # Fix Pass 2: cockpit_view is shot from the driver eye anchor (fallback
 # camera) and the proof asserts hub-vs-anchor reach geometry plus the
 # recovery hang's centreline offset; the smoke asserts the same
@@ -147,6 +153,45 @@ WHILE DANGLING, wheel grab + 1:1 turn, the stood-up wheel plane,
 and no phantom lean on the start straight. Headless numbers:
 centreline offsets 0.000 m, start-straight roll 0.00°, wheel
 ellipse 0.86 — his view is the verdict.
+
+## Fix Pass 4 (after headset run 4: grip live-verified, anchor
+## APPLIED-STABLE in his photo — but switches fired from too far
+## away, and the enlarged panel was not readable in the headset)
+
+- **Near-touch dash activation.** Run 4 proved the grip channels
+  live, so the Fix Pass 3 insurance radius became the defect:
+  DASH_CTL_RADIUS 0.32 → **0.15 m**, applied in the one place
+  proximity is computed (`_dash_ctl_near` — switches, buttons and
+  takeover all use it). The wheel grab radius STAYS 0.40 m: it
+  measures hand-to-hub-centre and a hand ON the rim already reads
+  ~0.2 m. Smoke stage 2d asserts both constants and the production
+  query's behaviour (0.10 m activates, 0.20 m does not).
+- **Panel split + moved onto clear sightlines.** The single
+  0.76 × 1.56 m board is now two: the **commands board** (status +
+  the full command list, same font size as before) at
+  (0.78, 1.53, −1.66) ahead-right, yawed toward the driver; and a
+  small **DIAG board** (the same DIAG fields, slightly smaller
+  type) at (−0.53, 1.17, −0.85) low-left over the dash. Placement
+  was driven by the render proof's new geometric checks from the
+  eye anchor: both boards' text fits its board, every text corner
+  projects inside the frame (worst margin 10.5% commands / 12.3%
+  DIAG — the fallback frame is narrower than the Quest's, so the
+  headset has more room), and 0 of 63 sampled sightlines per board
+  are blocked by car geometry. The switch knobs dictated the
+  commands board's height (the bottom row's sightlines pass just
+  over the right knob), and the DIAG board's right column clears
+  the left knob the same way. Known transient cosmetic overlap,
+  unchanged in kind from earlier passes: the big state/prep HUD
+  labels (not car geometry) can cross the commands board's left
+  strip while they are displayed.
+  Smoke 23/23, API guard 8/8, render proof 46/46, all previous
+  driving numbers identical.
+
+UNVERIFIED (live feel — only headset run 5 proves these): whether
+0.15 m reads as touching the switch rather than reaching for it,
+and whether both boards are readable at a glance in the headset.
+Headless geometry says the sightlines are clear and the text is
+in frame; his eyes are the verdict.
 
 ## Quest export — status
 
