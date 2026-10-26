@@ -66,6 +66,7 @@ Geoff Crammond's *Stunt Car Racer* (1989) in VR: cockpit view, a ribbon track on
 
 ## Later backlog (post-Test 1 — NOT in any current build)
 
+- **Component cars + creator screen** (Chris, 2026-10-26: "if the cars were somehow made of components, players could mix and match their own design in a creator screen"). The evolution of item 12's car selection: instead of picking a finished car, the player assembles one from a kit — in the Odd Rods language: body shell, blower/engine stack, wheels, exhausts, wing, paint, and the steering wheel as a component (which fits item 13's wheel character). Cosmetic status: **just cosmetic** for selection and wheels (Chris). For COMPONENTS he is now exploring an amendment (same day, tentative): **cost-versus-design trade-offs** — a part may carry a mechanical effect, but every advantage is bought with a disadvantage elsewhere; no free lunch, no strictly-better build. His example: spikes on the wheels for a bit of extra damage (plays straight into sumo bumping + visual carnage), at the expense of something else (grip / mass / top speed are the natural currencies). UNSETTLED — leaning trade-off, not decided.
 - **Weather effects** (Chris, 2026-10-26, while Test 1 was building: "later: weather effects"). Interesting because weather here is physics, not wallpaper — wind would push the dangling car and the drone, rain would change traction. And in the set: **snow, "for the masochists"** (Chris) — the hardest tier, worst grip on a rail-less ribbon in the sky. Parked until Test 1 is judged.
 
 ---
