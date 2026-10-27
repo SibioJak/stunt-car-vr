@@ -2030,11 +2030,142 @@ func _run() -> void:
 		main.test_boost = main.car_s > main.gap_s0 - 130.0 and main.car_s < main.gap_s0
 		if main.car_s > main.gap_s1 + 30.0:
 			gap_ok20 = main.mode == main.MODE_DRIVE
-		if main.mode == main.MODE_HANG or main.mode == main.MODE_DONE:
+		if main.mode == main.MODE_AIR:
+			await wait_until(func() -> bool: return main.mode != main.MODE_AIR, 4000)
+		elif main.mode == main.MODE_HANG:
+			for idx: Variant in main.prep_order.duplicate():
+				grip_flip_switch(int(idx), "R")
+			main._do_release()
+		elif main.mode == main.MODE_DONE:
 			break
 	main.test_boost = false
 	check(gap_ok20,
 		"stage20: circuit gap crossed under autopilot and the lap continues")
+
+	# ---------- stage 21: Fix Pass 10 (Item 4) - the loop spur ----
+	# Fast run: pinned at 30 m/s the car takes the fork, loops
+	# the ring (frame orientation continuous, ~360 deg of total
+	# pitch), merges at the join and the lap continues.
+	var spur21: Dictionary = main.track_data["circuit"]["spur"]
+	var ring0_21: float = float(spur21["ring_s0"])
+	var ring1_21: float = float(spur21["ring_s1"])
+	main._set_track("circuit")
+	await frames(3)
+	main.start_race()
+	await frames(3)
+	main._do_release()
+	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 300)
+	var captured21: bool = false
+	var merged21: bool = false
+	var max_rot21: float = 0.0
+	var ring_rot21: float = 0.0
+	var prev_q21 := Quaternion.IDENTITY
+	var have_q21: bool = false
+	var drv_frames21: int = 0
+	var f21: int = 0
+	while f21 < 4500 and not merged21:
+		await physics_frame
+		f21 += 1
+		if main.mode == main.MODE_AIR:
+			await wait_until(func() -> bool: return main.mode != main.MODE_AIR, 4000)
+		elif main.mode == main.MODE_DRIVE:
+			drv_frames21 += 1
+			if drv_frames21 > 45:
+				main.debug_pin_speed(30.0)
+			if main.on_spur:
+				captured21 = true
+				var frq21: Dictionary = main._spur_frame_at(main.spur_s + clampf(main.speed * 0.55, 6.0, 22.0))
+				var tp21: Vector3 = frq21["pos"]
+				var cp21: Vector3 = main.car.global_position
+				var des21: float = atan2(-(tp21.x - cp21.x), -(tp21.z - cp21.z))
+				if absf(Vector3(frq21["tan"]).y) > 0.45:
+					des21 = main._spur_frame_yaw(main._spur_frame_at(main.spur_s))
+				main.wheel_angle = clampf(-wrapf(des21 - main.car_heading, -PI, PI) * 1.6, -1.0, 1.0) * PI
+			else:
+				var tgt21: float = 0.0
+				if main.car_s > main.SPUR_ENTRY_S:
+					var uu21: float = clampf((main.car_s - 120.0) / 85.0, 0.0, 1.0)
+					tgt21 = -3.4 * (uu21 * uu21 * (3.0 - 2.0 * uu21))
+				autopilot_steer(tgt21)
+			if have_q21:
+				var q21: Quaternion = main.car.global_transform.basis.get_rotation_quaternion()
+				var drot21: float = rad_to_deg(prev_q21.angle_to(q21))
+				if main.on_spur:
+					max_rot21 = maxf(max_rot21, drot21)
+					if main.spur_s > ring0_21 and main.spur_s < ring1_21:
+						ring_rot21 += drot21
+				prev_q21 = q21
+			else:
+				prev_q21 = main.car.global_transform.basis.get_rotation_quaternion()
+				have_q21 = true
+			if captured21 and not main.on_spur and main.car_s > main.SPUR_JOIN_S - 20.0:
+				merged21 = true
+		elif main.mode == main.MODE_HANG:
+			break
+	check(captured21, "stage21: the fork captures a car steered onto its line")
+	check(merged21, "stage21: fast run loops the ring and merges back (car_s %.0f)" % main.car_s)
+	check(max_rot21 < 3.5,
+		"stage21: orientation continuous on the spur (worst frame step %.2f deg)" % max_rot21)
+	check(ring_rot21 > 320.0 and ring_rot21 < 400.0,
+		"stage21: the ring turns the car through ~360 deg (%.0f)" % ring_rot21)
+	# Slow run: pinned 16 to the ring, then 10 m/s - below the
+	# top's sqrt(gR) ~= 10.4 - the load goes negative past
+	# vertical and the car detaches INSIDE the ring, falls,
+	# and the drone recovers it onto the MAIN track.
+	main._set_track("circuit")
+	await frames(3)
+	main.start_race()
+	await frames(3)
+	main._do_release()
+	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 300)
+	var air_in_ring21: bool = false
+	var was_spur21: bool = false
+	var last_spur_s21: float = 0.0
+	var drv_frames21b: int = 0
+	var f21b: int = 0
+	while f21b < 4500:
+		await physics_frame
+		f21b += 1
+		if main.mode == main.MODE_DRIVE:
+			drv_frames21b += 1
+			was_spur21 = main.on_spur
+			if main.on_spur:
+				last_spur_s21 = main.spur_s
+			if drv_frames21b > 45:
+				if main.on_spur and main.spur_s > ring0_21:
+					main.debug_pin_speed(10.0)
+				else:
+					main.debug_pin_speed(16.0)
+			if main.on_spur:
+				var frq21b: Dictionary = main._spur_frame_at(main.spur_s + clampf(main.speed * 0.55, 6.0, 22.0))
+				var tp21b: Vector3 = frq21b["pos"]
+				var cp21b: Vector3 = main.car.global_position
+				var des21b: float = atan2(-(tp21b.x - cp21b.x), -(tp21b.z - cp21b.z))
+				if absf(Vector3(frq21b["tan"]).y) > 0.45:
+					des21b = main._spur_frame_yaw(main._spur_frame_at(main.spur_s))
+				main.wheel_angle = clampf(-wrapf(des21b - main.car_heading, -PI, PI) * 1.6, -1.0, 1.0) * PI
+			else:
+				var tgt21b: float = 0.0
+				if main.car_s > main.SPUR_ENTRY_S:
+					var uu21b: float = clampf((main.car_s - 120.0) / 85.0, 0.0, 1.0)
+					tgt21b = -3.4 * (uu21b * uu21b * (3.0 - 2.0 * uu21b))
+				autopilot_steer(tgt21b)
+		elif main.mode == main.MODE_AIR:
+			# the detach counts only if the car left DRIVE from
+			# ON the spur, inside the ring span - a release
+			# rebound in the first frames must not fake it
+			if was_spur21 and last_spur_s21 >= ring0_21 and last_spur_s21 <= ring1_21 + 5.0:
+				air_in_ring21 = true
+			break
+		elif main.mode == main.MODE_HANG:
+			break
+	check(air_in_ring21 and main.mode == main.MODE_AIR,
+		"stage21: slow ring entry detaches inside the ring (spur_s %.0f of %.0f-%.0f)" % [last_spur_s21, ring0_21, ring1_21])
+	var hang21: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 6000)
+	check(hang21, "stage21: the fall ends in a drone recovery")
+	if hang21:
+		check(main._drop_piece_ok(main.drop_target_s) and main._drop_runup_ok(main.drop_target_s),
+			"stage21: recovery drop is a qualified MAIN-track piece (s %.0f)" % main.drop_target_s)
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")

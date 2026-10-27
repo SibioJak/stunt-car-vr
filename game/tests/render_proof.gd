@@ -648,6 +648,74 @@ func _run() -> void:
 	check(main.track_len > 3000.0,
 		"capture 16: the wide shot is the circuit (%.0f m)" % main.track_len)
 
+	# Captures 17-19 (Fix Pass 10, Item 4): the loop spur.
+	# 17: the driver's view at the fork - the spur ribbon
+	# peeling left off the home straight.
+	main.debug_warp_to_s(185.0)
+	for i: int in 3:
+		await physics_frame
+	await snap(main.fallback_cam, "spur_fork_view.png")
+	# 18: the ring from trackside - a full vertical loop of
+	# ribbon standing off the straight.
+	var spur18: Dictionary = main.track_data["circuit"]["spur"]
+	var ring0_18: float = float(spur18["ring_s0"])
+	var frb18: Dictionary = main._spur_frame_at(ring0_18)
+	var centre18: Vector3 = Vector3(frb18["pos"]) + Vector3.UP * main.SPUR_RING_R
+	var cam18 := Camera3D.new()
+	main.add_child(cam18)
+	cam18.position = centre18 + Vector3(frb18["side"]) * 40.0 + Vector3.UP * 4.0
+	cam18.look_at(centre18, Vector3.UP)
+	await snap(cam18, "spur_ring_view.png")
+	cam18.queue_free()
+	# 19: cockpit mid-ring. Drive the spur with the smoke's
+	# pursuit discipline (pinned 30, settle first) and snap
+	# from the seat near the ring's top.
+	main._set_track("circuit")
+	for i: int in 10:
+		await physics_frame
+	main.debug_warp_to_s(60.0)
+	var drv19: int = 0
+	var f19: int = 0
+	var snapped19: bool = false
+	while f19 < 3000 and not snapped19:
+		await physics_frame
+		f19 += 1
+		if main.mode == main.MODE_AIR:
+			var w19: int = 0
+			while main.mode == main.MODE_AIR and w19 < 4000:
+				await physics_frame
+				w19 += 1
+		elif main.mode == main.MODE_DRIVE:
+			drv19 += 1
+			if drv19 > 5:
+				main.debug_pin_speed(30.0)
+			if main.on_spur:
+				var la19: float = clampf(main.speed * 0.55, 6.0, 22.0)
+				var fra19: Dictionary = main._spur_frame_at(main.spur_s + la19)
+				var tp19: Vector3 = fra19["pos"]
+				var cp19: Vector3 = main.car.global_position
+				var des19: float = atan2(-(tp19.x - cp19.x), -(tp19.z - cp19.z))
+				if absf(Vector3(fra19["tan"]).y) > 0.45:
+					des19 = main._spur_frame_yaw(main._spur_frame_at(main.spur_s))
+				main.wheel_angle = clampf(-wrapf(des19 - main.car_heading, -PI, PI) * 1.6, -1.0, 1.0) * PI
+				if main.spur_s > ring0_18 + 30.0:
+					await snap(main.fallback_cam, "spur_cockpit_ring_view.png")
+					snapped19 = true
+			else:
+				var tgt19: float = 0.0
+				if main.car_s > main.SPUR_ENTRY_S:
+					var uu19: float = clampf((main.car_s - 120.0) / 85.0, 0.0, 1.0)
+					tgt19 = -3.4 * (uu19 * uu19 * (3.0 - 2.0 * uu19))
+				var la19b: float = clampf(maxf(main.speed, 0.0) * 0.55, 6.0, 22.0)
+				var frt19: Dictionary = main._frame_at(main.car_s + la19b)
+				var tp19b: Vector3 = Vector3(frt19["pos"]) + Vector3(frt19["side"]) * tgt19
+				var cp19b: Vector3 = main.car.global_position
+				var des19b: float = atan2(-(tp19b.x - cp19b.x), -(tp19b.z - cp19b.z))
+				main.wheel_angle = clampf(-wrapf(des19b - main.car_heading, -PI, PI) * 1.6, -1.0, 1.0) * PI
+		elif main.mode == main.MODE_HANG:
+			break
+	check(snapped19, "capture 19: cockpit snapped mid-ring (spur_s %.0f)" % main.spur_s)
+
 	print("---")
 	if failures == 0:
 		print("RENDER PROOF: ALL %d CHECKS PASSED" % checks)
