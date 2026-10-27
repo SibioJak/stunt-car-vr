@@ -108,6 +108,22 @@ const HALF_WIDTH: float = 6.0
 # the spot (crawl-speed manoeuvre comes from crawl-speed motion).
 const MAX_LOCK_RAD: float = 0.56 # front-wheel lock at full wheel, ~32 deg
 const STEER_FALLOFF_SPEED: float = 26.0 # lock scale = 1 / (1 + (vf/this)^2)
+# --- Fix Pass 11 (Item 5): the speed envelope ---
+# TOP_SPEED rises 34 -> 48 m/s (172.8 km/h on the dash's
+# scale - the Crammond car showed ~171.6 at the top of its
+# range; the coincidence is noted, not engineered). The
+# engine/brake/drag terms are UNCHANGED (10 / 14 / 0.10), so
+# the run up is the same curve reaching further.
+const TOP_SPEED: float = 48.0
+# Steering above the FP10 envelope: the falloff speed blends
+# 26 -> 40 m/s across 24..40 m/s (smoothstep), so lock at 48
+# is 0.410 instead of the old curve's 0.227 - present but
+# not twitchy. At and below 24 m/s _lock_scale returns the
+# FP10 expression VERBATIM (the owner's squirrely verdict is
+# a <= 24 m/s property and stays numerically untouched).
+const STEER_FALLOFF_HI: float = 40.0
+const STEER_BLEND_LO: float = 24.0
+const STEER_BLEND_HI: float = 40.0
 const MAX_YAW_RATE: float = 1.6 # rad/s, either direction
 const YAW_TAU: float = 0.16 # s, yaw-rate lag (inertia)
 # Tire grip: the lateral velocity (velocity across the heading)
@@ -1364,12 +1380,17 @@ func _build_spur(d: Dictionary) -> void:
 		_add_quad(skirt_pos, skirt_nrm, skirt_col, l0, l1, bl1, bl0, -side_avg, skirt_c)
 		_add_quad(skirt_pos, skirt_nrm, skirt_col, r1, r0, br0, br1, side_avg, skirt_c)
 		_add_quad(skirt_pos, skirt_nrm, skirt_col, bl1, br1, br0, bl0, -up_avg, bot_c)
-		_add_quad(edge_pos, edge_nrm, edge_col,
-			l0 + u0 * 0.02, l0 + s0 * 0.36 + u0 * 0.02, l1 + s1 * 0.36 + u1 * 0.02, l1 + u1 * 0.02,
-			up_avg, edge_c)
-		_add_quad(edge_pos, edge_nrm, edge_col,
-			r0 + u0 * 0.02, r0 - s0 * 0.36 + u0 * 0.02, r1 - s1 * 0.36 + u1 * 0.02, r1 + u1 * 0.02,
-			up_avg, edge_c)
+		# Fix Pass 11 (Item 5): the edge strips are DASHED
+		# (3 m on / 2 m off) - optic flow for the raised top
+		# speed; a continuous strip on a flat surface gives the
+		# eye nothing temporal to measure speed against.
+		if i10 % 5 < 3:
+			_add_quad(edge_pos, edge_nrm, edge_col,
+				l0 + u0 * 0.02, l0 + s0 * 0.36 + u0 * 0.02, l1 + s1 * 0.36 + u1 * 0.02, l1 + u1 * 0.02,
+				up_avg, edge_c)
+			_add_quad(edge_pos, edge_nrm, edge_col,
+				r0 + u0 * 0.02, r0 - s0 * 0.36 + u0 * 0.02, r1 - s1 * 0.36 + u1 * 0.02, r1 + u1 * 0.02,
+				up_avg, edge_c)
 		if i10 % 12 == 0:
 			var tp: Vector3 = p0 + s0 * 0.3
 			var bp: Vector3 = Vector3(tp.x, -30.0, tp.z)
@@ -1515,11 +1536,11 @@ func _update_drive_spur(delta: float) -> void:
 	if in_boost and boost_meter > 0.0 and in_throttle > 0.05:
 		accel += 9.0
 		boost_meter = maxf(boost_meter - 30.0 * delta, 0.0)
-	speed = clampf(speed + accel * delta, -6.0, 34.0)
+	speed = clampf(speed + accel * delta, -6.0, TOP_SPEED)
 	if in_brake > 0.05 and speed < 0.5 and speed > -0.5:
 		speed = 0.0
 	var steer: float = clampf(wheel_angle / PI, -1.0, 1.0)
-	var lock_scale: float = 1.0 / (1.0 + (speed / STEER_FALLOFF_SPEED) * (speed / STEER_FALLOFF_SPEED))
+	var lock_scale: float = _lock_scale(speed)
 	var front_angle: float = steer * MAX_LOCK_RAD * lock_scale
 	var omega_target: float = clampf(-speed / WHEELBASE * tan(front_angle), -MAX_YAW_RATE, MAX_YAW_RATE)
 	yaw_rate = lerpf(yaw_rate, omega_target, clampf(delta / YAW_TAU, 0.0, 1.0))
@@ -1818,12 +1839,17 @@ func _build_track_meshes(d: Dictionary) -> void:
 		_add_quad(skirt_pos, skirt_nrm, skirt_col, r1, r0, br0, br1, side_avg, skirt_c)
 		_add_quad(skirt_pos, skirt_nrm, skirt_col, bl1, br1, br0, bl0, -up_avg, bot_c)
 		# edge strips, raised 0.02 (unshaded: they stay bright at distance)
-		_add_quad(edge_pos, edge_nrm, edge_col,
-			l0 + u0 * 0.02, l0 + s0 * 0.36 + u0 * 0.02, l1 + s1 * 0.36 + u1 * 0.02, l1 + u1 * 0.02,
-			up_avg, edge_c)
-		_add_quad(edge_pos, edge_nrm, edge_col,
-			r0 - s0 * 0.36 + u0 * 0.02, r0 + u0 * 0.02, r1 + u1 * 0.02, r1 - s1 * 0.36 + u1 * 0.02,
-			up_avg, edge_c)
+		# Fix Pass 11 (Item 5): DASHED (3 m on / 2 m off) - optic
+		# flow for the raised top speed; a continuous strip on a
+		# flat untextured surface gives the eye nothing temporal
+		# to measure speed against.
+		if i % 5 < 3:
+			_add_quad(edge_pos, edge_nrm, edge_col,
+				l0 + u0 * 0.02, l0 + s0 * 0.36 + u0 * 0.02, l1 + s1 * 0.36 + u1 * 0.02, l1 + u1 * 0.02,
+				up_avg, edge_c)
+			_add_quad(edge_pos, edge_nrm, edge_col,
+				r0 - s0 * 0.36 + u0 * 0.02, r0 + u0 * 0.02, r1 + u1 * 0.02, r1 - s1 * 0.36 + u1 * 0.02,
+				up_avg, edge_c)
 		# stilts every 10 m down to the ground (Fix Pass 9: the
 		# desert floor, ~60 m below the datum - the stilts now
 		# land on something instead of ending in the void)
@@ -3616,6 +3642,20 @@ func _process(_delta: float) -> void:
 			skid_player.volume_db = -60.0
 
 
+## Fix Pass 11 (Item 5): the steering lock scale, shared by
+## both drivers (main track and spur). At |v| <= 24 m/s this
+## is the FP10 expression verbatim - same operands, same
+## order - so the response the owner approved is numerically
+## identical there. Above 24 the effective falloff speed
+## blends smoothly to STEER_FALLOFF_HI at 40 m/s.
+func _lock_scale(v: float) -> float:
+	if absf(v) <= STEER_BLEND_LO:
+		return 1.0 / (1.0 + (v / STEER_FALLOFF_SPEED) * (v / STEER_FALLOFF_SPEED))
+	var t: float = smoothstep(STEER_BLEND_LO, STEER_BLEND_HI, absf(v))
+	var fs: float = lerpf(STEER_FALLOFF_SPEED, STEER_FALLOFF_HI, t)
+	return 1.0 / (1.0 + (v / fs) * (v / fs))
+
+
 func _update_drive(delta: float) -> void:
 	# Fix Pass 9 (Item 2): THE FREE-HEADING MODEL. This replaces
 	# the spine-slaved model whole: up to Fix Pass 8 the car's
@@ -3671,7 +3711,7 @@ func _update_drive(delta: float) -> void:
 	if in_boost and boost_meter > 0.0 and in_throttle > 0.05:
 		accel += 9.0
 		boost_meter = maxf(boost_meter - 30.0 * delta, 0.0)
-	vf = clampf(vf + accel * delta, -6.0, 34.0)
+	vf = clampf(vf + accel * delta, -6.0, TOP_SPEED)
 	if in_brake > 0.05 and vf < 0.5 and vf > -0.5:
 		vf = 0.0
 	# Steering: wheel -> front-wheel angle -> yaw rate target,
@@ -3683,7 +3723,7 @@ func _update_drive(delta: float) -> void:
 	# with forward = (-sin h, -cos h) a right turn DECREASES the
 	# heading, hence the negated bicycle term.
 	var steer: float = clampf(wheel_angle / PI, -1.0, 1.0)
-	var lock_scale: float = 1.0 / (1.0 + (vf / STEER_FALLOFF_SPEED) * (vf / STEER_FALLOFF_SPEED))
+	var lock_scale: float = _lock_scale(vf)
 	var front_angle: float = steer * MAX_LOCK_RAD * lock_scale
 	var omega_target: float = clampf(-vf / WHEELBASE * tan(front_angle), -MAX_YAW_RATE, MAX_YAW_RATE)
 	yaw_rate = lerpf(yaw_rate, omega_target, clampf(delta / YAW_TAU, 0.0, 1.0))
@@ -3884,9 +3924,9 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	if vf_land < 4.0:
 		vel2 += Vector2(f2.x, f2.z) * (4.0 - vf_land)
 		vf_land = 4.0
-	elif vf_land > 34.0:
-		vel2 -= Vector2(f2.x, f2.z) * (vf_land - 34.0)
-		vf_land = 34.0
+	elif vf_land > TOP_SPEED:
+		vel2 -= Vector2(f2.x, f2.z) * (vf_land - TOP_SPEED)
+		vf_land = TOP_SPEED
 	speed = vf_land
 	lat_vel = vel2.dot(Vector2(r2.x, r2.z))
 	yaw_rate = 0.0
@@ -4633,7 +4673,7 @@ func _update_audio(delta: float) -> void:
 	var rpm_target: float = 0.8
 	var gain_target: float = AUDIO_ENGINE_IDLE_DB
 	if mode == MODE_DRIVE or mode == MODE_DONE:
-		rpm_target = 0.8 + clampf(speed / 34.0, 0.0, 1.0) * 1.85 \
+		rpm_target = 0.8 + clampf(speed / TOP_SPEED, 0.0, 1.0) * 1.85 \
 			+ in_throttle * 0.22
 		if in_boost and boost_meter > 0.0:
 			rpm_target += 0.35

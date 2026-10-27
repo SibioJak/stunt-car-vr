@@ -225,6 +225,15 @@ func autopilot() -> void:
 	_autopilot_drive(0.0, true)
 
 
+func autopilot_fast() -> void:
+	# Fix Pass 11 (Item 5): the raised-envelope driver - the
+	# lap and gap stages (19/20) run at the new cap; every
+	# other fixture keeps the FP10 pace it was calibrated at
+	# (autopilot() above, and stage 9's geometry tiers in
+	# particular stay on the old envelope).
+	_autopilot_drive(0.0, true, main.TOP_SPEED)
+
+
 func autopilot_pursuit() -> void:
 	# Pursuit steering WITHOUT speed management - the fixture
 	# for stages that must overdrive a corner on purpose
@@ -270,7 +279,7 @@ func autopilot_steer(lat_off: float = 0.0) -> void:
 	main.wheel_angle = clampf(-err * 1.6, -1.0, 1.0) * PI
 
 
-func _autopilot_drive(lat_off: float, with_speed: bool) -> void:
+func _autopilot_drive(lat_off: float, with_speed: bool, cap: float = 34.0) -> void:
 	var s: float = main.car_s
 	var spd: float = maxf(main.speed, 0.0)
 	var la: float = clampf(spd * 0.55, 6.0, 22.0)
@@ -289,7 +298,7 @@ func _autopilot_drive(lat_off: float, with_speed: bool) -> void:
 			max_kv = maxf(max_kv, absf(float(fr_q["kv"])))
 			max_curv = maxf(max_curv, absf(float(fr_q["curv"])))
 			ss += 4.0
-		var v_allow: float = clampf(sqrt(11.0 / maxf(max_curv, 0.0001)), 9.0, 34.0)
+		var v_allow: float = clampf(sqrt(11.0 / maxf(max_curv, 0.0001)), 9.0, cap)
 		if max_kv > 0.012:
 			v_allow = minf(v_allow, 24.0)
 		if main.speed < v_allow:
@@ -1957,7 +1966,7 @@ func _run() -> void:
 	while lap_frames19 < 90000 and not done19:
 		await physics_frame
 		lap_frames19 += 1
-		autopilot()
+		autopilot_fast() # Fix Pass 11 (Item 5): laps run the raised envelope
 		if main.mode == main.MODE_AIR:
 			await wait_until(func() -> bool: return main.mode != main.MODE_AIR, 4000)
 		elif main.mode == main.MODE_HANG:
@@ -2035,7 +2044,7 @@ func _run() -> void:
 	while f20b < 30000 and not gap_ok20:
 		await physics_frame
 		f20b += 1
-		autopilot()
+		autopilot_fast() # Fix Pass 11 (Item 5): the gap run at the raised envelope
 		main.test_boost = main.car_s > main.gap_s0 - 130.0 and main.car_s < main.gap_s0
 		if main.car_s > main.gap_s1 + 30.0:
 			gap_ok20 = main.mode == main.MODE_DRIVE
@@ -2409,6 +2418,126 @@ func _run() -> void:
 	await frames(40)
 	check(absf(main.drop_lever_angle - main.DROP_LEVER_REST_RAD) < 0.03 and main.mode == main.MODE_HANG,
 		"stage25: lever springs home (%.2f rad), no drop" % main.drop_lever_angle)
+
+	# ---------- stage 26: Fix Pass 11 (Item 5) - the speed envelope --
+	# (a) the lock scale: EXACTLY the FP10 expression at and
+	# below 24 m/s (the owner's squirrely band, numerically
+	# untouched), the blended envelope above it.
+	var lock_ok26: bool = true
+	for v26: float in [0.0, 6.0, 12.0, 18.0, 24.0]:
+		var old26: float = 1.0 / (1.0 + (v26 / 26.0) * (v26 / 26.0))
+		if main._lock_scale(v26) != old26:
+			lock_ok26 = false
+	check(lock_ok26, "stage26: lock scale is bit-identical to FP10 at 0/6/12/18/24 m/s")
+	var spots26: Array = [[30.0, 0.507], [34.0, 0.523], [38.0, 0.518], [48.0, 0.410]]
+	var spots_ok26: bool = true
+	for sp26: Array in spots26:
+		if absf(main._lock_scale(float(sp26[0])) - float(sp26[1])) > 0.002:
+			spots_ok26 = false
+		var old_sp26: float = 1.0 / (1.0 + (float(sp26[0]) / 26.0) * (float(sp26[0]) / 26.0))
+		if main._lock_scale(float(sp26[0])) <= old_sp26:
+			spots_ok26 = false
+	check(spots_ok26, "stage26: blended lock above 24 (30: %.3f, 34: %.3f, 38: %.3f, 48: %.3f - all above the old curve)" % [
+		main._lock_scale(30.0), main._lock_scale(34.0), main._lock_scale(38.0), main._lock_scale(48.0)])
+	# (b) standing start on the circuit's opening straight
+	# (381 m of low curvature from s 0): brake to zero, floor
+	# it, pursuit-steer. vmax must be the new clamp and the
+	# 0->45 time is the engine's honest run (10 / 0.10 terms).
+	main._set_track("circuit")
+	await frames(3)
+	main.start_race()
+	await frames(3)
+	main._do_release()
+	var rel26: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(rel26, "stage26: release lands into DRIVE for the speed run")
+	main.debug_warp_to_s(2.0)
+	await frames(3)
+	main.test_brake = 1.0
+	var bz26: int = 0
+	while main.speed > 0.01 and bz26 < 900:
+		await physics_frame
+		bz26 += 1
+	main.test_brake = 0.0
+	main.test_throttle = 1.0
+	var f26: int = 0
+	var t45_26: float = -1.0
+	var vmax26: float = 0.0
+	while f26 < 2700:
+		await physics_frame
+		f26 += 1
+		var fr_t26: Dictionary = main._frame_at(main.car_s + clampf(main.speed * 0.55, 6.0, 22.0))
+		var tgt26: Vector3 = fr_t26["pos"]
+		var pos26: Vector3 = main.car.global_position
+		var des26: float = atan2(-(tgt26.x - pos26.x), -(tgt26.z - pos26.z))
+		var err26: float = wrapf(des26 - main.car_heading, -PI, PI)
+		main.wheel_angle = clampf(-err26 * 1.6, -1.0, 1.0) * PI
+		vmax26 = maxf(vmax26, main.speed)
+		if t45_26 < 0.0 and main.speed >= 45.0:
+			t45_26 = float(f26) / 90.0
+		if main.mode != main.MODE_DRIVE:
+			break
+	main.test_throttle = 0.0
+	check(vmax26 >= 47.9, "stage26: top speed is the new clamp (vmax %.1f m/s = %.0f km/h)" % [vmax26, vmax26 * 3.6])
+	check(t45_26 > 4.5 and t45_26 < 8.0, "stage26: 0->45 m/s in %.1f s (standing start, opening straight)" % t45_26)
+	# (c) the circuit hump span at pin 48 (stage 20's protocol
+	# at 24): the car must keep landing - flights counted, no
+	# drone call, the span completed. Longest flight reported;
+	# no hump re-tune is forced by this evidence (see README).
+	main._set_track("circuit")
+	await frames(3)
+	main.debug_warp_to_s(main.ext_s0 + 2.0)
+	var flights26: int = 0
+	var in_air26: bool = false
+	var air_run26: int = 0
+	var air_max26: int = 0
+	var f26c: int = 0
+	var hang26: bool = false
+	while main.car_s < main.ext_s0 + 245.0 and f26c < 1800:
+		if main.mode == main.MODE_DRIVE:
+			autopilot_steer()
+			main.debug_pin_speed(48.0)
+		await physics_frame
+		f26c += 1
+		if main.mode == main.MODE_AIR and not main.air_from_gap:
+			air_run26 += 1
+			if not in_air26:
+				in_air26 = true
+				flights26 += 1
+		else:
+			air_max26 = maxi(air_max26, air_run26)
+			air_run26 = 0
+			in_air26 = false
+		if main.mode == main.MODE_HANG:
+			hang26 = true
+			break
+	air_max26 = maxi(air_max26, air_run26)
+	check(flights26 >= 3 and not hang26 and main.car_s >= main.ext_s0 + 245.0,
+		"stage26: hump span at pin 48 - %d flights, longest %.1f s, landed throughout (end s %.0f)" % [
+			flights26, float(air_max26) / 90.0, main.car_s])
+	# (d) engine pitch follows the rescaled normaliser: pinned
+	# at 34 vs 48, throttle closed, the settled pitch must sit
+	# at the rescaled stations (2.11 / 2.65).
+	main._set_track("ribbon")
+	await frames(3)
+	main.start_race()
+	await frames(3)
+	main._do_release()
+	var rel26d: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(rel26d, "stage26: release lands into DRIVE for the pitch check")
+	main.test_throttle = 0.0
+	# the pin is a per-frame fixture (a single call decays
+	# under drag within a second) - hold each speed while the
+	# revs settle, staying ahead of the crest at s ~154.
+	for pf26: int in 90:
+		main.debug_pin_speed(34.0)
+		await physics_frame
+	var pitch34_26: float = main.engine_player.pitch_scale
+	for pf26b: int in 60:
+		main.debug_pin_speed(48.0)
+		await physics_frame
+	var pitch48_26: float = main.engine_player.pitch_scale
+	check(absf(pitch34_26 - 2.11) < 0.12 and absf(pitch48_26 - 2.65) < 0.12 and pitch48_26 > pitch34_26 + 0.4,
+		"stage26: engine pitch rescaled (34 m/s: %.2f, 48 m/s: %.2f)" % [pitch34_26, pitch48_26])
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
