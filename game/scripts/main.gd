@@ -157,8 +157,26 @@ const PREP_BOOST_CREDIT: float = 25.0
 # lands the player's HMD exactly here on spawn/recenter, so physical
 # seated height no longer floats the driver on top of the car. The wheel
 # hub sits 0.45 m forward of the eye and 0.26 m below it (natural reach).
-const EYE_ANCHOR: Vector3 = Vector3(0.0, 1.14, 0.05)
-const WHEEL_HUB: Vector3 = Vector3(0.0, 0.88, -0.40)
+# Fix Pass 11 (Item 1): the anchor rises +0.12 m and the hub rises
+# +0.09 m with it (drop now 0.29 m). Run 11 verdict: from the old seat
+# the road hid behind the nose stack, worst on descents. The raise is
+# sightline geometry over the RAKED car (Item 6): the binding
+# obstruction is the engine block's top-front edge; the render proof
+# measures the nearest visible road from the live AABBs at the old
+# and new heights and asserts the improvement, so the number lives
+# there rather than in this comment. The driver trims +-SEAT_TRIM_MAX
+# around this default from the cockpit seat levers (VTOL-style).
+const EYE_ANCHOR: Vector3 = Vector3(0.0, 1.26, 0.05)
+const WHEEL_HUB: Vector3 = Vector3(0.0, 0.97, -0.40)
+# Fix Pass 11 (Item 1): the Look Test patch-2 yaw cone, ported.
+# Automatic anchor applications bake the head's yaw into the seat
+# correction only when the head sits within this cone of the car's
+# forward; outside it they land translation only and the yaw waits
+# for the head to enter the cone on a stable pose. An explicit
+# recenter always bakes (see _apply_seat_anchor).
+const ANCHOR_YAW_CONE_DEG: float = 25.0
+const SEAT_TRIM_MAX: float = 0.15
+const SEAT_TRIM_RATE: float = 0.30 # m/s while a seat lever is held
 # Fix Pass 3: the wheel is STOOD UP. Godot's TorusMesh ring lies in the
 # XZ plane (axis +Y); the old -22 deg X-tilt therefore left the rim
 # plane ~68 deg off vertical - a flat plate with its face pointing up.
@@ -600,6 +618,20 @@ var anchor_stable_frames: int = 0
 var anchor_last_cam_pos: Vector3 = Vector3.ZERO
 var anchor_have_last: bool = false
 var anchor_reapply_watch: bool = false
+# Fix Pass 11 (Item 1): yaw-cone state (ported from the Look Test).
+# anchor_yaw_pending: an automatic application landed translation
+# only; the yaw half is owed and lands when the head enters the
+# cone. anchor_bake_yaw: the NEXT application is explicit (a
+# recenter) and bakes the facing it finds.
+var anchor_yaw_pending: bool = false
+var anchor_bake_yaw: bool = false
+# Fix Pass 11 (Item 1): seat trim in metres, the driver's offset
+# from EYE_ANCHOR, clamped to +-SEAT_TRIM_MAX. Persisted in
+# user://settings.cfg - NOTE: the game had NO settings/profile
+# persistence before this pass (checked: no ConfigFile, no
+# user:// writes anywhere); that one key is the whole file for
+# now. Reported as a brief/code mismatch in the pass report.
+var seat_trim: float = 0.0
 # Fix Pass 3 live diagnostics (panel DIAG block, refreshed at ~5 Hz):
 # raw grip-channel values per hand, exactly as the runtime delivers.
 var diag_grip: Dictionary = {"L": 0.0, "R": 0.0}
@@ -657,6 +689,7 @@ func _box(parent: Node, size: Vector3, pos: Vector3, mat: Material, bname: Strin
 
 
 func _ready() -> void:
+	_load_settings()
 	_build_environment()
 	track_data["ribbon"] = _build_ribbon()
 	track_data["circuit"] = _build_circuit()
@@ -721,7 +754,7 @@ func _build_rig() -> void:
 		body_node_fb.name = "BodySpringFB"
 		car.add_child(body_node_fb)
 		fallback_cam = Camera3D.new()
-		fallback_cam.position = EYE_ANCHOR
+		fallback_cam.position = _eye_anchor()
 		fallback_cam.name = "FallbackCam"
 		body_node_fb.add_child(fallback_cam)
 		fallback_cam.current = true
@@ -2120,7 +2153,8 @@ func _build_cockpit() -> void:
 	_box(car_body, Vector3(1.24, 0.30, 0.14), Vector3(0, 0.78, -0.62), _mat(Color(0.10, 0.10, 0.11)))
 	# Steering column + grab wheel (wood-rimmed: this car's character).
 	# Hub position from Fix Pass 2 stands: WHEEL_HUB, 0.45 m ahead of
-	# EYE_ANCHOR and 0.26 m below it. Fix Pass 3 stands the wheel UP:
+	# EYE_ANCHOR and 0.26 m below it (Fix Pass 11: both rose, the
+	# drop is 0.29 m now). Fix Pass 3 stands the wheel UP:
 	# the tilt node rotates WHEEL_TILT_DEG about X so the rim plane
 	# sits 22 deg off vertical facing the driver (see the WHEEL_TILT
 	# note at the constants); the column is aligned to the wheel axis
@@ -2222,6 +2256,28 @@ func _build_cockpit() -> void:
 	trk_mi.name = "TrackBtnMesh"
 	trk.add_child(trk_mi)
 	_register_dash_ctl(trk, "track")
+	# Fix Pass 11 (Item 1): seat trim levers on the LEFT pod -
+	# VTOL-style physical seat adjustment in the cockpit's
+	# lever-forward language, worked with the same grip-near
+	# gesture as every other control: white SEAT+ (front) raises
+	# the eye, black SEAT- (rear) lowers it, HOLDING the hand in
+	# the zone trims continuously (see _poll_grab). Same lever
+	# build as the dash switches (pivot on the surface, shaft +
+	# cap), pivots on the pod top (pod spans y 0.27..0.69, top
+	# 0.69), so Item 2's zone audit covers them like the rest.
+	# Registered after track: indices 6 and 7 (stages key on the
+	# first six registrations staying in their FP10 order).
+	var seat_cols: Array[Color] = [Color(0.95, 0.95, 0.95), Color(0.22, 0.22, 0.25)]
+	var seat_kinds: Array[String] = ["seatup", "seatdn"]
+	var seat_zs: Array[float] = [-0.30, 0.10]
+	for si: int in 2:
+		var spiv := Node3D.new()
+		spiv.position = Vector3(-0.72, 0.69, seat_zs[si])
+		spiv.rotation_degrees = Vector3(-20, 0, 0)
+		car_body.add_child(spiv)
+		_box(spiv, Vector3(0.055, 0.20, 0.055), Vector3(0, 0.08, 0), _mat(Color(0.65, 0.65, 0.68)))
+		_box(spiv, Vector3(0.085, 0.06, 0.085), Vector3(0, 0.19, 0), _mat_unshaded(seat_cols[si]))
+		_register_dash_ctl(spiv, seat_kinds[si])
 	# Lean indicator needle on the dash (experiment feedback)
 	# (rides up with the raised wheel so it stays clear of the rim)
 	lean_needle = _box(car_body, Vector3(0.03, 0.13, 0.02), Vector3(0, 1.155, -0.615), _mat_unshaded(Color(0.2, 0.9, 1.0)))
@@ -2262,7 +2318,11 @@ func _build_cockpit() -> void:
 	#   arc and the dash slab.
 	panel_root = Node3D.new()
 	panel_root.name = "PanelRoot"
-	panel_root.position = Vector3(0.78, 1.53, -1.66)
+	# Fix Pass 11 (Item 1): raised 5 cm - the command list grew
+	# (seat trim lines) and the wheel hub rose 9 cm with the
+	# seat; the bottom rows' sightlines clipped the rim and the
+	# right switch knob in the render proof again.
+	panel_root.position = Vector3(0.78, 1.58, -1.66)
 	panel_root.rotation_degrees = Vector3(-2, -24, 0)
 	car_body.add_child(panel_root)
 	_box(panel_root, Vector3(0.80, 1.24, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)), "PanelBoard")
@@ -2283,15 +2343,23 @@ func _build_cockpit() -> void:
 	# sixth line (the per-control ZONE readout) and the new
 	# bottom row's sightline clipped the wheel rim's left arc in
 	# the render proof's occlusion sweep.
-	diag_root.position = Vector3(-0.53, 1.205, -0.85)
+	# Fix Pass 11 (Item 1): raised 8.5 cm more - the rim rose
+	# 9 cm with the seat (Item 1) and the raked body pitch
+	# (Item 6) drops the board's bottom edge toward the left
+	# switch cap; the sweep clipped both again.
+	# Fix Pass 11 (Item 1): the board widens (0.68 -> 0.84) and
+	# shifts left with it - the ZONE line gained the two seat
+	# tags (SUP/SDN) and wrapped at the old 600 px label width;
+	# the full tag names stay.
+	diag_root.position = Vector3(-0.55, 1.29, -0.85)
 	diag_root.rotation_degrees = Vector3(-10, 28, 0)
 	car_body.add_child(diag_root)
-	_box(diag_root, Vector3(0.68, 0.34, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)), "DiagBoard")
+	_box(diag_root, Vector3(0.84, 0.34, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)), "DiagBoard")
 	diag_label = Label3D.new()
-	diag_label.position = Vector3(-0.28, 0.125, 0.02)
+	diag_label.position = Vector3(-0.36, 0.125, 0.02)
 	diag_label.font_size = 26
 	diag_label.pixel_size = 0.00105
-	diag_label.width = 600.0
+	diag_label.width = 760.0
 	diag_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	diag_label.modulate = Color(0.92, 0.95, 1.0)
 	diag_label.outline_size = 5
@@ -2323,16 +2391,19 @@ func _panel_text() -> String:
 	lines.append("Boost: R A button (while driving)")
 	lines.append("Release: R trigger (when dangling)")
 	lines.append("Flip switch: GRIP near a dash switch")
+	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
 	lines.append("Call drone: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
 	lines.append("Dash buttons (GRIP near):")
 	lines.append("red restart, green lean, purple track")
-	lines.append("Recenter: L stick click, restart: L Y")
+	lines.append("Recenter: L stick click / BOTH grips")
+	lines.append("restart race: L Y button")
 	lines.append("-- DESKTOP --")
 	lines.append("W/S throttle/brake, A/D steer, SHIFT boost")
 	lines.append("SPACE release, 1/2/3 flip FUEL/SPARK/BOOST")
 	lines.append("L lift, T lean, J jitter, Q/E lean body")
-	lines.append("R restart race, C recenter, V track")
+	lines.append("PgUp/PgDn seat trim, R restart race")
+	lines.append("C recenter, V track")
 	# Fix Pass 4: the DIAG block no longer appends here - it renders
 	# on its own board (diag_label) via _update_panel.
 	return "\n".join(lines)
@@ -2361,11 +2432,15 @@ func _build_diag_block() -> String:
 		lines.append("ANCHOR %s TRK %s CAMH %.2f" % [
 			anchor_state, "Y" if _hmd_has_tracking_data() else "N", cam_car.origin.y])
 	else:
-		lines.append("ANCHOR DESKTOP (cam on anchor) CAMH %.2f" % EYE_ANCHOR.y)
+		lines.append("ANCHOR DESKTOP (cam on anchor) CAMH %.2f" % _eye_anchor().y)
 	lines.append(_diag_hand_line("L"))
 	lines.append(_diag_hand_line("R"))
 	lines.append(_diag_zone_line())
-	lines.append("WHEEL %+d DEG JIT %s" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF"])
+	# Fix Pass 11 (Item 1): the seat trim rides the WHEEL line -
+	# the ANCHOR and ZONE lines are at the label's wrap width
+	# already (the proof's cockpit capture showed both wrapping
+	# when SEAT and the two new zone tags first landed).
+	lines.append("WHEEL %+d DEG JIT %s SEAT %+.2f" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF", seat_trim])
 	return "\n".join(lines)
 
 
@@ -2379,7 +2454,8 @@ func _diag_zone_line() -> String:
 	# lever is a dead CHANNEL (grip reads 0.00 above) or a
 	# hand that never entered the zone.
 	var short: Dictionary = {"switch0": "FUEL", "switch1": "SPARK",
-		"switch2": "BOOST", "restart": "RST", "lean": "LEAN", "track": "TRK"}
+		"switch2": "BOOST", "restart": "RST", "lean": "LEAN", "track": "TRK",
+		"seatup": "SUP", "seatdn": "SDN"}
 	var near_l: int = _dash_ctl_near(_hand_pos("L"))
 	var near_r: int = _dash_ctl_near(_hand_pos("R"))
 	var tags: Array[String] = []
@@ -2531,6 +2607,12 @@ func _poll_inputs(delta: float) -> void:
 		in_brake = 1.0
 	if Input.is_key_pressed(KEY_SHIFT):
 		in_boost = true
+	# Fix Pass 11 (Item 1): desktop seat trim (the cockpit levers'
+	# keyboard twin; hold to move).
+	if Input.is_key_pressed(KEY_PAGEUP):
+		_apply_seat_trim(seat_trim + SEAT_TRIM_RATE * delta)
+	if Input.is_key_pressed(KEY_PAGEDOWN):
+		_apply_seat_trim(seat_trim - SEAT_TRIM_RATE * delta)
 	# desktop steering drives the wheel toward a target
 	var steer_key: float = 0.0
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
@@ -2552,6 +2634,13 @@ func _poll_inputs(delta: float) -> void:
 			in_boost = true
 		_poll_grab("L", lc, delta)
 		_poll_grab("R", rc, delta)
+		# Fix Pass 11 (Item 1): squeeze BOTH grips = recenter,
+		# ported with the Look Test patch-2 anchor cure (there it
+		# was the owner's chosen recenter; the L stick click
+		# below remains as the other input). gripping[] was just
+		# refreshed by the _poll_grab calls above.
+		if _btn_edge("both_grips", bool(gripping["L"]) and bool(gripping["R"])):
+			_recenter()
 		# edges
 		if _btn_edge("r_trig_click", _input_bool(rc, &"trigger_click")):
 			if mode == MODE_HANG and hang_phase == "dangle":
@@ -2611,16 +2700,21 @@ func _recenter() -> void:
 	# the raw XR reference reset (center_on_hmd left the tracked seated
 	# height stacked on top of the cockpit offset - the driver floated).
 	# Fix Pass 3: recenter re-arms the stability-gated application.
+	# Fix Pass 11 (Item 1): a recenter is EXPLICIT - the head's facing
+	# when it lands becomes the car's forward (standard recenter
+	# semantics), so it arms with the bake flag and the yaw cone
+	# below does not apply to it.
 	if xr_ok:
-		_arm_anchor()
+		_arm_anchor(true)
 
 
-func _arm_anchor() -> void:
+func _arm_anchor(explicit_bake: bool = false) -> void:
 	anchor_pending = true
 	anchor_wait_frames = 0
 	anchor_stable_frames = 0
 	anchor_have_last = false
 	anchor_reapply_watch = false
+	anchor_bake_yaw = explicit_bake
 	anchor_state = "PENDING"
 
 
@@ -2652,22 +2746,37 @@ func _process_anchor_pending() -> void:
 	if anchor_pending:
 		anchor_wait_frames += 1
 		if anchor_stable_frames >= ANCHOR_STABLE_FRAMES:
-			_apply_seat_anchor()
-			anchor_state = "APPLIED-STABLE"
+			var bake: bool = anchor_bake_yaw
+			anchor_bake_yaw = false
+			var yawed: bool = _apply_seat_anchor(bake)
+			anchor_state = "APPLIED-STABLE" if yawed else "APPLIED-NOYAW"
 			anchor_pending = false
 		elif anchor_wait_frames > ANCHOR_FALLBACK_FRAMES:
 			# ~10 s with no stable pose: apply from whatever pose
 			# exists (graceful degradation, as before) - but keep
 			# watching: when a stable tracked pose later appears,
 			# re-apply ONCE from the real pose.
-			_apply_seat_anchor()
-			anchor_state = "APPLIED-FALLBACK"
+			var bake2: bool = anchor_bake_yaw
+			anchor_bake_yaw = false
+			var yawed2: bool = _apply_seat_anchor(bake2)
+			anchor_state = "APPLIED-FALLBACK" if yawed2 else "APPLIED-NOYAW"
 			anchor_pending = false
 			anchor_reapply_watch = true
 	elif anchor_reapply_watch and anchor_stable_frames >= ANCHOR_STABLE_FRAMES:
-		_apply_seat_anchor()
-		anchor_state = "APPLIED-STABLE"
+		var bake3: bool = anchor_bake_yaw
+		anchor_bake_yaw = false
+		var yawed3: bool = _apply_seat_anchor(bake3)
+		anchor_state = "APPLIED-STABLE" if yawed3 else "APPLIED-NOYAW"
 		anchor_reapply_watch = false
+	elif anchor_yaw_pending and anchor_stable_frames >= ANCHOR_STABLE_FRAMES \
+			and absf(_head_yaw_dev()) <= deg_to_rad(ANCHOR_YAW_CONE_DEG):
+		# Fix Pass 11 (Item 1): the deferred yaw half of an
+		# automatic application - the head has come inside the
+		# cone on a stable pose, so baking now maps his
+		# near-forward onto the car's forward, never a turned
+		# head. (Ported from the Look Test, patch 2.)
+		_apply_seat_anchor(true)
+		anchor_state = "APPLIED-STABLE"
 
 
 func _hmd_has_tracking_data() -> bool:
@@ -2687,24 +2796,110 @@ func _hmd_has_tracking_data() -> bool:
 	return head_pose != null and head_pose.has_tracking_data
 
 
-func _apply_seat_anchor() -> void:
-	# Offset the seat so the HMD lands exactly on EYE_ANCHOR in car space,
-	# yaw-aligned to the car's heading. The correction is rigid and sits
-	# ABOVE the XR origin, so head motion (and the lean reading, which is
-	# measured local to the origin) afterwards is relative to the anchor.
-	var cam_car: Transform3D = car.global_transform.affine_inverse() * xr_cam.global_transform
+func _cam_in_car() -> Transform3D:
+	# The HMD's transform in car space.
+	return car.global_transform.affine_inverse() * xr_cam.global_transform
+
+
+func _head_fwd_car(cam_car: Transform3D) -> Vector3:
+	# The HMD's horizontal forward in car space.
 	var fwd: Vector3 = -cam_car.basis.z
 	fwd.y = 0.0
 	if fwd.length() < 0.05:
-		fwd = Vector3(0.0, 0.0, -1.0)
-	fwd = fwd.normalized()
+		return Vector3(0.0, 0.0, -1.0)
+	return fwd.normalized()
+
+
+func _yaw_dev_of(fwd: Vector3) -> float:
+	# Signed yaw of a horizontal car-space forward away from the
+	# car's forward (-Z in car space): 0 looking down the car,
+	# +PI/2 looking out the right side, -PI/2 out the left.
+	return atan2(fwd.x, -fwd.z)
+
+
+func _head_yaw_dev() -> float:
+	return _yaw_dev_of(_head_fwd_car(_cam_in_car()))
+
+
+func _eye_anchor() -> Vector3:
+	# The seat anchor the driver actually gets: the fixed
+	# EYE_ANCHOR plus his cockpit trim (Fix Pass 11, Item 1).
+	# Every consumer (anchor math, fallback camera, DIAG) reads
+	# the anchor through here so trim moves all of them at once.
+	return EYE_ANCHOR + Vector3(0.0, seat_trim, 0.0)
+
+
+func _load_settings() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load("user://settings.cfg") == OK:
+		seat_trim = clampf(float(cfg.get_value("seat", "trim", 0.0)),
+			-SEAT_TRIM_MAX, SEAT_TRIM_MAX)
+
+
+func _save_settings() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("seat", "trim", seat_trim)
+	cfg.save("user://settings.cfg")
+
+
+func _apply_seat_trim(new_trim: float) -> void:
+	# The one funnel for every trim input (cockpit seat levers,
+	# desktop PgUp/PgDn): clamp, persist, and move the LIVE seat
+	# by the delta so a trim mid-drive takes effect without a
+	# recenter. seat_offset's origin is expressed in car space,
+	# so shifting its Y is a pure eye-height change in car space
+	# whatever its basis holds. The desktop fallback camera is
+	# re-placed from _eye_anchor() every frame by the view code.
+	var clamped: float = clampf(new_trim, -SEAT_TRIM_MAX, SEAT_TRIM_MAX)
+	var delta: float = clamped - seat_trim
+	if absf(delta) < 0.00005:
+		return
+	seat_trim = clamped
+	if seat_offset != null:
+		seat_offset.transform.origin.y += delta
+	_save_settings()
+
+
+func _apply_seat_anchor(force_bake: bool) -> bool:
+	# Offset the seat so the HMD lands exactly on the eye anchor in car
+	# space, yaw-aligned to the car's heading. The correction is rigid
+	# and sits ABOVE the XR origin, so head motion (and the lean
+	# reading, which is measured local to the origin) afterwards is
+	# relative to the anchor.
+	#
+	# Fix Pass 11 (Item 1), ported from the Look Test patch 2: the
+	# yaw half of this correction maps the head's CURRENT facing
+	# onto the car's forward - it bakes. That is the definition of
+	# an explicit recenter (force_bake), but an AUTOMATIC
+	# application must not bake a head that happens to be turned
+	# when the pose settles: the stability gate watches position
+	# only, so a still-but-turned head passes it and the turn
+	# becomes "forward" for the whole session (the Look Test's
+	# 45-degree view; the game carried the same latent flaw).
+	# Automatic calls therefore land the translation only when
+	# the head sits outside ANCHOR_YAW_CONE_DEG, and leave
+	# anchor_yaw_pending set; the yaw lands when the head enters
+	# the cone (see the watch in _process_anchor_pending).
+	# Returns true when the yaw was applied (correction complete).
+	# The lean neutral is captured on BOTH halves - a
+	# translation-only landing still moves the head's frame.
+	var cam_car: Transform3D = _cam_in_car()
+	var fwd: Vector3 = _head_fwd_car(cam_car)
+	if not force_bake and absf(_yaw_dev_of(fwd)) > deg_to_rad(ANCHOR_YAW_CONE_DEG):
+		var corr_t := Transform3D(Basis.IDENTITY, _eye_anchor() - cam_car.origin)
+		seat_offset.transform = corr_t * seat_offset.transform
+		anchor_yaw_pending = true
+		_capture_lean_neutral()
+		return false
 	# Yaw that rotates the current horizontal view direction onto the
 	# car's forward (-Z in car space).
 	var yaw: float = atan2(fwd.z, fwd.x) + PI * 0.5
 	var rot := Basis(Vector3.UP, yaw)
-	var corr := Transform3D(rot, EYE_ANCHOR - rot * cam_car.origin)
+	var corr := Transform3D(rot, _eye_anchor() - rot * cam_car.origin)
 	seat_offset.transform = corr * seat_offset.transform
+	anchor_yaw_pending = false
 	_capture_lean_neutral()
+	return true
 
 
 func _toggle_lean() -> void:
@@ -2789,7 +2984,14 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	# every zone, so a held grip sweeping from one control to the
 	# next fires each on entry - squeeze-and-touch IS the gesture.
 	var ctl_now: int = _dash_ctl_near(_hand_pos(hand)) if now else -1
-	if ctl_now >= 0 and int(dash_ctl_fired[hand]) != ctl_now:
+	# Fix Pass 11 (Item 1): the seat levers are HOLD controls - a
+	# gripping hand resting in the zone trims continuously at
+	# SEAT_TRIM_RATE instead of entry-firing a one-shot action.
+	if ctl_now >= 0 and dash_ctl_kinds[ctl_now].begins_with("seat"):
+		var sdir: float = 1.0 if dash_ctl_kinds[ctl_now] == "seatup" else -1.0
+		_apply_seat_trim(seat_trim + sdir * SEAT_TRIM_RATE * _delta)
+		dash_ctl_fired[hand] = ctl_now
+	elif ctl_now >= 0 and int(dash_ctl_fired[hand]) != ctl_now:
 		dash_ctl_fired[hand] = ctl_now
 		_activate_dash_ctl(dash_ctl_kinds[ctl_now])
 	elif ctl_now < 0:
@@ -2827,7 +3029,7 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 # Buttons keep the point measure.
 func _dash_ctl_segment(i: int) -> Array[Vector3]:
 	var node: Node3D = dash_ctl_nodes[i]
-	if dash_ctl_kinds[i].begins_with("switch"):
+	if dash_ctl_kinds[i].begins_with("switch") or dash_ctl_kinds[i].begins_with("seat"):
 		var xf: Transform3D = node.global_transform
 		return [xf * Vector3(0.0, -0.02, 0.0), xf * Vector3(0.0, 0.19, 0.0)]
 	var p: Vector3 = node.global_position
@@ -4078,7 +4280,7 @@ func _update_view_spring() -> void:
 		body_node_fb.rotation = Vector3(b_pitch, 0.0, 0.0)
 	if fallback_cam != null:
 		fallback_cam.rotation = Vector3(v_pitch, 0.0, v_roll)
-		fallback_cam.position = EYE_ANCHOR + Vector3(0.0, v_y, 0.0)
+		fallback_cam.position = _eye_anchor() + Vector3(0.0, v_y, 0.0)
 
 
 func _body_impulse(impact_vy: float) -> void:

@@ -2194,6 +2194,83 @@ func _run() -> void:
 		check(main._drop_piece_ok(main.drop_target_s) and main._drop_runup_ok(main.drop_target_s),
 			"stage21: recovery drop is a qualified MAIN-track piece (s %.0f)" % main.drop_target_s)
 
+	# ---------- stage 22: Fix Pass 11 (Item 1) - seat + yaw cone ----
+	# (a) The trim funnel: the eye follows the trim, the live seat
+	# moves by the delta, the clamp holds, and the value persists
+	# through the settings file (the game's first persisted
+	# setting - see the seat_trim note in main.gd).
+	main._apply_seat_trim(0.0)
+	check(absf(main._eye_anchor().y - main.EYE_ANCHOR.y) < 0.001,
+		"stage22: zero trim puts the eye on EYE_ANCHOR")
+	var seat_y0: float = main.seat_offset.transform.origin.y
+	main._apply_seat_trim(0.10)
+	check(absf(main.seat_trim - 0.10) < 0.001
+		and absf(main.seat_offset.transform.origin.y - (seat_y0 + 0.10)) < 0.001,
+		"stage22: trim moves the live seat by the delta (trim %+.2f)" % main.seat_trim)
+	main._apply_seat_trim(1.0)
+	check(absf(main.seat_trim - main.SEAT_TRIM_MAX) < 0.001,
+		"stage22: trim clamps at +%.2f" % main.SEAT_TRIM_MAX)
+	main._apply_seat_trim(-1.0)
+	check(absf(main.seat_trim + main.SEAT_TRIM_MAX) < 0.001,
+		"stage22: trim clamps at -%.2f" % main.SEAT_TRIM_MAX)
+	main._apply_seat_trim(0.07)
+	main.seat_trim = 0.0 # bypass the funnel: prove the FILE restores it
+	main._load_settings()
+	check(absf(main.seat_trim - 0.07) < 0.001,
+		"stage22: trim persists through the settings file (%.2f)" % main.seat_trim)
+	# (b) Hold-to-trim through the production grab path: pose the
+	# right hand on each seat lever's segment, grip, and poll -
+	# SEAT+ runs the trim up at SEAT_TRIM_RATE, SEAT- back down.
+	var sup_idx: int = main.dash_ctl_kinds.find("seatup")
+	var sdn_idx: int = main.dash_ctl_kinds.find("seatdn")
+	check(sup_idx > 5 and sdn_idx > 5,
+		"stage22: seat levers registered after the FP10 controls (idx %d/%d)" % [sup_idx, sdn_idx])
+	main._apply_seat_trim(0.0)
+	main.test_hand_set = true
+	var seg_sup: Array = main._dash_ctl_segment(sup_idx)
+	main.test_hand_pos["R"] = ((seg_sup[0] as Vector3) + (seg_sup[1] as Vector3)) * 0.5
+	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.5)
+	check(main.seat_trim > 0.10,
+		"stage22: holding SEAT+ trims up through _poll_grab (%.2f after 0.5 s)" % main.seat_trim)
+	var seg_sdn: Array = main._dash_ctl_segment(sdn_idx)
+	main.test_hand_pos["R"] = ((seg_sdn[0] as Vector3) + (seg_sdn[1] as Vector3)) * 0.5
+	main._poll_grab("R", main.hand_ctrl["R"], 0.5)
+	check(main.seat_trim < 0.05,
+		"stage22: holding SEAT- trims back down (%.2f)" % main.seat_trim)
+	main.test_grip["R"] = 0.0
+	main.test_hand_set = false
+	main._apply_seat_trim(0.0)
+	# (c) The yaw cone through the production anchor math: the
+	# deviation helper on known forwards, then a posed head -
+	# 40 deg off, an AUTOMATIC apply must land translation only
+	# and owe the yaw; the explicit bake (what the cone watch and
+	# every recenter call) settles it. The stability-gate chain
+	# that decides WHEN these run is live-rig only (XRServer has
+	# no tracked head here) and stays on the unverified list.
+	check(absf(main._yaw_dev_of(Vector3(0, 0, -1))) < 0.001
+		and absf(main._yaw_dev_of(Vector3(1, 0, 0)) - PI / 2.0) < 0.001
+		and absf(main._yaw_dev_of(Vector3(-1, 0, 0)) + PI / 2.0) < 0.001,
+		"stage22: yaw deviation helper reads 0 / +90 / -90 deg")
+	main.seat_offset.transform = Transform3D.IDENTITY
+	main.origin.rotation = Vector3(0.0, deg_to_rad(40.0), 0.0)
+	await frames(2)
+	var yawed22: bool = main._apply_seat_anchor(false)
+	check(not yawed22 and main.anchor_yaw_pending,
+		"stage22: automatic apply at 40 deg off lands translation only (yaw owed)")
+	var cam_car22: Transform3D = main._cam_in_car()
+	check((cam_car22.origin - main._eye_anchor()).length() < 0.01,
+		"stage22: translation landed the eye on the anchor (err %.3f m)" % (cam_car22.origin - main._eye_anchor()).length())
+	main.origin.rotation = Vector3.ZERO
+	await frames(2)
+	var baked22: bool = main._apply_seat_anchor(true)
+	check(baked22 and not main.anchor_yaw_pending,
+		"stage22: explicit bake applies the yaw and clears the debt")
+	main.seat_offset.transform = Transform3D.IDENTITY
+	check(main._build_diag_block().contains("SEAT +0.00"),
+		"stage22: DIAG shows the seat trim")
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:

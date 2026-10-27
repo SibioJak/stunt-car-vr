@@ -118,6 +118,41 @@ func _collect_occluders(n: Node, inv_arr: Array[Transform3D], box_arr: Array[AAB
 		_collect_occluders(child, inv_arr, box_arr, to_body)
 
 
+func _nearest_visible_road(eye: Vector3) -> float:
+	# Fix Pass 11 (Item 1): eye in CAR space. The road plane in
+	# car space sits at -(CLEARANCE + heave_off) - the car's
+	# origin rides that far above the surface it rests on. A
+	# descending ray from the eye reaches the road only if it
+	# passes over EVERY bodywork box's far top edge (entering a
+	# box - through its front face or its top - ends the ray on
+	# the car, not the road), so the binding ray is the SHALLOWEST
+	# per-box grazing angle, taken over each box's silhouette
+	# profile point (top, far z, x clamped to the eye's corridor)
+	# in car space. Direct MeshInstance3D children of car_body
+	# only: floor, pods, nose stack, dash slab - knobs, levers,
+	# boards and the open-centred wheel are not solid silhouette.
+	var road_y: float = -(main.CLEARANCE + main.heave_off)
+	var to_car: Transform3D = main.car.global_transform.affine_inverse()
+	var theta: float = 999.0
+	for child: Node in main.car_body.get_children():
+		var mi: MeshInstance3D = child as MeshInstance3D
+		if mi == null or not mi.is_visible_in_tree():
+			continue
+		var ab: AABB = mi.get_aabb()
+		var cmin := Vector3(1e9, 1e9, 1e9)
+		var cmax := Vector3(-1e9, -1e9, -1e9)
+		for ci: int in 8:
+			var corner: Vector3 = to_car * (mi.global_transform * ab.get_endpoint(ci))
+			cmin = cmin.min(corner)
+			cmax = cmax.max(corner)
+		var p := Vector3(clampf(eye.x, cmin.x, cmax.x), cmax.y, cmin.z)
+		if p.z < eye.z - 0.10 and p.y < eye.y:
+			theta = minf(theta, atan2(eye.y - p.y, eye.z - p.z))
+	if theta >= 900.0:
+		return 999.0
+	return (eye.y - road_y) / tan(theta)
+
+
 func _seg_hits_aabb(a: Vector3, b: Vector3, box: AABB) -> bool:
 	var av: Array[float] = [a.x, a.y, a.z]
 	var dv: Array[float] = [b.x - a.x, b.y - a.y, b.z - a.z]
@@ -242,7 +277,8 @@ func _run() -> void:
 	var ptxt: String = main.panel_label.text + "\n" + main.diag_label.text
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call drone",
 			"restart", "lean", "track", "Recenter", "SPACE", "1/2/3", "W/S", "V track",
-			"DIAG", "ANCHOR", "CAMH", "FRC", "Jitter", "JIT"]:
+			"DIAG", "ANCHOR", "CAMH", "FRC", "Jitter", "JIT",
+			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)
 	check(main.wheel_node != null, "grab wheel exists")
 	check(main.switch_pivots.size() == 3, "3 prep switches on the dash")
@@ -251,15 +287,30 @@ func _run() -> void:
 	# Fix Pass 2 anchor geometry: the fallback camera sits exactly on the
 	# eye anchor, and the wheel hub is at natural reach from it (brief:
 	# 0.42-0.48 m forward of the eye, 0.22-0.30 m below it).
-	check(main.fallback_cam.position == main.EYE_ANCHOR,
-		"fallback camera sits on the eye anchor %s" % str(main.EYE_ANCHOR))
+	# Fix Pass 11 (Item 1): the anchor is read through _eye_anchor()
+	# (EYE_ANCHOR + the driver's trim; trim is 0 in this proof).
+	check(main.fallback_cam.position == main._eye_anchor(),
+		"fallback camera sits on the eye anchor %s" % str(main._eye_anchor()))
 	var hub: Vector3 = main._wheel_hub_local()
-	var hub_fwd: float = main.EYE_ANCHOR.z - hub.z
-	var hub_drop: float = main.EYE_ANCHOR.y - hub.y
+	var hub_fwd: float = main._eye_anchor().z - hub.z
+	var hub_drop: float = main._eye_anchor().y - hub.y
 	check(hub_fwd >= 0.42 and hub_fwd <= 0.48,
 		"wheel hub %.2f m forward of the eye (natural reach band)" % hub_fwd)
 	check(hub_drop >= 0.22 and hub_drop <= 0.30,
 		"wheel hub %.2f m below the eye (natural reach band)" % hub_drop)
+
+	# Fix Pass 11 (Item 1): the seat raise, MEASURED. From the eye,
+	# the nearest visible road is set by the steepest grazing angle
+	# over the bodywork silhouette (direct-child boxes of car_body:
+	# floor, pods, nose, engine block, blower, dash - knobs, levers
+	# and the open-centred wheel are not solid silhouette). Compute
+	# it at the shipped anchor and at the pre-raise height and
+	# assert the raise bought road; print both for the record.
+	var nvr_new: float = _nearest_visible_road(main._eye_anchor())
+	var nvr_old: float = _nearest_visible_road(main._eye_anchor() - Vector3(0.0, 0.12, 0.0))
+	print("render proof: nearest visible road %.1f m at the raised seat, %.1f m at the old height" % [nvr_new, nvr_old])
+	check(nvr_new < nvr_old - 0.5,
+		"seat raise buys visible road (%.1f m now, %.1f m at the old height)" % [nvr_new, nvr_old])
 
 	# Capture 1: cockpit from the eye anchor itself, at the Drop Start.
 	await snap(main.fallback_cam, "cockpit_view.png")
