@@ -503,10 +503,11 @@ func _run() -> void:
 	# driver's seat on the climb - a wide ribbon ahead, room to
 	# manoeuvre. Numerical width asserted in the smoke (stage 2f);
 	# here the frame itself is the evidence.
-	# Fix Pass 9 (Item 3): the width is Crammond's proportion -
-	# road full width = 6.0x the measured front wheel track.
-	check(absf(main.HALF_WIDTH * 2.0 - 6.0 * main.WHEEL_TRACK_M) < 0.001,
-		"road width is 6.0x the wheel track (%.2f m full, track %.2f m)" % [main.HALF_WIDTH * 2.0, main.WHEEL_TRACK_M])
+	# Fix Pass 10 (Item 3): 12.0 m full width everywhere (the
+	# Fix Pass 9 Crammond proportion superseded by the owner's
+	# two-cars-passing absolute).
+	check(absf(main.HALF_WIDTH * 2.0 - 12.0) < 0.001,
+		"road width is 12.0 m full (%.2f m)" % (main.HALF_WIDTH * 2.0))
 	main.debug_warp_to_s(60.0)
 	for i8: int in 10:
 		await physics_frame

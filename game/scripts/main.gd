@@ -58,7 +58,17 @@ const WHEEL_TRACK_M: float = 1.56 # front wheel-to-wheel, metres (measured)
 const WHEEL_LOCALS: Array[Vector2] = [
 	Vector2(-0.78, -1.55), Vector2(0.78, -1.55),
 	Vector2(-0.78, 1.45), Vector2(0.78, 1.45)]
-const HALF_WIDTH: float = 3.0 * WHEEL_TRACK_M # full width = 6.0 x track = 9.36 m
+# Fix Pass 10 (Item 3): the owner, run 10 - the road must be
+# "wide enough for two cars to pass each other; it isn't." The
+# 9.36 m Crammond proportion (6.0x the wheel track, Fix Pass 9)
+# is superseded by an absolute: HALF_WIDTH 6.0 = 12.0 m full
+# width everywhere. Everything derived from HALF_WIDTH
+# (surface, skirts, edge strips, gantry, off-track / straddle /
+# landing checks) follows from this one constant; stage 2f
+# asserts it and reports the width in car bodies
+# (debug_body_width_m: the body measures 1.80 m, so the road
+# is 6.67 bodies wide - Crammond's own ratio was ~4.74).
+const HALF_WIDTH: float = 6.0
 # Fix Pass 9 (Item 2) - free-heading steering model constants.
 # The grabbed wheel (+-180 deg) maps to a front-wheel angle of
 # +-MAX_LOCK_RAD, scaled down with speed (a full lock at 30 m/s
@@ -3547,6 +3557,32 @@ func debug_set_hang_dangle() -> void:
 		pivot_pos = anchor_pos
 		carrier_vel = Vector3.ZERO
 		carrier_accel = Vector3.ZERO
+
+
+func debug_body_width_m() -> float:
+	# Fix Pass 10 (Item 3): the car BODY's widest extent in
+	# metres, measured off the built meshes (every mesh instance
+	# under car_body, AABBs transformed into car space). The
+	# body is symmetric in x, so the width is 2x the max |x|
+	# reach. Reported alongside the road width in stage 2f -
+	# road-in-bodies is the proportion the eye actually reads.
+	var max_x: float = 0.0
+	var stack: Array[Node] = [car_body]
+	while not stack.is_empty():
+		var nd: Node = stack.pop_back()
+		# The commands/DIAG boards ride in the cockpit but are
+		# documentation surfaces, not bodywork - the widest of
+		# them reaches 1.16 m and would fake the body at 2.32 m.
+		if nd == panel_root or nd == diag_root:
+			continue
+		for ch: Node in nd.get_children():
+			stack.append(ch)
+		var mi: MeshInstance3D = nd as MeshInstance3D
+		if mi != null and mi.mesh != null:
+			var t: Transform3D = car_body.global_transform.affine_inverse() * mi.global_transform
+			var ab: AABB = t * mi.mesh.get_aabb()
+			max_x = maxf(max_x, maxf(absf(ab.position.x), absf(ab.position.x + ab.size.x)))
+	return max_x * 2.0
 
 
 func debug_carrier_turn(dyaw: float) -> void:

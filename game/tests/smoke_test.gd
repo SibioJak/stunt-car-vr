@@ -636,10 +636,17 @@ func _run() -> void:
 	# the model's state: engine pitch monotonic with speed, skid
 	# gain ~0 while gripping and while airborne, > 0 under forced
 	# slip, and the focus-out latch stops both players.
-	# Fix Pass 9 (Item 3): the width is Crammond's PROPORTION -
-	# 6.0x the measured front wheel track (1.56 m) = 9.36 m.
-	check(absf(main.HALF_WIDTH - 3.0 * main.WHEEL_TRACK_M) < 0.001,
-		"stage2f: road is 6.0x the wheel track (%.2f m full, track %.2f m)" % [main.HALF_WIDTH * 2.0, main.WHEEL_TRACK_M])
+	# Fix Pass 9 (Item 3) set the width by Crammond's PROPORTION
+	# (6.0x the wheel track = 9.36 m). Fix Pass 10 (Item 3)
+	# supersedes it with the owner's absolute: 12.0 m full -
+	# "wide enough for two cars to pass each other". Reported
+	# in car bodies as well as metres (the eye reads bodies).
+	check(absf(main.HALF_WIDTH - 6.0) < 0.001,
+		"stage2f: road is 12.0 m full (half %.2f m)" % main.HALF_WIDTH)
+	var body_w2f: float = main.debug_body_width_m()
+	print("stage2f: car BODY width %.2f m -> road is %.2f bodies wide" % [body_w2f, 12.0 / body_w2f])
+	check(body_w2f > 1.5 and body_w2f < 2.1,
+		"stage2f: body width measured off the built meshes (%.2f m)" % body_w2f)
 	main.debug_warp_to_s(10.0)
 	main.test_throttle = 0.0
 	main.debug_pin_speed(6.0)
@@ -1502,7 +1509,11 @@ func _run() -> void:
 			"stage13: %s straddle rolls toward the off side (up-along-right %.3f, ~%.0f deg)" % [side_name, roll13, rad_to_deg(asin(clampf(roll13, -1.0, 1.0)))])
 		check(absf(main.car_lat - sgn13 * (main.HALF_WIDTH + 0.35)) < 0.55,
 			"stage13: %s straddle holds its line on the shoulder (car_lat %.2f m)" % [side_name, main.car_lat])
-		for is13: int in 200: # the save: steer back to centre
+		# Fix Pass 10 (Item 3): the save window grows 200 -> 340
+		# frames - the road is 12 m wide now, so the trip back
+		# from the shoulder is ~1.3 m longer at the lane law's
+		# capped approach angle. Same mechanism, longer road.
+		for is13: int in 340: # the save: steer back to centre
 			autopilot_steer(0.0)
 			await physics_frame
 		check(main.mode == main.MODE_DRIVE and absf(main.car_lat) < 0.6,
@@ -1510,8 +1521,19 @@ func _run() -> void:
 		var roll_save13: float = main.car.global_transform.basis.y.dot(main._heading_right())
 		check(absf(roll_save13) < 0.035,
 			"stage13: %s save - the wobble is gone once support is back (roll %.3f)" % [side_name, roll_save13])
+		# Fix Pass 10 (Item 3): the fall leg gets a FRESH run at
+		# the home straight. At 12 m wide the straddle + save
+		# legs above now travel far enough that the fall leg ran
+		# out of straight and crossed the finish line instead of
+		# going over - each leg is a property of the overshoot,
+		# not of one unbroken journey, so it re-stages cleanly.
+		main.debug_warp_to_s(main.track_len - 190.0)
+		main.test_throttle = 0.25
+		for ir13: int in 90:
+			autopilot_steer(0.0)
+			await physics_frame
 		var fell13: bool = false
-		for io13: int in 260:
+		for io13: int in 400: # FP10: wider road - the fall line is 1.3 m further out
 			autopilot_steer(sgn13 * (main.HALF_WIDTH + 2.55))
 			await physics_frame
 			if main.mode == main.MODE_AIR:
