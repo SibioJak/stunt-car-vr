@@ -325,6 +325,16 @@ var air_vel: Vector3 = Vector3.ZERO
 var air_time: float = 0.0
 var air_s_est: float = 0.0
 var air_from_gap: bool = false
+# Fix Pass 10 (Item 1): the s at which the car LEFT the road,
+# recorded at air entry. The drone's drop may never be ahead of
+# this - where the car ended up after flying/tumbling is not
+# where it fell (a long flight past an obstacle it failed must
+# not pay out progress). Read by _update_air's recovery call.
+var air_start_s: float = 0.0
+# Fix Pass 10 (Item 3 prep): the active track is a closed
+# circuit (s wraps) or an open ribbon. Set by _set_track;
+# the ribbon default keeps every Fix Pass <=9 code path as-is.
+var track_closed: bool = false
 
 # pendulum state (hang)
 var pend_th_f: float = 0.30
@@ -1220,6 +1230,7 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 	var vy: float = vel2.dot(t2) * t3.y / maxf(t2.length_squared(), 0.04) + extra_vy
 	air_vel = Vector3(vel2.x, vy, vel2.y)
 	air_s_est = car_s
+	air_start_s = car_s # Fix Pass 10 (Item 1): the fall starts HERE
 	air_time = 0.0
 	air_from_gap = from_gap
 	was_airborne = true
@@ -2204,32 +2215,93 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 	_prep_new_sequence()
 
 
+# Fix Pass 10 (Item 1): DROP_MIN_RUNUP_M - the hazard-free road a
+# drop point must have IN FRONT of it before the next feature
+# (gap lip, hump, staircase, steep section, sharp bank entry).
+# The owner's rules, verbatim intent: never drop in front of a
+# jump; never drop ahead of the fall.
+const DROP_MIN_RUNUP_M: float = 25.0
+
+
+func _drop_piece_ok(s: float) -> bool:
+	# A valid drop piece in itself: on the road (no gap), flat,
+	# straight, unbanked - the Fix Pass 2 hang-centring criteria
+	# (a level, unbanked section keeps the plumb hang centred
+	# over the centreline).
+	var fr: Dictionary = _frame_at(s)
+	return not bool(fr["gap"]) and absf(float(fr["curv"])) < 0.004 \
+		and absf(float(fr["tan"].y)) < 0.08 and absf(float(fr["bank"])) < 0.03
+
+
+func _drop_runup_ok(drop_s: float) -> bool:
+	# DROP_MIN_RUNUP_M of hazard-free road ahead of the drop
+	# point: no gap sample, no crest that unloads the car (kv
+	# above the hump band - the humps peak at ~0.021), nothing
+	# steep (the staircase reads tan.y ~-0.37, lips ~0.17+ on
+	# their approaches), no banked or curving section.
+	var s: float = drop_s + 1.0
+	var end: float = drop_s + DROP_MIN_RUNUP_M
+	while s <= end:
+		var fr: Dictionary = _frame_at(s)
+		if bool(fr["gap"]):
+			return false
+		if float(fr["kv"]) > 0.010:
+			return false
+		if absf(float(fr["tan"].y)) > 0.20:
+			return false
+		if absf(float(fr["bank"])) > 0.10:
+			return false
+		if absf(float(fr["curv"])) > 0.006:
+			return false
+		s += 1.0
+	return true
+
+
 func _find_drop_s(from_s: float) -> float:
-	# Nearest suitable hang section ahead: no gap, near-straight, flat,
-	# and UNBANKED. Fix Pass 2: the old search accepted slopes up to
-	# tan.y 0.12 and ignored bank entirely - the corner's bank decays
-	# over ~50 samples past the corner, so drops were offered over
-	# still-banked ribbon where the hang point drifted a full half-width
-	# sideways ("barely over the track"). The car hangs plumb (world up)
-	# from the anchor, so a level, unbanked section keeps the swing
-	# centre squarely over the centreline.
-	var limit: float = track_len - 4.0
-	var cand: float = from_s + 4.0
-	while cand < limit:
-		var fr: Dictionary = _frame_at(cand)
-		if not bool(fr["gap"]) and absf(float(fr["curv"])) < 0.004 \
-				and absf(float(fr["tan"].y)) < 0.08 and absf(float(fr["bank"])) < 0.03:
+	# Fix Pass 10 (Item 1): the drop search walks BACK, never
+	# forward (the pre-fix search walked AHEAD from the fall -
+	# free progress, and it could set the car down right in
+	# front of the next jump: both of the owner's run-10
+	# complaints in one function). from_s is where the car left
+	# the road (air_start_s for falls, car_s for an on-demand
+	# lift) and is the ceiling: candidates step back from it in
+	# 2 m strides to the nearest piece that is itself valid
+	# (_drop_piece_ok) AND has DROP_MIN_RUNUP_M of clear road
+	# ahead (_drop_runup_ok). On a closed track the walk wraps
+	# the start/finish seam and may search the whole lap.
+	# Fallbacks, in order, each still honouring the ceiling:
+	# the nearest valid piece ignoring the run-up; the nearest
+	# piece under the pre-Fix Pass 10 relaxed criteria (slope
+	# < 0.12, bank ignored); then the start line itself.
+	var origin_s: float
+	var max_back: float
+	if track_closed:
+		origin_s = wrapf(from_s, 0.0, track_len)
+		max_back = track_len
+	else:
+		origin_s = clampf(from_s, 2.0, track_len - 2.0)
+		max_back = origin_s - 2.0
+	var back: float = 0.0
+	while back <= max_back:
+		var cand: float = wrapf(origin_s - back, 0.0, track_len) if track_closed else origin_s - back
+		if _drop_piece_ok(cand) and _drop_runup_ok(cand):
 			return cand
-		cand += 3.0
-	# Relaxed fallback (pre-fix criteria) if nothing strict qualifies.
-	cand = from_s + 4.0
-	while cand < limit:
-		var fr2: Dictionary = _frame_at(cand)
-		if not bool(fr2["gap"]) and absf(float(fr2["curv"])) < 0.004 \
-				and absf(float(fr2["tan"].y)) < 0.12:
-			return cand
-		cand += 3.0
-	return clampf(from_s + 8.0, 0.0, limit)
+		back += 2.0
+	back = 0.0
+	while back <= max_back:
+		var cand2: float = wrapf(origin_s - back, 0.0, track_len) if track_closed else origin_s - back
+		if _drop_piece_ok(cand2):
+			return cand2
+		back += 2.0
+	back = 0.0
+	while back <= max_back:
+		var cand3: float = wrapf(origin_s - back, 0.0, track_len) if track_closed else origin_s - back
+		var fr3: Dictionary = _frame_at(cand3)
+		if not bool(fr3["gap"]) and absf(float(fr3["curv"])) < 0.004 \
+				and absf(float(fr3["tan"].y)) < 0.12:
+			return cand3
+		back += 2.0
+	return 2.0 if not track_closed else wrapf(origin_s - max_back, 0.0, track_len)
 
 
 func _do_release() -> void:
@@ -2248,6 +2320,7 @@ func _do_release() -> void:
 		air_vel = hang_vel + f * 3.0
 	air_vel.y += dip_vy * 0.5
 	air_s_est = drop_target_s
+	air_start_s = drop_target_s # a botched release falls from HERE
 	air_time = 0.0
 	air_from_gap = false
 	# Fix Pass 9: the released car flies and lands under the
@@ -2487,9 +2560,13 @@ func _update_air(delta: float) -> void:
 	if not bool(fr["gap"]) and h <= CLEARANCE + 0.05 and h > -2.2 and absf(lat) <= HALF_WIDTH + EDGE_FALL_OVERSHOOT and air_vel.y < 2.5:
 		_land(fr, lat, h)
 		return
-	# missed it: the drone catches you
+	# missed it: the drone catches you. Fix Pass 10 (Item 1): the
+	# recovery is charged from air_start_s - where the car LEFT
+	# the road - not from air_s_est, which by now includes the
+	# whole flight (and would drop the car ahead of its fall,
+	# past obstacles it failed: the run-10 cheat).
 	if air_time > 2.4 or h < -13.0:
-		_begin_recovery(pos, air_s_est)
+		_begin_recovery(pos, air_start_s)
 
 
 func _land(fr: Dictionary, lat: float, h: float) -> void:

@@ -1594,6 +1594,79 @@ func _run() -> void:
 		"stage15: DIAG zone line names the hand in the zone (%s)" % main._diag_zone_line())
 	main.test_hand_set = false
 
+	# ---------- stage 16: Fix Pass 10 (Item 1) - drone placement ----------
+	# The drop search walks BACK from where the car left the road
+	# and must land on a flat straight piece with
+	# DROP_MIN_RUNUP_M of hazard-free road ahead. Property-check
+	# the brief's staged falls directly against _find_drop_s
+	# (pure function of the built track), then fly one LIVE gap
+	# fall through the production recovery path.
+	main.start_race()
+	await frames(4)
+	var fall_cases: Array = [
+		[main.gap_s1 + 2.0, "just past gap 1"],
+		[main.gap2_s1 + 2.0, "just past gap 2"],
+		[155.0, "mid-banked-corner"],
+		[main.ext_s0 - 2.0, "one car length before hump 1"],
+		[main.stairs_s0 + 15.0, "ON the staircase"],
+	]
+	for fc: Variant in fall_cases:
+		var fall_s: float = float(fc[0])
+		var drop_s: float = main._find_drop_s(fall_s)
+		check(drop_s <= fall_s + 0.01,
+			"stage16: drop never ahead of the fall (%s: fall %.0f -> drop %.0f)" % [String(fc[1]), fall_s, drop_s])
+		check(main._drop_piece_ok(drop_s),
+			"stage16: drop piece flat/straight/unbanked (%s, drop %.0f)" % [String(fc[1]), drop_s])
+		check(main._drop_runup_ok(drop_s),
+			"stage16: drop has %.0f m hazard-free run-up (%s, drop %.0f)" % [main.DROP_MIN_RUNUP_M, String(fc[1]), drop_s])
+	check(main._drop_piece_ok(2.0) and main._drop_runup_ok(2.0),
+		"stage16: the start-line piece itself qualifies as a drop (gantry rule)")
+	# LIVE: too slow for the 14 m gap - coast in at 9 m/s, fall
+	# in, and let the production recovery run. The drop must sit
+	# at or behind where the car left the road AND clear of the
+	# gap it just failed (run-up may not cross the lip).
+	for idx: Variant in main.prep_order.duplicate():
+		grip_flip_switch(int(idx), "R")
+	main._do_release()
+	var drv16: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv16, "stage16: setup release lands into DRIVE")
+	main.debug_warp_to_s(main.gap_s0 - 60.0)
+	var f16: int = 0
+	var entered_air: bool = false
+	while f16 < 5000 and not entered_air:
+		autopilot() # the approach crosses the banked corner - steer it
+		main.debug_pin_speed(6.0) # per-frame pin: slow enough to fall IN
+		await physics_frame
+		f16 += 1
+		# A hop off the lip crest 26 m earlier also enters AIR;
+		# only the entry AT the gap counts (fall start at the lip
+		# of the gap itself).
+		if main.mode == main.MODE_AIR and main.air_start_s >= main.gap_s0 - 2.5:
+			entered_air = true
+	check(entered_air, "stage16: slow entry falls into gap 1 (live)")
+	if entered_air:
+		check(main.air_start_s >= main.gap_s0 - 2.5 and main.air_start_s <= main.gap_s1 + 1.0,
+			"stage16: fall-start s recorded at the lip (%.1f, gap %.0f-%.0f)" % [main.air_start_s, main.gap_s0, main.gap_s1])
+		f16 = 0
+		var caught16: bool = false
+		var landed16: bool = false
+		while f16 < 6000 and not caught16 and not landed16:
+			await physics_frame
+			f16 += 1
+			if main.mode == main.MODE_HANG:
+				caught16 = true
+			elif main.mode == main.MODE_DRIVE:
+				landed16 = true # made the far side - fixture invalid, say so
+		check(caught16 and not landed16,
+			"stage16: drone catches the gap fall (live)")
+		if caught16:
+			check(main.drop_target_s <= main.air_start_s + 0.01,
+				"stage16: live drop at/behind the fall start (drop %.0f <= fall %.0f)" % [main.drop_target_s, main.air_start_s])
+			check(main.drop_target_s <= main.gap_s0 - 24.0,
+				"stage16: live drop's run-up clears the failed gap (drop %.0f, lip %.0f)" % [main.drop_target_s, main.gap_s0])
+			check(main._drop_piece_ok(main.drop_target_s) and main._drop_runup_ok(main.drop_target_s),
+				"stage16: live drop piece + run-up valid (drop %.0f)" % main.drop_target_s)
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
