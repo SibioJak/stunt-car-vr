@@ -107,6 +107,7 @@ func check_api_surface() -> void:
 		["AudioStreamPlayer", "stop"], # Fix Pass 6: the teardown latch stops both players
 		["Time", "get_ticks_msec"], # Fix Pass 6: audio stall-watchdog heartbeat
 		["Time", "get_ticks_usec"], # Fix Pass 8: the step logger's frame-time column
+		["XRInterface", "trigger_haptic_pulse"], # Fix Pass 11 (Item 4): xr_iface.trigger_haptic_pulse - on the BASE class, not OpenXRInterface
 	]
 	for entry: Variant in methods:
 		var pair: Array = entry
@@ -2352,6 +2353,62 @@ func _run() -> void:
 	main._do_release()
 	var drv24b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv24b, "stage24: release after the aligned arrival resumes driving")
+
+	# ---------- stage 25: Fix Pass 11 (Item 4) - the drop lever ----
+	# Production path only: posed test hands through _poll_grab.
+	# (a) grab + pull past the detent = the car lets go;
+	# (b) grab + partial pull + release the grip = the lever
+	# springs home and nothing drops; (c) the panel names the
+	# lever as THE release (the XR trigger release is retired).
+	main.start_race()
+	await frames(4)
+	main.dip_timer = 1000.0
+	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
+		"stage25: dangling for the lever test")
+	check(main._panel_text().contains("DROP LEVER"),
+		"stage25: the panel names the DROP LEVER as the release")
+	var lever_at = func(th: float) -> Vector3:
+		return main.car_body.global_transform * (main.drop_lever_pivot.position \
+			+ Basis(Vector3.RIGHT, th) * Vector3(0, 0.45, 0))
+	main.test_hand_set = true
+	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_hand_pos["R"] = lever_at.call(main.drop_lever_angle)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.drop_lever_hand == "R", "stage25: grip near the shaft latches the lever")
+	main.test_hand_pos["R"] = lever_at.call(0.30)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.drop_lever_angle - 0.30) < 0.06 and main.mode == main.MODE_HANG,
+		"stage25: lever follows the hand below the detent (%.2f rad), no drop" % main.drop_lever_angle)
+	main.test_hand_pos["R"] = lever_at.call(0.55)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.mode == main.MODE_AIR,
+		"stage25: past the detent (%.2f rad) the car lets go" % main.drop_lever_angle)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_set = false
+	var drv25: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv25, "stage25: the lever's drop lands into DRIVE")
+	# (b) partial pull, early release
+	main.start_race()
+	await frames(4)
+	main.dip_timer = 1000.0
+	main.test_hand_set = true
+	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_hand_pos["R"] = lever_at.call(main.drop_lever_angle)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_pos["R"] = lever_at.call(0.15)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	var pulled25: float = main.drop_lever_angle
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_set = false
+	check(absf(pulled25 - 0.15) < 0.06 and main.drop_lever_hand == "" and main.mode == main.MODE_HANG,
+		"stage25: partial pull (%.2f rad) held, grip released, car still hangs" % pulled25)
+	await frames(40)
+	check(absf(main.drop_lever_angle - main.DROP_LEVER_REST_RAD) < 0.03 and main.mode == main.MODE_HANG,
+		"stage25: lever springs home (%.2f rad), no drop" % main.drop_lever_angle)
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")

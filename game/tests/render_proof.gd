@@ -357,10 +357,43 @@ func _run() -> void:
 			mk.position = to_body_rp * sp2 + Vector3(0.0, 0.0, 0.055)
 			main.car_body.add_child(mk)
 			markers.append(mk)
+	# Fix Pass 11 (Item 4): the drop lever's grab segment joins
+	# the overlay (same stand-off toward the driver).
+	var dseg_rp: Array = main.debug_drop_lever_segment()
+	if dseg_rp.size() == 2:
+		for si3: int in 3:
+			var sp3: Vector3 = (dseg_rp[0] as Vector3).lerp(dseg_rp[1] as Vector3, float(si3) / 2.0)
+			var mk3 := MeshInstance3D.new()
+			var sm3 := SphereMesh.new()
+			sm3.radius = 0.025
+			sm3.height = 0.05
+			mk3.mesh = sm3
+			mk3.material_override = mark_mat
+			mk3.position = to_body_rp * sp3 + Vector3(0.0, 0.0, 0.055)
+			main.car_body.add_child(mk3)
+			markers.append(mk3)
 	await snap(main.fallback_cam, "zone_overlay_view.png")
 	for mk2: MeshInstance3D in markers:
 		main.car_body.remove_child(mk2)
 		mk2.free()
+
+	# Fix Pass 11 (Item 4): the drop lever's own portrait - it
+	# sits beside the driver, outside the eye camera's frame,
+	# so it gets a dedicated camera: lever posed mid-pull
+	# (0.45 rad, past the detent) on the right pod.
+	check(main.drop_lever_pivot != null, "the drop lever is built on the right pod")
+	main.drop_lever_angle = 0.45
+	main.drop_lever_pivot.rotation.x = 0.45
+	var cam_dl := Camera3D.new()
+	main.car_body.add_child(cam_dl)
+	cam_dl.position = Vector3(1.55, 1.35, 0.75)
+	await physics_frame
+	await physics_frame
+	cam_dl.look_at(main.car_body.global_transform * Vector3(0.72, 0.95, -0.10), Vector3.UP)
+	await snap(cam_dl, "drop_lever_view.png")
+	cam_dl.queue_free()
+	main.drop_lever_angle = main.DROP_LEVER_REST_RAD
+	main.drop_lever_pivot.rotation.x = main.DROP_LEVER_REST_RAD
 
 	# Fix Pass 3 (Item 4): the stood-up wheel must FACE the driver.
 	# Project the rim circle (in the tilt node's local XZ plane)

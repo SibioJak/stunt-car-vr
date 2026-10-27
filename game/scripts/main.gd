@@ -635,6 +635,24 @@ var anchor_bake_yaw: bool = false
 # user:// writes anywhere); that one key is the whole file for
 # now. Reported as a brief/code mismatch in the pass report.
 var seat_trim: float = 0.0
+# --- Fix Pass 11 (Item 4): the drop lever ---
+# The recovery release is a big physical lever on the RIGHT
+# pod, in the cockpit's lever-forward language: grab the
+# upper shaft, pull it toward you through a real throw; past
+# the DETENT the car lets go. Let go of the grip earlier and
+# it springs back and nothing drops. Angles are the pivot's
+# rotation.x (lever-local +Y is the shaft): rest leans
+# forward, the pull sweeps it back toward the driver.
+const DROP_LEVER_REST_RAD: float = -0.30
+const DROP_LEVER_DETENT_RAD: float = 0.40
+const DROP_LEVER_MAX_RAD: float = 0.65
+const DROP_LEVER_GRAB_RADIUS: float = 0.16
+const DROP_LEVER_SPRING_RATE: float = 3.5 # rad/s back to rest
+var drop_lever_pivot: Node3D
+var drop_lever_angle: float = DROP_LEVER_REST_RAD
+var drop_lever_hand: String = "" # "" / "L" / "R" while gripped
+var drop_lever_fired: bool = false # detent latch for this pull
+var xr_iface: XRInterface # stored at rig build for haptics
 # Fix Pass 3 live diagnostics (panel DIAG block, refreshed at ~5 Hz):
 # raw grip-channel values per hand, exactly as the runtime delivers.
 var diag_grip: Dictionary = {"L": 0.0, "R": 0.0}
@@ -746,6 +764,7 @@ func _build_rig() -> void:
 	xr_cam = XRCamera3D.new()
 	origin.add_child(xr_cam)
 	var xr_interface: XRInterface = XRServer.find_interface("OpenXR")
+	xr_iface = xr_interface
 	if xr_interface != null and xr_interface.is_initialized():
 		get_viewport().use_xr = true
 		xr_ok = true
@@ -2291,6 +2310,23 @@ func _build_cockpit() -> void:
 		_box(spiv, Vector3(0.055, 0.20, 0.055), Vector3(0, 0.08, 0), _mat(Color(0.65, 0.65, 0.68)))
 		_box(spiv, Vector3(0.085, 0.06, 0.085), Vector3(0, 0.19, 0), _mat_unshaded(seat_cols[si]))
 		_register_dash_ctl(spiv, seat_kinds[si])
+	# Fix Pass 11 (Item 4): the DROP LEVER on the RIGHT pod -
+	# the recovery release, worked like the real thing: a big
+	# lever (0.50 m shaft, red knob) on the pod top at
+	# (0.72, 0.69, -0.10), 0.80 m from the wheel hub - well
+	# outside the 0.40 m wheel-grab radius, so the two grabs
+	# can never fight. Rest angle leans it forward; the pull
+	# sweeps it back toward the driver through the detent.
+	# Grab/pull/spring/haptic live in _poll_grab /
+	# _update_drop_lever; Item 2's audit covers its zone.
+	_box(car_body, Vector3(0.18, 0.03, 0.34), Vector3(0.72, 0.70, -0.10), _mat(Color(0.10, 0.10, 0.12)))
+	drop_lever_pivot = Node3D.new()
+	drop_lever_pivot.name = "DropLever"
+	drop_lever_pivot.position = Vector3(0.72, 0.71, -0.10)
+	drop_lever_pivot.rotation.x = DROP_LEVER_REST_RAD
+	car_body.add_child(drop_lever_pivot)
+	_box(drop_lever_pivot, Vector3(0.06, 0.50, 0.06), Vector3(0, 0.25, 0), _mat(Color(0.55, 0.55, 0.58)))
+	_box(drop_lever_pivot, Vector3(0.11, 0.11, 0.11), Vector3(0, 0.52, 0), _mat_unshaded(Color(0.90, 0.12, 0.10)))
 	# Lean indicator needle on the dash (experiment feedback)
 	# (rides up with the raised wheel so it stays clear of the rim)
 	lean_needle = _box(car_body, Vector3(0.03, 0.13, 0.02), Vector3(0, 1.155, -0.615), _mat_unshaded(Color(0.2, 0.9, 1.0)))
@@ -2367,15 +2403,18 @@ func _build_cockpit() -> void:
 	# shifts left with it - the ZONE line gained the two seat
 	# tags (SUP/SDN) and wrapped at the old 600 px label width;
 	# the full tag names stay.
-	diag_root.position = Vector3(-0.55, 1.29, -0.85)
+	# Fix Pass 11 (Item 4): widened again (0.84 -> 1.02, label
+	# 760 -> 900 px) - the ZONE line gained the DRP tag and
+	# wrapped again; the tag names still stay full.
+	diag_root.position = Vector3(-0.54, 1.29, -1.00)
 	diag_root.rotation_degrees = Vector3(-10, 28, 0)
 	car_body.add_child(diag_root)
-	_box(diag_root, Vector3(0.84, 0.34, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)), "DiagBoard")
+	_box(diag_root, Vector3(1.02, 0.34, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)), "DiagBoard")
 	diag_label = Label3D.new()
-	diag_label.position = Vector3(-0.36, 0.125, 0.02)
+	diag_label.position = Vector3(-0.45, 0.125, 0.02)
 	diag_label.font_size = 26
 	diag_label.pixel_size = 0.00105
-	diag_label.width = 760.0
+	diag_label.width = 900.0
 	diag_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	diag_label.modulate = Color(0.92, 0.95, 1.0)
 	diag_label.outline_size = 5
@@ -2405,7 +2444,7 @@ func _panel_text() -> String:
 	lines.append("Grab wheel: GRIP near wheel, turn hand")
 	lines.append("Throttle R trigger / Brake L trigger")
 	lines.append("Boost: R A button (while driving)")
-	lines.append("Release: R trigger (when dangling)")
+	lines.append("Release: pull the DROP LEVER (right pod)")
 	lines.append("Flip switch: GRIP near a dash switch")
 	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
 	lines.append("Call drone: L X button (while driving)")
@@ -2474,6 +2513,15 @@ func _diag_zone_line() -> String:
 		"seatup": "SUP", "seatdn": "SDN"}
 	var near_l: int = _dash_ctl_near(_hand_pos("L"))
 	var near_r: int = _dash_ctl_near(_hand_pos("R"))
+	# Fix Pass 11 (Item 4): the drop lever's zone joins the
+	# readout (DRP:L / DRP:R / DRP:-).
+	var drp: String = "-"
+	if _hand_near_drop_lever("L") and _hand_near_drop_lever("R"):
+		drp = "B"
+	elif _hand_near_drop_lever("L"):
+		drp = "L"
+	elif _hand_near_drop_lever("R"):
+		drp = "R"
 	var tags: Array[String] = []
 	for i: int in dash_ctl_nodes.size():
 		var who: String = "-"
@@ -2484,6 +2532,7 @@ func _diag_zone_line() -> String:
 		elif near_r == i:
 			who = "R"
 		tags.append("%s:%s" % [String(short.get(dash_ctl_kinds[i], "?")), who])
+	tags.append("DRP:%s" % drp)
 	return "ZONE " + " ".join(tags)
 
 
@@ -2658,9 +2707,11 @@ func _poll_inputs(delta: float) -> void:
 		if _btn_edge("both_grips", bool(gripping["L"]) and bool(gripping["R"])):
 			_recenter()
 		# edges
-		if _btn_edge("r_trig_click", _input_bool(rc, &"trigger_click")):
-			if mode == MODE_HANG and hang_phase == "dangle":
-				_do_release()
+		# Fix Pass 11 (Item 4): the XR right-trigger release is
+		# RETIRED - the drop lever is THE release now (the panel
+		# says so). What remains as a non-lever path is desktop /
+		# test only: SPACE and the stage hook (test_release_queued
+		# below).
 		if _btn_edge("l_ax", _input_bool(lc, &"ax_button")):
 			if mode == MODE_DRIVE:
 				_call_drone()
@@ -2962,6 +3013,68 @@ func _hand_wheel_angle(hand: String) -> float:
 	return atan2(local.dot(_wheel_plane_v()), local.x)
 
 
+## Fix Pass 11 (Item 4): the drop lever's grab segment in
+## world space - pivot-local (0, 0.30, 0) to (0, 0.52, 0),
+## the upper shaft and knob. Shared by the grab test, Item
+## 2's audit and the render proof's overlay.
+func debug_drop_lever_segment() -> Array:
+	if drop_lever_pivot == null:
+		return []
+	var xf: Transform3D = drop_lever_pivot.global_transform
+	return [xf * Vector3(0, 0.30, 0), xf * Vector3(0, 0.52, 0)]
+
+
+func _hand_near_drop_lever(hand: String) -> bool:
+	var seg: Array = debug_drop_lever_segment()
+	if seg.size() != 2:
+		return false
+	return _seg_point_dist(seg[0], seg[1], _hand_pos(hand)) <= DROP_LEVER_GRAB_RADIUS
+
+
+func _update_drop_lever_pull(hand: String) -> void:
+	# The lever follows the gripped hand along its arc: the
+	# hand's angle about the pivot, measured in car space on
+	# the lever's own swing plane (fore-aft), clamped to the
+	# throw. Crossing the detent fires the release once.
+	var lp: Vector3 = car_body.global_transform.affine_inverse() * _hand_pos(hand)
+	var v: Vector3 = lp - drop_lever_pivot.position
+	var ang: float = clampf(atan2(v.z, v.y), DROP_LEVER_REST_RAD, DROP_LEVER_MAX_RAD)
+	drop_lever_angle = ang
+	if ang >= DROP_LEVER_DETENT_RAD and not drop_lever_fired:
+		drop_lever_fired = true
+		_pulse_detent(hand)
+		_do_release() # self-gated: only a dangle lets go
+
+
+func _update_drop_lever(delta: float) -> void:
+	# Spring home when ungripped (early release = no drop),
+	# and the single writer of the pivot's rotation.
+	if drop_lever_hand == "":
+		if drop_lever_angle > DROP_LEVER_REST_RAD:
+			drop_lever_angle = maxf(DROP_LEVER_REST_RAD,
+				drop_lever_angle - DROP_LEVER_SPRING_RATE * delta)
+		if drop_lever_angle < DROP_LEVER_DETENT_RAD - 0.10:
+			drop_lever_fired = false
+	if drop_lever_pivot != null:
+		drop_lever_pivot.rotation.x = drop_lever_angle
+
+
+func _pulse_detent(hand: String) -> void:
+	# The detent is FELT: a short pulse on the pulling hand
+	# through the action map's existing "haptic" output
+	# action (bound to /user/hand/{left,right}/output/haptic
+	# in project.godot). Null-safe - no live interface (tests,
+	# desktop) means no pulse and no error. Whether it is
+	# perceptible on the live rig is the owner's verdict:
+	# unverifiable headless, listed as such in the pass report.
+	# API guarded: XRInterface.trigger_haptic_pulse (the call
+	# lives on the BASE class, not OpenXRInterface).
+	if not xr_ok or xr_iface == null:
+		return
+	xr_iface.trigger_haptic_pulse(&"haptic",
+		&"left_hand" if hand == "L" else &"right_hand", 0.0, 0.7, 0.12, 0.0)
+
+
 func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	# Fix Pass 3 (Item 3): grip is active if ANY channel the runtime
 	# actually delivers says so - analog "grip" > 0.65 OR "grip_click"
@@ -2987,6 +3100,23 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	diag_click[hand] = grip_click
 	diag_force[hand] = grip_force
 	var now: bool = grip_v > 0.65 or grip_click or grip_force > 0.65
+	# --- Fix Pass 11 (Item 4): THE DROP LEVER ---
+	# Latched per hand while gripped: the lever follows the
+	# hand along its arc; crossing the detent fires the
+	# release (plus a haptic pulse on the pulling hand) once
+	# per pull. Releasing the grip early leaves the lever to
+	# spring home in _update_drop_lever - no drop. Its zone
+	# overlaps no dash zone and sits outside the wheel-grab
+	# radius, so the grabs can never fight.
+	if drop_lever_hand == hand:
+		if not now:
+			drop_lever_hand = ""
+		else:
+			_update_drop_lever_pull(hand)
+	elif now and drop_lever_hand == "" and _hand_near_drop_lever(hand):
+		drop_lever_hand = hand
+		drop_lever_fired = false
+		_update_drop_lever_pull(hand)
 	var near_wheel: bool = _hand_pos(hand).distance_to(car.global_transform * _wheel_hub_local()) < WHEEL_GRAB_RADIUS
 	# Fix Pass 9 (Item 1): LEVEL-based dash activation. Chris, run 9:
 	# "I press grip near a lever, the panel says HOLD, levers don't
@@ -3459,6 +3589,7 @@ func _physics_process(delta: float) -> void:
 			speed = move_toward(speed, 0.0, 8.0 * delta)
 	if mode != MODE_DRIVE:
 		slip_state = 0.0 # tires unloaded: no slip, no skid
+	_update_drop_lever(delta) # Fix Pass 11 (Item 4): spring + pose
 	_update_lean_reading()
 	_update_suspension(delta)
 	_update_body_spring(delta)
@@ -4783,4 +4914,33 @@ func debug_dash_ctl_audit() -> Dictionary:
 				var lp2: Vector3 = mi2.global_transform.affine_inverse() * p
 				if _pt_in_aabb(lp2, mi2.get_aabb(), 0.005):
 					violations.append("%s sample %d: buried in %s" % [dash_ctl_kinds[i], si, mi2.name])
+	# Fix Pass 11 (Item 4): the drop lever's zone joins the
+	# audit, sampled at rest AND at full throw (the segment
+	# moves with the handle by construction; both poses must
+	# track its own shaft/knob and stay unburied).
+	if drop_lever_pivot != null:
+		var lown: Array[MeshInstance3D] = []
+		_collect_meshes(drop_lever_pivot, lown)
+		var saved_ang: float = drop_lever_pivot.rotation.x
+		for ang: float in [DROP_LEVER_REST_RAD, DROP_LEVER_MAX_RAD]:
+			drop_lever_pivot.rotation.x = ang
+			var lseg: Array = debug_drop_lever_segment()
+			if lseg.size() == 2:
+				for si2: int in DASH_AUDIT_SAMPLES:
+					var t2: float = float(si2) / float(DASH_AUDIT_SAMPLES - 1)
+					var p2: Vector3 = (lseg[0] as Vector3).lerp(lseg[1] as Vector3, t2)
+					var best2: float = 1e9
+					for mi3: MeshInstance3D in lown:
+						var lp3: Vector3 = mi3.global_transform.affine_inverse() * p2
+						best2 = minf(best2, _pt_aabb_dist(lp3, mi3.get_aabb()))
+					worst = maxf(worst, best2)
+					if best2 > DASH_AUDIT_TOL:
+						violations.append("droplever sample %d at %.2f rad: %.3f m from its own mesh" % [si2, ang, best2])
+					for mi4: MeshInstance3D in all_meshes:
+						if lown.has(mi4):
+							continue
+						var lp4: Vector3 = mi4.global_transform.affine_inverse() * p2
+						if _pt_in_aabb(lp4, mi4.get_aabb(), 0.005):
+							violations.append("droplever sample %d at %.2f rad: buried in %s" % [si2, ang, mi4.name])
+		drop_lever_pivot.rotation.x = saved_ang
 	return {"worst": worst, "violations": violations}
