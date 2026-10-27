@@ -517,6 +517,9 @@ var carrier_accel: Vector3 = Vector3.ZERO # measured, lightly filtered
 var carrier_yaw: float = 0.0 # the carrier's own heading
 var carrier_path: Array[Vector3] = [] # retrace waypoints for the carry
 var carrier_wp: int = 0
+# Fix Pass 11 (Item 3): time spent at the station waiting for
+# the arrival yaw gate (bounded - see _step_carrier).
+var station_wait_t: float = 0.0
 var orient_yaw: float = 0.0 # the car's facing under the lines (springy)
 var orient_yaw_v: float = 0.0
 var dip_t: float = -1.0 # flown-dip progress; -1 = not dipping
@@ -3290,6 +3293,7 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 	carrier_vel = Vector3.ZERO
 	carrier_accel = Vector3.ZERO
 	carrier_yaw = _frame_yaw(_frame_at(from_s)["tan"])
+	station_wait_t = 0.0
 	carrier_path.clear()
 	carrier_wp = 0
 	var back_dist: float = wrapf(from_s - drop_target_s, 0.0, track_len) if track_closed \
@@ -3851,12 +3855,25 @@ func _step_carrier(delta: float) -> void:
 	# Carrier yaw: at speed it faces its velocity; at station it
 	# faces the drop section - both rate-limited, so a heading
 	# change is a turn the car gets twisted through afterwards.
+	# Fix Pass 11 (Item 3): the return is flown as an APPROACH.
+	# The velocity the carrier arrives on points back along the
+	# walk-back - ~180 deg from the drop tangent on a straight -
+	# so facing velocity to the very end left the whole turn to
+	# be spun through at the station while the car dangled
+	# (run 11: "comes in facing the direction you came and
+	# takes a painfully long time to turn around"). From the
+	# final approach on - the last waypoint, or the last ~45 m
+	# (at cruise 9 m/s and CARRIER_YAW_RATE that is >= 5 s,
+	# enough for the full 180) - the yaw goal is the DROP
+	# heading: the turn is flown, not dangled.
 	var yaw_goal: float = carrier_yaw
 	var hv: Vector3 = Vector3(carrier_vel.x, 0.0, carrier_vel.z)
-	if hv.length() > 0.8:
-		yaw_goal = atan2(-hv.normalized().x, -hv.normalized().z)
-	elif hang_phase == "dangle":
+	var on_approach: bool = hang_phase == "dangle" or (hang_phase == "carry" \
+		and (arrive or anchor_pos.distance_to(anchor_target) < 45.0))
+	if on_approach:
 		yaw_goal = _frame_yaw(_frame_at(drop_target_s)["tan"])
+	elif hv.length() > 0.8:
+		yaw_goal = atan2(-hv.normalized().x, -hv.normalized().z)
 	var max_turn: float = CARRIER_YAW_RATE * delta
 	carrier_yaw += clampf(wrapf(yaw_goal - carrier_yaw, -PI, PI), -max_turn, max_turn)
 	# Slack: a hard flown descent drops the carrier out from
@@ -3871,11 +3888,30 @@ func _step_carrier(delta: float) -> void:
 			+ fr_s["side"] * (pend_om_l * cos(pend_th_l))) * HANG_LEN
 		hang_vel += carrier_vel
 	# Arrival at the drop point ends the carry.
+	# Fix Pass 11 (Item 3): a yaw gate joins the position and
+	# velocity conditions - the carry does not end until the
+	# carrier has flown its alignment (within 0.08 rad of the
+	# drop heading), so the car is releasable on arrival instead
+	# of dangling through a station spin. The gate is BOUNDED
+	# (3 s of station wait): a pathologically short final leg
+	# degrades to the old behaviour, never to a stuck recovery.
 	if hang_phase == "carry" and carrier_wp >= carrier_path.size() - 1:
 		if anchor_pos.distance_to(anchor_target) < 0.08 and carrier_vel.length() < 0.35:
-			anchor_pos = anchor_target
-			carrier_vel = Vector3.ZERO
-			hang_phase = "dangle"
+			var drop_yaw_g: float = _frame_yaw(_frame_at(drop_target_s)["tan"])
+			if absf(wrapf(carrier_yaw - drop_yaw_g, -PI, PI)) < 0.08:
+				anchor_pos = anchor_target
+				carrier_vel = Vector3.ZERO
+				hang_phase = "dangle"
+				station_wait_t = 0.0
+			else:
+				station_wait_t += delta
+				if station_wait_t > 3.0:
+					anchor_pos = anchor_target
+					carrier_vel = Vector3.ZERO
+					hang_phase = "dangle"
+					station_wait_t = 0.0
+		else:
+			station_wait_t = 0.0
 
 
 func _update_hang(delta: float) -> void:

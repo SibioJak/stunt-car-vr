@@ -2285,6 +2285,74 @@ func _run() -> void:
 	check(float(audit23["worst"]) <= main.DASH_AUDIT_TOL,
 		"stage23: worst segment-to-handle deviation %.3f m (tol %.3f)" % [float(audit23["worst"]), main.DASH_AUDIT_TOL])
 
+	# ---------- stage 24: Fix Pass 11 (Item 3) - drone approach ----
+	# Production recovery with a LONG opposed walk-back: warp to
+	# circuit s 900, whose drop piece sits 158 m behind on the
+	# same road - mid-carry the carrier flies back along the
+	# track facing its velocity, ~180 deg from the drop heading
+	# (asserted, so the stage cannot silently stop exercising
+	# the owner's case). It must still ARRIVE aligned: yaw
+	# error at the dangle transition within the gate's few
+	# degrees (the old behaviour arrived ~180 deg out and spun
+	# at the station), the alignment already flown 30 frames
+	# before arrival, and the car's own facing settled on the
+	# drop heading within ~2 s of arrival (releasable).
+	main.start_race()
+	await frames(4)
+	main.dip_timer = 1000.0 # keep flown dips out of the measurements
+	for idx: Variant in main.prep_order.duplicate():
+		grip_flip_switch(int(idx), "R")
+	main._do_release()
+	var drv24: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv24, "stage24: setup release lands into DRIVE")
+	main.debug_warp_to_s(900.0)
+	main._call_drone()
+	var drop_yaw24: float = 0.0
+	var yaw_err_dangle24: float = -1.0
+	var yaw_err_max24: float = 0.0
+	var err_hist24: Array[float] = []
+	var saw_carry24: bool = false
+	var f24: int = 0
+	while f24 < 6000:
+		await physics_frame
+		f24 += 1
+		if main.hang_phase == "carry":
+			saw_carry24 = true
+		if saw_carry24:
+			drop_yaw24 = main._frame_yaw(main._frame_at(main.drop_target_s)["tan"])
+			var e24: float = absf(wrapf(main.carrier_yaw - drop_yaw24, -PI, PI))
+			yaw_err_max24 = maxf(yaw_err_max24, e24)
+			err_hist24.append(e24)
+			if err_hist24.size() > 30:
+				err_hist24.pop_front()
+		if saw_carry24 and main.hang_phase == "dangle":
+			yaw_err_dangle24 = absf(wrapf(main.carrier_yaw - drop_yaw24, -PI, PI))
+			break
+	main.dip_timer = 1000.0
+	check(saw_carry24 and yaw_err_dangle24 >= 0.0,
+		"stage24: the recovery carries and arrives (dangle reached)")
+	check(yaw_err_max24 > deg_to_rad(90.0),
+		"stage24: the carry really is opposed mid-flight (max yaw err %.0f deg)" % rad_to_deg(yaw_err_max24))
+	check(yaw_err_dangle24 >= 0.0 and yaw_err_dangle24 < deg_to_rad(5.0),
+		"stage24: carrier arrives aligned (yaw err %.1f deg at the dangle)" % rad_to_deg(maxf(yaw_err_dangle24, 0.0)))
+	check(err_hist24.size() >= 10 and err_hist24[0] < deg_to_rad(20.0),
+		"stage24: the turn was flown, not spun at the station (err %.1f deg, 30 frames out)" % rad_to_deg(err_hist24[0] if err_hist24.size() > 0 else 999.0))
+	var t24: int = 0
+	var aligned24: bool = false
+	while t24 < 180:
+		await physics_frame
+		t24 += 1
+		if absf(wrapf(main.orient_yaw - drop_yaw24, -PI, PI)) < deg_to_rad(5.0):
+			aligned24 = true
+			break
+	check(aligned24,
+		"stage24: car facing settles on the drop heading within 2 s of arrival (%.1f s)" % (float(t24) / 90.0))
+	for idx: Variant in main.prep_order.duplicate():
+		grip_flip_switch(int(idx), "R")
+	main._do_release()
+	var drv24b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv24b, "stage24: release after the aligned arrival resumes driving")
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
