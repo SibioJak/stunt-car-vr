@@ -648,6 +648,56 @@ func _run() -> void:
 	check(main.track_len > 3000.0,
 		"capture 16: the wide shot is the circuit (%.0f m)" % main.track_len)
 
+	# Capture 20 (Fix Pass 11, Item 6): THE RAKE, side profile.
+	# The car at rest on the flat home straight: the body must
+	# sit pitched nose-down by the derived rake while BOTH
+	# axles' contact patches stay on one plane (the model's
+	# CLEARANCE hover) - the stance comes from the suspension's
+	# attach heights, not from a tilted mesh, and this capture
+	# plus its numbers are the proof.
+	main.debug_warp_to_s(10.0)
+	main.debug_pin_speed(0.0)
+	main.test_throttle = 0.0
+	for i: int in 90:
+		await physics_frame
+	var fr20: Dictionary = main._frame_at(main.car_s)
+	var fwd_b20: Vector3 = -main.car_body.global_transform.basis.z
+	var body_pitch20: float = rad_to_deg(asin(clampf(fwd_b20.y, -1.0, 1.0)))
+	var rake_expect20: float = rad_to_deg(atan2(
+		main.WHEEL_RAD_R - main.WHEEL_RAD_F, main.WHEELBASE))
+	check(body_pitch20 < -rake_expect20 + 0.6 and body_pitch20 > -rake_expect20 - 0.6,
+		"capture 20: body sits at the rake (pitch %.2f deg, derived %.2f deg nose-down)" % [
+			body_pitch20, rake_expect20])
+	var bot_f20: float = 0.0
+	var bot_r20: float = 0.0
+	var dia_f20: float = 0.0
+	var dia_r20: float = 0.0
+	for wi20: int in main.wheel_mis.size():
+		var ab20: AABB = main.wheel_mis[wi20].global_transform * main.wheel_mis[wi20].get_aabb()
+		if main.wheel_axle[wi20] == 0:
+			bot_f20 += ab20.position.y * 0.5
+			dia_f20 = maxf(dia_f20, ab20.size.y)
+		else:
+			bot_r20 += ab20.position.y * 0.5
+			dia_r20 = maxf(dia_r20, ab20.size.y)
+	var road_y20: float = (fr20["pos"] as Vector3).y
+	check(absf(bot_f20 - bot_r20) < 0.02,
+		"capture 20: both axles planted on one plane (front bottom %.3f, rear %.3f rel road)" % [
+			bot_f20 - road_y20, bot_r20 - road_y20])
+	check(bot_f20 - road_y20 > main.CLEARANCE - 0.03 and bot_f20 - road_y20 < main.CLEARANCE + 0.03,
+		"capture 20: contact plane is the model's ride height (%.3f rel road)" % (bot_f20 - road_y20))
+	check(dia_r20 > dia_f20 * 1.4,
+		"capture 20: rear tyres dwarf the fronts (dia %.2f vs %.2f m)" % [dia_r20, dia_f20])
+	var p20: Vector3 = fr20["pos"]
+	var s20v: Vector3 = fr20["side"]
+	var u20: Vector3 = fr20["up"]
+	var cam20 := Camera3D.new()
+	main.add_child(cam20)
+	cam20.position = p20 + s20v * 5.4 + u20 * 0.55
+	cam20.look_at(main.car.global_position + Vector3.UP * 0.35, Vector3.UP)
+	await snap(cam20, "rake_profile_view.png")
+	cam20.queue_free()
+
 	# Captures 17-19 (Fix Pass 10, Item 4): the loop spur.
 	# 17: the driver's view at the fork - the spur ribbon
 	# peeling left off the home straight.

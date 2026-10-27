@@ -58,6 +58,34 @@ const WHEEL_TRACK_M: float = 1.56 # front wheel-to-wheel, metres (measured)
 const WHEEL_LOCALS: Array[Vector2] = [
 	Vector2(-0.78, -1.55), Vector2(0.78, -1.55),
 	Vector2(-0.78, 1.45), Vector2(0.78, 1.45)]
+# Fix Pass 11 (Item 6) - THE RAKE. The owner, judging the
+# Look Test: "what we're missing are big beefy tires at the
+# rear that tilt the car up in the back." The car gets the
+# Odd Rods dragster stance: rear tyres 1.38x the old radius
+# and half again as wide, fronts slightly smaller than the
+# old equal wheels. This is a deliberate deviation from
+# Crammond's equal-wheel car, at the owner's direction.
+# The stance is HONEST in the driving model, not a visual
+# tilt: the per-axle radius enters the suspension's attach
+# heights in _susp_integrate (the rear axle's ride height is
+# raised by the radius difference), so the body pitch the
+# springs derive - and the view spring reads - carries the
+# rake: atan((0.47 - 0.30) / 3.0) = 3.24 deg nose-down at
+# rest on flat road. The wheel CENTRES stay at the reference
+# height in body space (their struts are unchanged); the
+# radius difference lives in the tyre meshes and in the
+# attach terms, which is what puts both contact patches on
+# one plane in the raked pose (proven in the render proof's
+# side-profile capture: both wheel bottoms level, body
+# pitched). The (s, lat) support sampling is positional and
+# radius-free by construction in this model - the radius's
+# physical job here is the ride height, and that is where
+# it enters.
+const WHEEL_RAD_F: float = 0.30 # front tyre radius, m (was 0.34 all round)
+const WHEEL_RAD_R: float = 0.47 # rear tyre radius, m (1.38x the old 0.34)
+const WHEEL_RAD_REF: float = 0.34 # centre height the bookkeeping was tuned around
+const WHEEL_WID_F: float = 0.24 # front tyre width, m (unchanged)
+const WHEEL_WID_R: float = 0.36 # rear slick width, m (visibly wider)
 # Fix Pass 10 (Item 3): the owner, run 10 - the road must be
 # "wide enough for two cars to pass each other; it isn't." The
 # 9.36 m Crammond proportion (6.0x the wheel track, Fix Pass 9)
@@ -2051,14 +2079,20 @@ func _build_car() -> void:
 	# the same table the suspension samples support from.
 	for wi: int in WHEEL_LOCALS.size():
 		var wl: Vector2 = WHEEL_LOCALS[wi]
+		# Fix Pass 11 (Item 6): per-axle tyre size - smaller
+		# fronts, big wide rear slicks. The centre stays at
+		# WHEEL_RAD_REF (see the Item 6 constants note): the
+		# radius lives in the mesh and in the suspension's
+		# attach heights, not in the strut length.
+		var is_rear_w: bool = wl.y > 0.0
 		var w := MeshInstance3D.new()
 		var cm := CylinderMesh.new()
-		cm.top_radius = 0.34
-		cm.bottom_radius = 0.34
-		cm.height = 0.24
+		cm.top_radius = WHEEL_RAD_R if is_rear_w else WHEEL_RAD_F
+		cm.bottom_radius = WHEEL_RAD_R if is_rear_w else WHEEL_RAD_F
+		cm.height = WHEEL_WID_R if is_rear_w else WHEEL_WID_F
 		w.mesh = cm
 		w.rotation_degrees = Vector3(0, 0, 90)
-		w.position = Vector3(wl.x, 0.34, wl.y)
+		w.position = Vector3(wl.x, WHEEL_RAD_REF, wl.y)
 		w.material_override = dark
 		w.name = "WheelF" if wl.y < 0.0 else "WheelR"
 		car_body.add_child(w)
@@ -3780,8 +3814,12 @@ func _susp_integrate(target_f: float, target_r: float, delta: float) -> void:
 	# minus compression at each axle): steady state on a steady slope
 	# is level with the frame (springs absorb the shape); transients -
 	# slope breaks, landings, transfer - pitch and settle the body.
-	var attach_f: float = geom_f - c_f
-	var attach_r: float = geom_r - c_r
+	# Fix Pass 11 (Item 6): each axle's attach also carries its
+	# tyre radius relative to the reference radius - the bigger
+	# rear tyre holds the rear of the body higher by the radius
+	# difference (the rake, derived here rather than painted on).
+	var attach_f: float = geom_f - c_f + (WHEEL_RAD_F - WHEEL_RAD_REF)
+	var attach_r: float = geom_r - c_r + (WHEEL_RAD_R - WHEEL_RAD_REF)
 	pitch_extra = atan2(attach_f - attach_r, WHEELBASE)
 	heave_off = (attach_f + attach_r) * 0.5 + SUSP_REST
 
@@ -3975,7 +4013,7 @@ func _refresh_car_visuals() -> void:
 	# compressed = up into the body, drooped = hanging low.
 	for wi: int in wheel_mis.size():
 		var c_axle: float = c_f if wheel_axle[wi] == 0 else c_r
-		wheel_mis[wi].position.y = 0.34 + (c_axle - SUSP_REST)
+		wheel_mis[wi].position.y = WHEEL_RAD_REF + (c_axle - SUSP_REST)
 	_update_view_spring()
 	# dent carnage placeholder: nose crumples/tilts with dent level
 	if nose_mi != null:
