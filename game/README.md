@@ -692,6 +692,104 @@ satisfying rather than alarming; and everything still
 carried: hump air feel at cruise, skid usefulness/levels,
 lean tilt at ×1.25, sustained comfort.
 
+## Fix Pass 10 (after headset run 10: the steering landed —
+"squirrely is good" — but the left grip channel never fired
+a lever in the headset, the drone dropped the car ahead of
+its falls like a cheat, the road was too narrow for two
+cars, and Chris asked for the mountain: "huge tall ramps,
+massive dips, big swinging curves, some straightaways" —
+plus a loop-the-loop spur as an experiment)
+
+- **Item 0 — LEVERS.** The audit cleared the map: parsing the
+  shipped `openxr_action_map.tres` shows every action the
+  game reads already binds BOTH hands in all four
+  interaction profiles — the suspected missing left grip
+  binding does not exist, and no repair was invented for a
+  fault not reproduced. Two real findings: `grip_force` is
+  bound NOWHERE (so DIAG's FRC column can never read
+  non-zero on this map — harmless; it is one of three OR'd
+  grip channels), and the face buttons are asymmetric by
+  hardware design (left X/Y vs right A/B). What shipped: a
+  static guard in the API suite asserting per-hand binding
+  symmetry for the 10 game actions across all 4 profiles;
+  dash-control pickup now takes the NEAREST control in
+  radius instead of the first match; DIAG gained a ZONE
+  line naming which hand is in each control's zone; the
+  DIAG board moved up 3.5 cm so the new line clears the
+  wheel rim; and the prep test now proves a full prep with
+  a simulated DEAD channel on each side (worst reach
+  0.83 m against the 0.90 bound). The live left-grip death
+  itself was NOT reproduced headless — VDXR remains the
+  suspect, and the ZONE line is the instrument that will
+  see it next run.
+- **Item 1 — DRONE PLACEMENT.** The drop s never exceeds
+  the s where the car LEFT the road (`air_start_s`, recorded
+  at air entry — previously the drop was computed from the
+  end-of-flight estimate, landing the car past obstacles it
+  had failed). The walk-back is tiered: a piece that is
+  flat, unbanked, gap-free AND has >= 25 m of hazard-free
+  run-up (`DROP_MIN_RUNUP_M`), then piece-only, then the
+  old relaxed criteria, then s=2. It wraps the circuit
+  seam. Stage 16 stages the brief's falls (past both gaps,
+  mid-banked-corner, a car length before hump 1, on the
+  staircase) plus a live gap fall (fell at 207, dropped at
+  57 — the walk-back legitimately crosses a lip, a corner
+  and a climb before anything qualifies).
+- **Item 2 — PIVOT-DRIVEN DRONE FLIGHT.** The procedural
+  dip schedule is retired. The carrier has real flight
+  state (position, measured acceleration, yaw, a retrace
+  waypoint path); the pendulum integrates the MEASURED
+  pivot acceleration; the car's yaw seeks the carrier's
+  heading through an underdamped spring (stage 17: a
+  target step overshoots 10.6 deg and settles to 0.97 deg —
+  lazy, as briefed); flown dips at the dangle are carrier
+  manoeuvres whose measured acceleration (-8.1 m/s^2 at
+  full depth) fires the line slack through the same
+  threshold as any other carrier motion. Release gates
+  are unchanged (note: the brief described prep/swing/bank
+  gates on release — the code has never had them; nothing
+  was added). One number for the owner's eye: the
+  production staircase carry excites the pendulum to a
+  1.179 rad peak — the physics of a 5.5 m pendulum with
+  0.10 damping, not a defect claim either way.
+- **Item 3 — WIDTH + THE MOUNTAIN CIRCUIT.** HALF_WIDTH is
+  6.0 m (12 m road). The car BODY measures 1.80 m across
+  (mesh AABBs, boards excluded), so the road is 6.67
+  bodies wide — Crammond's own ratio was ~4.74. The
+  circuit: a closed 3,319 m loop (Newton-solved tail,
+  closure residual 0.007 m), home straight 380 m, a left
+  sweeper (R 244), a dip giving back 63.7 m, a 350 m mid
+  straight, a left hairpin (R 108), the signature climb
+  (+63.2 m), the 14 m gap and the five-hump row carried
+  over, a right return sweeper (R 236), and a closing
+  180 deg hairpin. Three laps to the finish at the gantry.
+  The circuit is the default track; the purple dash
+  button (or V) switches to the ribbon and back. Seam
+  geometry steps measure 0.0057 m / 0.013 deg against
+  stage 9's 0.014 / 0.35 tiers — the join is invisible to
+  the instruments. Frame stats on the circuit: 124 nodes /
+  53 draw calls / 57,906 primitives (ribbon: 112 / 54 /
+  28,222).
+- **Item 4 — THE LOOP SPUR (experiment, landed).** Off the
+  home straight at s=170, merging at s=330: diverge,
+  descend, a full vertical ring at R=11 m, Bezier exit.
+  Frames are parallel-transported; the suspension reads
+  the physical load (gravity along the frame up minus
+  v^2 kv), so the ring holds at speed, and past vertical
+  below sqrt(gR) ~= 10.4 m/s at the top it lets go — the
+  car falls inside the ring and the drone recovers it onto
+  the main track. Stage 21 drives it: 364 deg of ring
+  rotation at 30 m/s, worst orientation step 2.02 deg, and
+  the slowed run detaches at spur_s 123, just past the
+  top. Full suite: SMOKE 184/184, API guard 69/69. Render proofs 87/87.
+
+UNVERIFIED (only the headset proves these): the left
+grip's live behaviour and the ZONE line's testimony about
+it; the carried swing's feel at a 1.179 rad peak; whether
+the circuit's geography reads as the mountain it measures
+as; the spur's legibility at the fork and the ring's feel
+from the seat; and everything still carried from run 10.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
