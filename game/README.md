@@ -35,6 +35,20 @@ on the dash (wrong switch = restart the sequence; finishing pays +25
 boost), then you time the release again. Release away from the track
 and you fall — and the drone catches you again.
 
+**Scale (Fix Pass 9):** the road is **9.36 m wide** — Crammond's
+proportion, 6.0× the car's measured 1.56 m front wheel track — and it
+no longer floats in a void: a desert floor runs ~60 m below the track
+datum (the ribbon's lowest sections sit ~85–90 m above it), with mesas
+and a ring of distant low hills to a hazy horizon.
+
+**Edges (Fix Pass 9):** run a wheel off the ribbon and it rides an
+invisible sloping shoulder — that wheel's support drops progressively
+with overshoot, the body wobbles and rolls toward the off side, and
+steering back onto the ribbon restores full support (the save). A
+wheel is fully unsupported 1.17 m past the edge (¾ of the wheel
+track); the whole car falls only when its centre is ~1.95 m past the
+edge — support truly gone, not at first edge contact.
+
 ## Controls (also listed on the in-cockpit panel — every command)
 
 VR (Quest):
@@ -44,7 +58,9 @@ VR (Quest):
   button (while driving)
 - **Release from the drone:** right trigger (while dangling)
 - Flip a prep switch / press a dash button: GRIP near it (while
-  dangling)
+  dangling) — since Fix Pass 9 either order works: squeeze-then-touch
+  or touch-then-squeeze; the flip fires when grip and proximity
+  meet, once per entry
 - Call the drone (while driving): left X button
 - Restart race: left Y button · Lean experiment on/off: right B button
   (or the green dash button; red dash button = restart)
@@ -540,6 +556,137 @@ stuck on with your hand open); and the carried opens from
 run 8: the body-sink (the Star Wars effect) per-surface
 detail, skid usefulness and levels, and the lean tilt at
 ×1.25.
+
+## Fix Pass 9 (after headset run 9: the levers still dead with the
+## panel saying HOLD; "I don't really have a sensation of the car
+## turning, it more slides… like the Autopia ride, riding a rail";
+## and "the scale isn't right — the original track really dwarfed
+## your car")
+
+- **Levers: level-based activation (Item 1).** Run 9 closed the
+  hunt Fix Pass 8 opened: the panel's HOLD readout proved grip
+  arrived and the hand was in range, yet nothing flipped — the
+  flip fired on the grip EDGE inside the zone, and a human hand
+  squeezes FIRST and reaches SECOND, spending the edge in empty
+  air. (Fix Pass 8's stage 11 posed the hand first and gripped
+  second — the inhuman order — so it passed.) Activation is now
+  level-based: a gripping hand inside a control's zone fires it
+  ONCE per continuous grab-and-zone entry; the latch re-arms on
+  grip release or zone exit, and a held grip sweeping from one
+  control to the next fires each on entry — squeeze-and-touch
+  IS the prep gesture. Stage 11 now covers both human orders:
+  grip-first-then-reach (nothing fires in empty air; the flip
+  lands on zone entry), a held-grip sweep completing the whole
+  sequence, a parked-grip exactly-once probe, plus the original
+  pose-then-grip three-dangle run and wrong-order reset.
+- **The free-heading model (Item 2).** The spine-slaved model
+  is replaced whole. The car owns its heading: the grabbed
+  wheel sets a front-wheel angle (±MAX_LOCK_RAD 0.56 rad,
+  authority scaled down with speed, 1/(1+(v/26)²)); yaw rate
+  follows the bicycle relation ω = v/wheelbase · tan(lock),
+  capped at 1.6 rad/s and chased through a first-order lag
+  (YAW_TAU 0.16 s — the yaw inertia, the mass in the turn);
+  at a standstill the bicycle target is exactly zero, so the
+  car cannot rotate on the spot. Velocity is its own world
+  vector, decomposed against the heading each frame into
+  forward/lateral parts; tire grip bleeds the lateral part
+  toward zero proportionally (GRIP_BITE_RATE 7.0/s) up to the
+  lateral grip limit (GRIP_LAT_ACCEL 11.0 m/s², ~1.1 g; the
+  lean experiment's multiplier, ×0.75–1.28, scales both), the
+  bank's gravity feeds the lateral part along the frame side,
+  and whatever survives the bleed IS the slip — `slip_state`
+  derives from the real lateral velocity, so the skid audio
+  sings on honest sliding. The track frame keeps only its
+  proper jobs: road height/bank under the wheels (per-wheel
+  projection), slope gravity, gap/fall checks, lap logic;
+  (s, lat) are re-derived from the car's world position by
+  projection every step — nothing integrates them, and the
+  heading never comes from the frame. Air discipline is
+  preserved: the heading is NOT integrated while airborne.
+  Measured on the new model (smoke stage 12): a held wheel on
+  a straight turns the heading **13.8°** off the frame while
+  the car stays on the ribbon (max |lat| 0.29 m); a hard
+  flick at 20 m/s peaks at slip **0.95**; centring the wheel
+  recovers in 59 frames, counter-steer in **28**. Through the
+  banked sweeper the heading runs a real slip angle against
+  the frame (stage 8: max divergence 6.0°, typical 3.3°). And
+  the R30 corner at a pinned 24 m/s now honestly saturates
+  the tires (slip 1.00, skid gain 1.00): it demands ~19 m/s²
+  against ~11 at the tires plus the bank's help — at the
+  autopilot's grip-paced ~18 m/s the same corner runs clean.
+  The smoke autopilot is a steering driver now (pure pursuit
+  on the car's own heading, curvature-capped speed — test
+  code only; no self-drive ships). Its full lap measures
+  **46.8 s** against the old model's 38.1 s — the difference
+  is the driver braking for corners like a driver, not the
+  car slowing. Everything above the model re-proves: stage 9's
+  geometry steps IMPROVE under it (0.0091 m / 0.214° worst
+  outside the staircase; 0.0222 m / 0.823° at it — the FP8
+  bounds stand unraised); the climb-top negative control
+  still holds by mechanism (min load 0.43 at a pinned
+  30 m/s); the humps still give 5 flights, 5.30 s of air,
+  heading frozen against a hard-over wheel poke across every
+  flight; stage 2g's tremble is 11.1 / 11.5 mm per axle
+  (5.4 mm avg, 0.9 mm OFF) with skid slip identical ON vs OFF
+  (1.000 vs 1.000 — both saturated at the bank).
+- **The edge-straddle save (Item 2, scope addition — Chris:
+  "they'd really wobble but you could save it").** Crammond's
+  own mechanism, verified in his code (CalculateIfCarOffRoad):
+  each wheel's support is independent. Here: every wheel's
+  world position projects to the spine each frame; past the
+  ribbon edge its support height falls progressively —
+  EDGE_SLOPE 0.55 per metre of overshoot — to EDGE_CUTOFF
+  1.17 m (¾ of the wheel track), where it is fully
+  unsupported; that corner's spring target drops with it, and
+  the body rolls toward the dead side through a lagged edge
+  roll (the wobble). The whole car falls only when its CENTRE
+  overshoot passes 1.95 m — the point where even the
+  innermost wheel has lost the shoulder. Stage 13 drives it
+  on both edges: at centre overshoot 0.35 m the car holds the
+  shoulder line (car_lat 5.09 / −5.20 m) rolled **~26° / ~23°**
+  toward the off side, steering back restores the centreline
+  and the wobble is gone (roll 0.000); past the cutoff the
+  normal fall/drone path engages.
+- **Scale (Item 3).** Measured front wheel track: **1.56 m**
+  (wheels at x = ±0.78) — so Crammond's 6.0× proportion gives
+  a **9.36 m** road (HALF_WIDTH 4.68), not the brief's
+  guessed 10.5–11 m: the ratio is the rule, the build's car
+  is narrower than the guess. The old 8 m was ~4.4× our
+  track — narrow in exactly the proportion the eye reads.
+  Off-line audit: the "2.15× multiplier" does not exist in
+  the shipped code (the fall rule was a plain
+  |car_lat| > HALF_WIDTH); under the straddle that line is
+  now HALF_WIDTH + 1.95 m (see above), and hang geometry,
+  skirts, edge strips and gantries all derive from
+  HALF_WIDTH as before. **The desert:** a 5 km sand floor at
+  y = −30 (~60 m below the track datum; the lowest ribbon
+  sits ~88 m above it), 8 flat-shaded hills ringing the
+  track at 500–900 m, 4 nearer mesas, stilts extended to
+  actually land on the floor, the old green placeholder
+  blocks removed, fog density 0.00015 → 0.0003 so the hills
+  haze into a horizon. The desert is scenery — fall/recovery
+  is untouched and the drone still catches the car ~13 m
+  below the ribbon. Frame cost is net NEGATIVE: **112 nodes /
+  54 draw calls / 28,222 primitives** (was 140 / 65 / 28,354
+  — 40 scattered blocks out, 13 large meshes in). New
+  captures: `tests/desert_below_view.png` (down past the
+  dangling car to the floor) and `tests/desert_wide_view.png`
+  (ribbon on stilts, desert, mesas, horizon); capture 1's
+  cockpit frame now includes the desert and horizon from the
+  seat. Smoke 112/112, API guard 22/22 (no new live-path
+  calls), render proofs 73/73. No new commands — the panel
+  is unchanged.
+
+UNVERIFIED (only headset run 10 proves these): above all
+whether TURNING feels like turning now — the heading is the
+car's own, the yaw has inertia, the tires break loose and
+recover; whether the levers stay alive in both grip orders
+all session; whether the road reads WIDE and the world
+dwarfs the car the way the original's screenshot does;
+whether the straddle wobble is feelable and the save
+satisfying rather than alarming; and everything still
+carried: hump air feel at cruise, skid usefulness/levels,
+lean tilt at ×1.25, sustained comfort.
 
 ## Quest export — status
 

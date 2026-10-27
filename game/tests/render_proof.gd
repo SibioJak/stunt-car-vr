@@ -33,6 +33,14 @@ extends SceneTree
 ## straight hump at cruise, from trackside (Item 2 - the unload
 ## is real, not a dip); capture 12 = the staircase from
 ## trackside, drops and treads reading as steps (Item 1).
+## Fix Pass 9 (Item 3) adds: capture 13 = looking DOWN past the
+## dangling car to the desert floor far below (the void is
+## gone; there is a world under the ribbon now); capture 14 =
+## a wide trackside shot mid-extension - ribbon on stilts,
+## desert floor, hill ring, horizon. Capture 1 (cockpit from
+## the dangle) now frames ribbon + desert + horizon from the
+## seat, and capture 8's width assertion is the Crammond
+## proportion (6.0x the wheel track = 9.36 m).
 
 var failures: int = 0
 var checks: int = 0
@@ -377,6 +385,21 @@ func _run() -> void:
 	await snap(cam7, "wires_view.png")
 	cam7.queue_free()
 
+	# Capture 13 (Fix Pass 9, Item 3): looking DOWN past the
+	# dangling car - the camera above/behind it, aimed steeply
+	# down past the car toward the desert floor ~85 m below the
+	# ribbon. The frame is the evidence the void is gone: car,
+	# then air, then a WORLD - sand, mesas, the horizon's haze
+	# band at the frame's lower reaches.
+	var cam13 := Camera3D.new()
+	main.add_child(cam13)
+	var car_p13: Vector3 = main.car.global_position
+	cam13.position = car_p13 + Vector3.UP * 5.5 - (fr_w["tan"] as Vector3) * 4.5 \
+		+ (fr_w["side"] as Vector3) * 2.0
+	cam13.look_at(car_p13 - Vector3.UP * 26.0, Vector3.UP)
+	await snap(cam13, "desert_below_view.png")
+	cam13.queue_free()
+
 	# Fix Pass 1 proofs: the ribbon must visibly exist.
 	check(main.get_node_or_null("TrackSkirt") != null, "ribbon box-section skirt mesh exists")
 
@@ -477,11 +500,13 @@ func _run() -> void:
 	cam6.queue_free()
 
 	# Capture 8 (Fix Pass 6, Item 2): the widened road from the
-	# driver's seat on the climb - 8 m of ribbon ahead, room to
+	# driver's seat on the climb - a wide ribbon ahead, room to
 	# manoeuvre. Numerical width asserted in the smoke (stage 2f);
 	# here the frame itself is the evidence.
-	check(absf(main.HALF_WIDTH - 4.0) < 0.001,
-		"road is 8 m wide (half width %.1f m)" % main.HALF_WIDTH)
+	# Fix Pass 9 (Item 3): the width is Crammond's proportion -
+	# road full width = 6.0x the measured front wheel track.
+	check(absf(main.HALF_WIDTH * 2.0 - 6.0 * main.WHEEL_TRACK_M) < 0.001,
+		"road width is 6.0x the wheel track (%.2f m full, track %.2f m)" % [main.HALF_WIDTH * 2.0, main.WHEEL_TRACK_M])
 	main.debug_warp_to_s(60.0)
 	for i8: int in 10:
 		await physics_frame
@@ -524,7 +549,7 @@ func _run() -> void:
 	var air11: bool = false
 	var t11: int = 0
 	while t11 < 900:
-		main.speed = 24.0
+		main.debug_pin_speed(24.0)
 		await physics_frame
 		t11 += 1
 		if main.mode == main.MODE_AIR and not main.air_from_gap:
@@ -544,7 +569,7 @@ func _run() -> void:
 	cam11.look_at(p11 + t11v * 7.0 + u11 * 1.0, Vector3.UP)
 	await snap(cam11, "hump_view.png")
 	cam11.queue_free()
-	main.speed = 0.0
+	main.debug_pin_speed(0.0)
 
 	# Capture 12 (Fix Pass 8, Item 1): the staircase from
 	# trackside, mid-flight of drops - the ribbon stepping down
@@ -565,6 +590,24 @@ func _run() -> void:
 	cam12.look_at(p12 + t12v * 6.0, Vector3.UP)
 	await snap(cam12, "stairs_view.png")
 	cam12.queue_free()
+
+	# Capture 14 (Fix Pass 9, Item 3): the wide trackside shot -
+	# from off the ribbon over the crest straight, taking in the
+	# ribbon on its stilts, the desert floor ~85 m below it,
+	# mesas, the hill ring and the horizon in one frame. This is
+	# the scale evidence: the track has a world to dwarf the car
+	# against now.
+	var fr14: Dictionary = main._frame_at(main.ext_s0 + 55.0)
+	var p14: Vector3 = fr14["pos"]
+	var s14v: Vector3 = fr14["side"]
+	var u14: Vector3 = fr14["up"]
+	var t14v: Vector3 = fr14["tan"]
+	var cam14 := Camera3D.new()
+	main.add_child(cam14)
+	cam14.position = p14 + s14v * 30.0 + u14 * 9.0 - t14v * 22.0
+	cam14.look_at(p14 + t14v * 26.0 - u14 * 2.0, Vector3.UP)
+	await snap(cam14, "desert_wide_view.png")
+	cam14.queue_free()
 
 	print("---")
 	if failures == 0:

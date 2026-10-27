@@ -8,10 +8,26 @@ extends Node3D
 ## Fix Pass 6 adds the project's first audio: synthesized engine + skid
 ## as an information channel (see the AUDIO constants block).
 ##
-## Driving is a custom kinematic path model (path distance s + lateral
-## offset), Crammond-flavoured: rationed boost, slope gravity, banked
-## corner drift you must counter-steer, ballistic gap jumps, touchdown
-## quality from impact speed + alignment, dent + smoke on hard landings.
+## Driving WAS a kinematic path model (path distance s + lateral
+## offset) until Fix Pass 9. Chris, run 9: "I don't really have a
+## sensation of the car turning, it more slides... like the Autopia
+## ride, riding a rail." Correct - the old model slaved heading to
+## the track frame and deflected the car laterally. Fix Pass 9
+## replaces the core with a FREE-HEADING model: the car owns its
+## yaw (steering -> front-wheel angle -> yaw rate with inertia,
+## authority scaled by speed), velocity is its own world vector
+## and decomposes against the heading into forward + lateral
+## parts, and tire grip bleeds the lateral part toward zero up to
+## a lateral grip limit (the lean modifiers apply to that limit).
+## Demanding more than the limit leaves REAL slip - the car
+## travels at an angle to where it points, recoverable by counter-
+## steer - and slip_state derives from that actual lateral
+## velocity. The track frame keeps only its proper jobs: road
+## height/bank under the wheels, off-track/fall detection from
+## (s, lat), gap spanning, lap/feature logic, drone targeting.
+## Still Crammond-flavoured elsewhere: rationed boost, slope
+## gravity, ballistic gap jumps, touchdown quality from impact
+## speed + alignment, dent + smoke on hard landings.
 ##
 ## Grab rule (documented choice): the LAST hand to squeeze grip near the
 ## wheel drives it; if that hand releases while the other still grips,
@@ -22,12 +38,76 @@ const MODE_DRIVE: int = 1
 const MODE_AIR: int = 2
 const MODE_DONE: int = 3
 
-# Fix Pass 6 (Item 2): the road is 8 m wide. Chris, run 6: the
-# original "gave you the sense the road was wide and massive... there
-# was room to manoeuvre," and he needs the width to properly test
-# steering. Everything derived from HALF_WIDTH (surface, skirts,
-# edge strips, gantry, off-track and landing checks) follows.
-const HALF_WIDTH: float = 4.0
+# Fix Pass 9 (Item 3): the road's width is set by PROPORTION,
+# Crammond's own: his road is exactly 6.0x his car's wheel track
+# (384 road units vs a 64-unit track; crammond-notes.md Q1), and
+# Chris's memory of the original "dwarfing" the car is that ratio,
+# not an absolute width. MEASURED on this build: the front wheels
+# sit at x = +-0.78 (the _build_car wheel loop, single-sourced
+# below as WHEEL_LOCALS), so the front wheel track is 1.56 m and
+# the Crammond-proportion road is 6.0 x 1.56 = 9.36 m full width.
+# (Fix Pass 6 set 8 m by metres alone, ~4.4x our track - still
+# narrow in the proportion the eye reads.) Everything derived
+# from HALF_WIDTH (surface, skirts, edge strips, gantry,
+# off-track and landing checks) follows.
+const WHEEL_TRACK_M: float = 1.56 # front wheel-to-wheel, metres (measured)
+# Wheel positions in car space (x = lateral, y = longitudinal with
+# forward = -Z): FL, FR, RL, RR. Single source for the visual
+# wheels, the suspension's support sampling, and the measurement
+# above (front axle at z = -1.55 = AXLE_F ahead, rear at +1.45).
+const WHEEL_LOCALS: Array[Vector2] = [
+	Vector2(-0.78, -1.55), Vector2(0.78, -1.55),
+	Vector2(-0.78, 1.45), Vector2(0.78, 1.45)]
+const HALF_WIDTH: float = 3.0 * WHEEL_TRACK_M # full width = 6.0 x track = 9.36 m
+# Fix Pass 9 (Item 2) - free-heading steering model constants.
+# The grabbed wheel (+-180 deg) maps to a front-wheel angle of
+# +-MAX_LOCK_RAD, scaled down with speed (a full lock at 30 m/s
+# is a spin, not a steer); yaw rate follows the bicycle relation
+# omega = vf / wheelbase * tan(front angle), capped, and chases
+# its target through a first-order lag of YAW_TAU seconds - the
+# yaw INERTIA that makes the car feel massive, not twitchy. At a
+# standstill the bicycle target is exactly zero: no rotation on
+# the spot (crawl-speed manoeuvre comes from crawl-speed motion).
+const MAX_LOCK_RAD: float = 0.56 # front-wheel lock at full wheel, ~32 deg
+const STEER_FALLOFF_SPEED: float = 26.0 # lock scale = 1 / (1 + (vf/this)^2)
+const MAX_YAW_RATE: float = 1.6 # rad/s, either direction
+const YAW_TAU: float = 0.16 # s, yaw-rate lag (inertia)
+# Tire grip: the lateral velocity (velocity across the heading)
+# is bled toward zero by a lateral acceleration that is
+# proportional to the slip (GRIP_BITE_RATE per second) up to the
+# lateral grip limit GRIP_LAT_ACCEL - the lean experiment's grip
+# multiplier scales both. Below the limit the velocity follows
+# the heading (the car turns); demanding more yaw than the limit
+# can curve the velocity through leaves the excess as slip.
+# Sizing: holding the R30 banked sweeper at the stage-2f pinned
+# 24 m/s needs ~19.2 m/s^2 of lateral acceleration; the bank's
+# own gravity supplies ~4.9, so the tires supply ~14 - ABOVE the
+# limit below, which is the point: the corner at full pace runs
+# at a real, sustained slip (equilibrium lateral velocity
+# ~2.0 m/s, slip_state ~0.22) while at autopilot cornering pace
+# (~18 m/s, ~6 m/s^2 of tire work) the car runs clean.
+const GRIP_BITE_RATE: float = 7.0 # 1/s, proportional lateral bleed
+const GRIP_LAT_ACCEL: float = 11.0 # m/s^2, lateral grip limit (~1.1 g)
+# Fix Pass 9 (Item 2, scope addition) - the edge-straddle save.
+# Chris recalls the original's tires running off the ribbon
+# edge: "they'd really wobble but you could save it and get
+# back on track." The converted source confirms the mechanism
+# (Car Behaviour.cpp, CalculateIfCarOffRoad): each wheel's
+# support height is independent; past the edge the road has
+# "invisible sloping sides" - the wheel's height drops
+# PROGRESSIVELY with overshoot - and only beyond 3/4 of the car
+# width past the edge is that wheel fully unsupported. Ours:
+# each wheel's support drops EDGE_SLOPE per metre of overshoot
+# up to EDGE_CUTOFF (= 3/4 of the wheel track past the edge),
+# where support is gone. The whole car falls only when its
+# CENTRE overshoot exceeds EDGE_CUTOFF + half the track - the
+# point where even the innermost wheel has lost the shoulder,
+# i.e. support is truly gone, not at first edge contact.
+const EDGE_SLOPE: float = 0.55 # support drop per metre of wheel overshoot
+const EDGE_CUTOFF: float = 0.75 * WHEEL_TRACK_M # 1.17 m: wheel fully unsupported past this
+const EDGE_FALL_OVERSHOOT: float = EDGE_CUTOFF + 0.5 * WHEEL_TRACK_M # 1.95 m centre overshoot = fall
+const EDGE_ROLL_LAG: float = 7.0 # 1/s, the wobble is lagged, not a snap
+const DESERT_FLOOR_Y: float = -30.0 # ~60 m below the track datum (y=30)
 const RIBBON_DEPTH: float = 0.45 # box-section depth so the ribbon reads edge-on
 const CLEARANCE: float = 0.35
 const HANG_LEN: float = 5.5
@@ -165,8 +245,8 @@ const AUDIO_ENGINE_DB: float = -17.0 # engine level at full song
 const AUDIO_ENGINE_IDLE_DB: float = -23.0 # engine level at idle / hang
 const AUDIO_SKID_MAX_DB: float = -13.0 # skid level at full slip
 const AUDIO_SKID_FLOOR_DB: float = -34.0 # skid level at the onset of slip
-const AUDIO_SLIP_ONSET: float = 1.2 # |drift| (m/s) where tires start to sing
-const AUDIO_SLIP_SPAN: float = 3.8 # |drift| range from onset to full slip
+const AUDIO_SLIP_ONSET: float = 1.2 # |lateral velocity| (m/s) where tires start to sing
+const AUDIO_SLIP_SPAN: float = 3.8 # lateral-velocity range from onset to full slip
 const AUDIO_STALL_MS: int = 600 # physics-tick gap that counts as a stall
 # Fix Pass 7 (Item 2) - the Crammond jitter mechanism, reproduced
 # structurally (crammond-notes.md Q3): the original's road profiles
@@ -218,10 +298,19 @@ var stairs_s1: float = 0.0
 var mode: int = MODE_HANG
 var hang_phase: String = "dangle"
 var is_drop_start: bool = true
+# Fix Pass 9 (Item 2): car_s / car_lat are DERIVED state now -
+# the car's world position projected onto the track spine each
+# DRIVE/AIR frame (_project_to_spine). They keep their old jobs
+# (feature logic, drone targeting, tests) but nothing integrates
+# them; the car's own state is its world position (the node),
+# its heading, and its velocity vector.
 var car_s: float = 0.0
 var car_lat: float = 0.0
-var lat_vel: float = 0.0
-var speed: float = 0.0
+var lat_vel: float = 0.0 # velocity across the heading (the real slip velocity)
+var speed: float = 0.0 # velocity along the heading (panel/audio/tests read this)
+var car_heading: float = 0.0 # the car's own yaw, rad (never read from the frame)
+var yaw_rate: float = 0.0 # rad/s, lagged toward the bicycle target
+var vel2: Vector2 = Vector2.ZERO # world-XZ velocity, m/s (velocity != heading)
 var wheel_angle: float = 0.0
 var boost_meter: float = 60.0
 var dent_level: int = 0
@@ -300,6 +389,17 @@ var bounce_vy: float = 0.0
 var air_load_frames: int = 0 # consecutive frames at ~zero crest load, both axles
 var wheel_mis: Array[MeshInstance3D] = []
 var wheel_axle: Array[int] = [] # 0 = front, 1 = rear, parallel to wheel_mis
+# Fix Pass 9 (Item 2, scope addition): per-WHEEL support state,
+# written by _update_suspension every DRIVE frame (wheel order
+# FL, FR, RL, RR - WHEEL_LOCALS). sup_rise is each wheel's road
+# rise relative to the centre frame (drops included); sup_ok is
+# false once a wheel is past EDGE_CUTOFF (fully unsupported).
+# edge_roll is the lagged body roll toward an unsupported side -
+# the straddle wobble - and feeds the placement basis.
+var sup_rise: Array[float] = [0.0, 0.0, 0.0, 0.0]
+var sup_ok: Array[bool] = [true, true, true, true]
+var sup_s: Array[float] = [0.0, 0.0, 0.0, 0.0] # each wheel's spine s (load sampling)
+var edge_roll: float = 0.0
 var view_node: Node3D # seat-stack node carrying suspension view motion
 
 # Fix Pass 5 dangle state: drone dips, line slack, catch blend, and a
@@ -331,8 +431,9 @@ var body_node_fb: Node3D
 
 # Fix Pass 6 (Item 3) audio state. slip_state is the model's tire
 # slip (0 = gripping .. 1 = fully sliding), computed in
-# _update_drive from the grip-modified drift and consumed by the
-# skid gain - it is a physics output, not an input proxy.
+# _update_drive from the car's REAL lateral velocity (Fix Pass 9:
+# velocity across the heading, post-grip-bleed) and consumed by
+# the skid gain - it is a physics output, not an input proxy.
 # Teardown discipline: audio_latched is set by application
 # focus-out / close request / scene-tree exit and STOPS both
 # players; it clears only on a genuine focus-in while a race is
@@ -417,6 +518,13 @@ var grab_hand: String = ""
 var grab_prev_ang: float = 0.0
 var gripping: Dictionary = {"L": false, "R": false}
 var prev_btn: Dictionary = {}
+# Fix Pass 9 (Item 1): the dash control each hand has already
+# fired during its current continuous grab-and-zone entry
+# (-1 = armed). Level-based activation: the control fires once
+# when a gripping hand is in its zone with this latch unset for
+# it; the latch clears when the grip releases or the hand
+# leaves every zone, and moving zone-to-zone fires on entry.
+var dash_ctl_fired: Dictionary = {"L": -1, "R": -1}
 
 
 func _mat(c: Color) -> StandardMaterial3D:
@@ -569,30 +677,77 @@ func _build_environment() -> void:
 	env.fog_light_color = Color(0.55, 0.68, 0.88)
 	# Fix Pass 1: fog cut back hard (was 0.0016) - distant ribbon segments
 	# washed out into the sky and the track read as invisible.
-	env.fog_density = 0.00015
+	# Fix Pass 9: raised a notch (0.0003) now that there is a world
+	# to fade - the desert hills at 600-900 m soften into haze so a
+	# horizon reads, while the ribbon at driving distances (tens of
+	# metres) is untouched.
+	env.fog_density = 0.0003
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-52.0, -28.0, 0.0)
 	sun.light_energy = 1.15
 	add_child(sun)
-	# Distant ground plane - the height reference. 30+ m below the ribbon.
-	var ground := MeshInstance3D.new()
+	# Fix Pass 9 (Item 3): THE DESERT. Until now the ribbon floated
+	# in a featureless void with a green plane at y=0 - and a void
+	# gives the eye no ruler, so nothing can be DWARFED by it
+	# (Chris, run 9, with the original's cockpit screenshot: half
+	# the frame is sky, the desert runs flat to a low horizon, and
+	# the track dwarfs the car). Now: a vast flat desert floor
+	# ~60 m below the track datum (the ribbon starts at y=30 and
+	# its lowest sections sit ~85-95 m above this floor), a ring
+	# of distant low hills a few hundred metres out, and a few
+	# mesas - a handful of large flat-shaded meshes in total,
+	# sand-toned against the existing sky. The desert is SCENERY:
+	# the fall/recovery logic is untouched (the drone catches the
+	# car ~13 m below the ribbon, far above this floor; the car
+	# never lands on the desert). The old green ground blocks are
+	# gone - they floated at the old plane's height.
+	var desert := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(2400.0, 2400.0)
-	ground.mesh = pm
-	ground.position = Vector3(0.0, 0.0, -300.0)
-	ground.material_override = _mat(Color(0.23, 0.38, 0.20))
-	add_child(ground)
-	# A few ground blocks so the drop reads as motion, not void.
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 12345
-	for i: int in 40:
-		var bx: float = rng.randf_range(-260.0, 260.0)
-		var bz: float = rng.randf_range(-560.0, 160.0)
-		var bs: float = rng.randf_range(8.0, 30.0)
-		_box(self, Vector3(bs, rng.randf_range(1.0, 4.0), bs), Vector3(bx, 0.8, bz),
-			_mat(Color(0.30, 0.44, 0.26)))
+	pm.size = Vector2(5000.0, 5000.0)
+	desert.mesh = pm
+	desert.position = Vector3(0.0, DESERT_FLOOR_Y, -450.0)
+	desert.material_override = _mat(Color(0.76, 0.62, 0.42))
+	desert.name = "DesertFloor"
+	add_child(desert)
+	# Distant low hills: one ring of stretched, slightly rotated
+	# boxes around the track's extent (the ribbon runs z 0..-1250,
+	# x roughly +-250 after its corners). Flat-shaded, a touch
+	# darker and greyer than the floor so they read as distance.
+	var hill_mat := _mat(Color(0.62, 0.52, 0.42))
+	var hills: Array = [
+		[Vector2(-620.0, -700.0), 700.0, 46.0, 10.0],
+		[Vector2(240.0, -980.0), 820.0, 58.0, -6.0],
+		[Vector2(760.0, -420.0), 640.0, 38.0, 24.0],
+		[Vector2(680.0, 260.0), 760.0, 42.0, -18.0],
+		[Vector2(-40.0, 480.0), 900.0, 34.0, 4.0],
+		[Vector2(-780.0, 140.0), 680.0, 50.0, 14.0],
+		[Vector2(-420.0, -1320.0), 780.0, 40.0, -10.0],
+		[Vector2(420.0, -1420.0), 860.0, 52.0, 8.0],
+	]
+	for hi: int in hills.size():
+		var hd: Array = hills[hi]
+		var hxz: Vector2 = hd[0]
+		var hill := _box(self, Vector3(float(hd[1]), float(hd[2]), 190.0),
+			Vector3(hxz.x, DESERT_FLOOR_Y + float(hd[2]) * 0.32, hxz.y), hill_mat,
+			"Hill%d" % hi)
+		hill.rotation_degrees.y = float(hd[3])
+	# A few flat-topped mesas standing on the floor, nearer in -
+	# parallax when the car is high on the climbs.
+	var mesa_mat := _mat(Color(0.68, 0.55, 0.40))
+	var mesas: Array = [
+		[Vector2(-190.0, -260.0), 90.0, 16.0],
+		[Vector2(230.0, -520.0), 120.0, 22.0],
+		[Vector2(-260.0, -830.0), 105.0, 13.0],
+		[Vector2(180.0, -1080.0), 140.0, 19.0],
+	]
+	for mi2: int in mesas.size():
+		var md: Array = mesas[mi2]
+		var mxz: Vector2 = md[0]
+		_box(self, Vector3(float(md[1]), float(md[2]), float(md[1]) * 0.62),
+			Vector3(mxz.x, DESERT_FLOOR_Y + float(md[2]) * 0.5, mxz.y), mesa_mat,
+			"Mesa%d" % mi2)
 
 
 # ---------------------------------------------------------------- track
@@ -840,10 +995,12 @@ func _build_track() -> void:
 		_add_quad(edge_pos, edge_nrm, edge_col,
 			r0 - s0 * 0.36 + u0 * 0.02, r0 + u0 * 0.02, r1 + u1 * 0.02, r1 - s1 * 0.36 + u1 * 0.02,
 			up_avg, edge_c)
-		# stilts every 10 m down to the ground
+		# stilts every 10 m down to the ground (Fix Pass 9: the
+		# desert floor, ~60 m below the datum - the stilts now
+		# land on something instead of ending in the void)
 		if i % 10 == 0:
 			var top: Vector3 = p0
-			var bot := Vector3(p0.x, 0.0, p0.z)
+			var bot := Vector3(p0.x, DESERT_FLOOR_Y, p0.z)
 			_add_box_verts(stilt_pos, stilt_nrm, stilt_col, (top + bot) * 0.5,
 				Vector3(0.55, top.y - bot.y, 0.55), Color(0.42, 0.42, 0.46))
 	_add_mesh(surf_pos, surf_nrm, surf_col, "TrackSurface")
@@ -987,6 +1144,88 @@ func _elev_quantised(s: float) -> float:
 	return lerpf(h0, h1, frac)
 
 
+# ------------------------------------------------- Fix Pass 9 helpers
+# The heading convention: heading h has forward (-sin h, 0, -cos h)
+# and right (cos h, 0, -sin h), matching Basis(Vector3.UP, h) and
+# the frame convention (a frame with tangent t has yaw
+# atan2(-t.x, -t.z) - the same formula, so frame yaw and car
+# heading are directly comparable).
+
+func _frame_yaw(tanv: Vector3) -> float:
+	return atan2(-tanv.x, -tanv.z)
+
+
+func _heading_fwd() -> Vector3:
+	return Vector3(-sin(car_heading), 0.0, -cos(car_heading))
+
+
+func _heading_right() -> Vector3:
+	return Vector3(cos(car_heading), 0.0, -sin(car_heading))
+
+
+## Project a world point onto the track spine: returns [s, lat]
+## with lat measured along the frame side at s. Searches the
+## segments around the hint first; if the best segment sits at
+## the window's edge the search widens once (a landing or a warp
+## can put the car far from its hint). This is how car_s/car_lat
+## are DERIVED from the car's actual position under the
+## free-heading model - nothing integrates them anymore.
+func _project_to_spine(p: Vector3, hint: float, wide: bool = false) -> Array:
+	var n: int = t_pts.size()
+	var centre: int = clampi(int(round(hint)), 0, n - 2)
+	var rad: int = 280 if wide else 8
+	var i0: int = maxi(0, centre - rad)
+	var i1: int = mini(n - 2, centre + rad)
+	var best_i: int = centre
+	var best_t: float = 0.0
+	var best_d2: float = 1e18
+	for i: int in range(i0, i1 + 1):
+		var a: Vector3 = t_pts[i]
+		var ab: Vector3 = t_pts[i + 1] - a
+		var l2: float = ab.length_squared()
+		var t: float = 0.0
+		if l2 > 1e-9:
+			t = clampf((p - a).dot(ab) / l2, 0.0, 1.0)
+		var d2: float = p.distance_squared_to(a + ab * t)
+		if d2 < best_d2:
+			best_d2 = d2
+			best_i = i
+			best_t = t
+	if not wide and (best_i == i0 or best_i == i1) and (i0 > 0 or i1 < n - 2):
+		return _project_to_spine(p, hint, true)
+	var s: float = clampf(float(best_i) + best_t, 0.0, track_len)
+	var fr: Dictionary = _frame_at(s)
+	return [s, (p - fr["pos"]).dot(fr["side"])]
+
+
+func _sync_vel2_from_speed_lat() -> void:
+	# Rebuild the world velocity from the heading-frame pair
+	# (speed, lat_vel) - used at transitions where those two are
+	# the authoritative state (air entry from the suspension).
+	var f: Vector3 = _heading_fwd()
+	var r: Vector3 = _heading_right()
+	vel2 = Vector2(f.x, f.z) * speed + Vector2(r.x, r.z) * lat_vel
+
+
+func _enter_air(from_gap: bool, extra_vy: float) -> void:
+	# Fix Pass 9: air entry from the velocity VECTOR. The vertical
+	# component follows the road slope the velocity is actually
+	# travelling along (the velocity's own projection on the
+	# spine tangent), not the heading - a sliding car leaves the
+	# lip along its motion. Heading is NOT integrated in AIR:
+	# no yaw authority airborne (the original's discipline too).
+	var fr: Dictionary = _frame_at(car_s)
+	var t3: Vector3 = fr["tan"]
+	var t2 := Vector2(t3.x, t3.z)
+	var vy: float = vel2.dot(t2) * t3.y / maxf(t2.length_squared(), 0.04) + extra_vy
+	air_vel = Vector3(vel2.x, vy, vel2.y)
+	air_s_est = car_s
+	air_time = 0.0
+	air_from_gap = from_gap
+	was_airborne = true
+	mode = MODE_AIR
+
+
 # ---------------------------------------------------------------- car
 
 func _build_car() -> void:
@@ -1017,21 +1256,23 @@ func _build_car() -> void:
 	# so the suspension model can move them through their travel
 	# relative to the body (the bounce you can SEE from the cockpit:
 	# the nose and front tires working against the fixed surround).
-	for wx: float in [-0.78, 0.78]:
-		for wz: float in [-1.55, 1.45]:
-			var w := MeshInstance3D.new()
-			var cm := CylinderMesh.new()
-			cm.top_radius = 0.34
-			cm.bottom_radius = 0.34
-			cm.height = 0.24
-			w.mesh = cm
-			w.rotation_degrees = Vector3(0, 0, 90)
-			w.position = Vector3(wx, 0.34, wz)
-			w.material_override = dark
-			w.name = "WheelF" if wz < 0.0 else "WheelR"
-			car_body.add_child(w)
-			wheel_mis.append(w)
-			wheel_axle.append(0 if wz < 0.0 else 1)
+	# Fix Pass 9: positions come from WHEEL_LOCALS (FL, FR, RL, RR) -
+	# the same table the suspension samples support from.
+	for wi: int in WHEEL_LOCALS.size():
+		var wl: Vector2 = WHEEL_LOCALS[wi]
+		var w := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.34
+		cm.bottom_radius = 0.34
+		cm.height = 0.24
+		w.mesh = cm
+		w.rotation_degrees = Vector3(0, 0, 90)
+		w.position = Vector3(wl.x, 0.34, wl.y)
+		w.material_override = dark
+		w.name = "WheelF" if wl.y < 0.0 else "WheelR"
+		car_body.add_child(w)
+		wheel_mis.append(w)
+		wheel_axle.append(0 if wl.y < 0.0 else 1)
 	# Smoke puff (basic dent carnage placeholder)
 	smoke_mi = MeshInstance3D.new()
 	var sph := SphereMesh.new()
@@ -1655,12 +1896,23 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	diag_force[hand] = grip_force
 	var now: bool = grip_v > 0.65 or grip_click or grip_force > 0.65
 	var near_wheel: bool = _hand_pos(hand).distance_to(car.global_transform * _wheel_hub_local()) < WHEEL_GRAB_RADIUS
-	var was: bool = gripping[hand]
-	# switch / dash-control flipping on a fresh grip near a dash control
-	if now and not was:
-		var ctl: int = _dash_ctl_near(_hand_pos(hand))
-		if ctl >= 0:
-			_activate_dash_ctl(dash_ctl_kinds[ctl])
+	# Fix Pass 9 (Item 1): LEVEL-based dash activation. Chris, run 9:
+	# "I press grip near a lever, the panel says HOLD, levers don't
+	# move" - the flip used to fire only on a fresh grip EDGE while
+	# the hand was already in the zone, and a human hand squeezes
+	# first and reaches second, spending the edge in empty air (the
+	# HOLD readout proved grip arrived and the hand was placed).
+	# Now a gripping hand inside a control's zone fires it ONCE
+	# per continuous grab-and-zone entry (dash_ctl_fired); the
+	# latch re-arms when the grip releases or the hand leaves
+	# every zone, so a held grip sweeping from one control to the
+	# next fires each on entry - squeeze-and-touch IS the gesture.
+	var ctl_now: int = _dash_ctl_near(_hand_pos(hand)) if now else -1
+	if ctl_now >= 0 and int(dash_ctl_fired[hand]) != ctl_now:
+		dash_ctl_fired[hand] = ctl_now
+		_activate_dash_ctl(dash_ctl_kinds[ctl_now])
+	elif ctl_now < 0:
+		dash_ctl_fired[hand] = -1
 	gripping[hand] = now
 	if mode != MODE_DRIVE and mode != MODE_AIR:
 		if grab_hand == hand:
@@ -1737,6 +1989,12 @@ func start_race() -> void:
 	car_lat = 0.0
 	lat_vel = 0.0
 	speed = 0.0
+	# Fix Pass 9: free-heading state starts aligned to the drop
+	# section, at rest (the release re-derives it anyway).
+	vel2 = Vector2.ZERO
+	yaw_rate = 0.0
+	edge_roll = 0.0
+	car_heading = _frame_yaw(_frame_at(2.0)["tan"])
 	wheel_angle = 0.0
 	boost_meter = 60.0
 	dent_level = 0
@@ -1786,6 +2044,11 @@ func _reset_suspension() -> void:
 	bounce_pending = false
 	bounce_vy = 0.0
 	air_load_frames = 0
+	# Fix Pass 9: per-wheel support back to fully held.
+	sup_rise = [0.0, 0.0, 0.0, 0.0]
+	sup_ok = [true, true, true, true]
+	sup_s = [0.0, 0.0, 0.0, 0.0]
+	edge_roll = 0.0
 
 
 func _reset_dangle_feel() -> void:
@@ -1874,6 +2137,10 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 	mode = MODE_HANG
 	is_drop_start = false
 	speed = 0.0
+	lat_vel = 0.0
+	vel2 = Vector2.ZERO
+	yaw_rate = 0.0
+	edge_roll = 0.0
 	hang_phase = "attach"
 	anchor_t = 0.0
 	hang_from_pos = catch_pos
@@ -1940,6 +2207,13 @@ func _do_release() -> void:
 	air_s_est = drop_target_s
 	air_time = 0.0
 	air_from_gap = false
+	# Fix Pass 9: the released car flies and lands under the
+	# heading it HUNG with - aligned to the drop section (the
+	# hang orients the car to the section; see _orient_car_hang).
+	# The horizontal air velocity becomes the velocity vector.
+	car_heading = _frame_yaw(f)
+	yaw_rate = 0.0
+	vel2 = Vector2(air_vel.x, air_vel.z)
 	mode = MODE_AIR
 	prep_label.text = ""
 
@@ -1993,72 +2267,119 @@ func _process(_delta: float) -> void:
 
 
 func _update_drive(delta: float) -> void:
-	# Fix Pass 5: the suspension asked to leave the road (rebound
-	# droop or a full crest unload, decided in _update_suspension).
-	# The car's velocity at separation is the road velocity plus the
-	# rebound's upward throw; from here it is plain ballistics and
-	# the existing touchdown grading decides the landing.
+	# Fix Pass 9 (Item 2): THE FREE-HEADING MODEL. This replaces
+	# the spine-slaved model whole: up to Fix Pass 8 the car's
+	# heading was welded to the track frame and "steering" only
+	# deflected a lateral offset, which is why Chris's run-9
+	# verdict was "I don't really have a sensation of the car
+	# turning, it more slides... like the Autopia ride, riding a
+	# rail." Now the car owns its heading and its velocity:
+	# - the grabbed wheel sets a front-wheel angle; the yaw rate
+	#   follows the bicycle relation through a first-order lag
+	#   (yaw inertia), with lock authority scaled down by speed;
+	# - velocity is its own world vector, decomposed against the
+	#   heading each frame into forward (vf) and lateral (vl);
+	# - tire grip bleeds vl toward zero at up to the lateral grip
+	#   limit (the lean experiment's multiplier scales it), and
+	#   the bank's gravity feeds vl along the frame side;
+	# - whatever lateral velocity survives IS the slip:
+	#   slip_state derives from it, so the skid audio sings on
+	#   real sliding. Demanding more yaw than the tires can
+	#   curve the velocity through leaves the car sliding wide,
+	#   recoverable by centring the wheel or counter-steering.
+	# The track frame keeps only its remaining jobs: road
+	# height/bank under the wheels (in _update_suspension),
+	# slope gravity, gap/fall checks, and lap logic. car_s and
+	# car_lat are re-derived from the car's world position by
+	# projection at the end of the step - never integrated.
+	# Suspension air entry (Fix Pass 5/8, unchanged rule): the
+	# load decision was made in _update_suspension last frame.
 	if bounce_pending:
 		bounce_pending = false
-		var fr_b: Dictionary = _frame_at(car_s)
-		air_vel = fr_b["tan"] * speed + fr_b["up"] * bounce_vy
-		air_s_est = car_s
-		air_time = 0.0
-		air_from_gap = false
-		was_airborne = true
-		mode = MODE_AIR
+		_sync_vel2_from_speed_lat()
+		_enter_air(false, bounce_vy)
 		return
 	var fr: Dictionary = _frame_at(car_s)
 	var tanv: Vector3 = fr["tan"]
-	# longitudinal
+	# Decompose the velocity against the CURRENT heading.
+	var f0: Vector3 = _heading_fwd()
+	var r0: Vector3 = _heading_right()
+	var vf: float = vel2.dot(Vector2(f0.x, f0.z))
+	var vl: float = vel2.dot(Vector2(r0.x, r0.z))
+	# Longitudinal: engine / brake / boost / drag / slope gravity -
+	# the same terms the slaved model had, applied to vf.
 	var accel: float = in_throttle * 10.0
 	accel -= in_brake * 14.0
-	accel -= speed * 0.10
+	accel -= vf * 0.10
 	accel += -GRAV * tanv.y * 0.85 # slope gravity: climbs bite, descents push
 	if in_boost and boost_meter > 0.0 and in_throttle > 0.05:
 		accel += 9.0
 		boost_meter = maxf(boost_meter - 30.0 * delta, 0.0)
-	speed = clampf(speed + accel * delta, -6.0, 34.0)
-	if in_brake > 0.05 and speed < 0.5 and speed > -0.5:
-		speed = 0.0
-	car_s += speed * delta
-	# lateral: steering sets a target lateral velocity; corner drift pushes
-	# the car OUT of the turn, scaled down by grip (lean experiment).
+	vf = clampf(vf + accel * delta, -6.0, 34.0)
+	if in_brake > 0.05 and vf < 0.5 and vf > -0.5:
+		vf = 0.0
+	# Steering: wheel -> front-wheel angle -> yaw rate target,
+	# chased through the inertia lag. Bicycle kinematics give
+	# omega ~ vf, so at a standstill the target is exactly zero -
+	# no rotation on the spot. SIGN: a positive wheel angle is
+	# clockwise-from-the-driver = steer RIGHT (the grab math's
+	# convention, and the old model's positive lateral velocity);
+	# with forward = (-sin h, -cos h) a right turn DECREASES the
+	# heading, hence the negated bicycle term.
 	var steer: float = clampf(wheel_angle / PI, -1.0, 1.0)
-	var curv: float = float(fr["curv"])
-	grip_mult = _grip_for(curv)
-	var drift: float = curv * speed * speed * 0.22 / grip_mult
-	# Fix Pass 6: the tire slip state - how hard the tires are
-	# working laterally AFTER the grip modification (lean included):
-	# the sideways load the road imposes on the car. This is the
-	# skid audio's source and the model's honest "losing traction".
-	slip_state = clampf((absf(drift) - AUDIO_SLIP_ONSET) / AUDIO_SLIP_SPAN, 0.0, 1.0)
-	var target_lat_vel: float = steer * maxf(speed, 0.0) * 0.34 + drift
-	lat_vel = move_toward(lat_vel, target_lat_vel, 14.0 * delta)
-	car_lat += lat_vel * delta
-	# entering the gap -> ballistic
-	if bool(fr["gap"]) and speed > 0.0:
-		air_vel = tanv * speed
-		air_s_est = car_s
-		air_time = 0.0
-		air_from_gap = true
-		was_airborne = true
-		mode = MODE_AIR
+	var lock_scale: float = 1.0 / (1.0 + (vf / STEER_FALLOFF_SPEED) * (vf / STEER_FALLOFF_SPEED))
+	var front_angle: float = steer * MAX_LOCK_RAD * lock_scale
+	var omega_target: float = clampf(-vf / WHEELBASE * tan(front_angle), -MAX_YAW_RATE, MAX_YAW_RATE)
+	yaw_rate = lerpf(yaw_rate, omega_target, clampf(delta / YAW_TAU, 0.0, 1.0))
+	car_heading = wrapf(car_heading + yaw_rate * delta, -PI, PI)
+	# The accelerated velocity, decomposed against the NEW
+	# heading: turning the car under a fixed velocity vector is
+	# what creates lateral velocity in the first place.
+	var v_acc: Vector3 = f0 * vf + r0 * vl
+	var f1: Vector3 = _heading_fwd()
+	var r1: Vector3 = _heading_right()
+	vf = v_acc.dot(f1)
+	vl = v_acc.dot(r1)
+	var side_align: float = Vector3(fr["side"]).dot(r1)
+	vl += -GRAV * sin(float(fr["bank"])) * side_align * delta
+	grip_mult = _grip_for(yaw_rate / maxf(absf(vf), 2.0))
+	var bleed: float = clampf(-GRIP_BITE_RATE * vl * grip_mult,
+		-GRIP_LAT_ACCEL * grip_mult, GRIP_LAT_ACCEL * grip_mult)
+	vl += bleed * delta
+	# Mild scrub: sliding sideways scrubs forward speed.
+	vf -= vf * 0.015 * absf(vl) * delta
+	# Fix Pass 9: the tire slip state is the REAL lateral velocity
+	# that survived the grip bleed (Fix Pass 6 read a cornering-
+	# load proxy). The skid audio consumes this unchanged.
+	slip_state = clampf((absf(vl) - AUDIO_SLIP_ONSET) / AUDIO_SLIP_SPAN, 0.0, 1.0)
+	speed = vf
+	lat_vel = vl
+	vel2 = Vector2(f1.x, f1.z) * vf + Vector2(r1.x, r1.z) * vl
+	# Integrate the world position; height comes from placement.
+	car.global_position += Vector3(vel2.x, 0.0, vel2.y) * delta
+	# Derive (s, lat) from where the car actually is now.
+	var pr: Array = _project_to_spine(car.global_position, car_s)
+	car_s = float(pr[0])
+	car_lat = float(pr[1])
+	var fr_now: Dictionary = _frame_at(car_s)
+	# Entering the gap -> ballistic (velocity vector carries over).
+	if bool(fr_now["gap"]) and vf > 0.0:
+		_enter_air(true, 0.0)
 		return
-	# off the side -> ballistic fall
-	if absf(car_lat) > HALF_WIDTH:
-		air_vel = tanv * speed + fr["side"] * lat_vel
-		air_s_est = car_s
-		air_time = 0.0
-		air_from_gap = false
-		mode = MODE_AIR
+	# Off the side -> fall, but only once support is truly gone:
+	# the centre overshoot past which even the innermost wheel
+	# has run off the shoulder (Item 2 scope addition). Inside
+	# that line the straddle state in _update_suspension holds
+	# the car up - wobbling, but held.
+	if absf(car_lat) > HALF_WIDTH + EDGE_FALL_OVERSHOOT:
+		_enter_air(false, 0.0)
 		return
 	if car_s >= track_len - 0.5:
 		mode = MODE_DONE
 		finished_time = race_time
 		state_label.text = "FINISH!"
 	# place the car
-	_place_car_on_track(fr)
+	_place_car_on_track(fr_now)
 
 
 func _grip_for(curv: float) -> float:
@@ -2080,9 +2401,24 @@ func _place_car_on_track(fr: Dictionary) -> void:
 	# Fix Pass 5: the body rides on its springs - heave_off is the
 	# spring attach height (0 at rest, negative compressed, positive
 	# at droop), so the whole car settles/rises with the suspension.
+	# Fix Pass 9: the orientation is the car's OWN heading now.
+	# The frame's pitch (slope) and bank are re-expressed in the
+	# car's axes through the heading-vs-frame angle psi (driving
+	# across a slope pitches AND rolls you - the straddle wobble
+	# and the angled-landing tilt both live here), and the
+	# lagged edge roll from the per-wheel support is added.
+	# pitch_extra stays OFF this basis - it rides on car_body
+	# (the spring pitch visual), exactly as before.
 	var pos: Vector3 = fr["pos"] + fr["side"] * car_lat + fr["up"] * (CLEARANCE + heave_off)
-	var basis := Basis(fr["side"], fr["up"], -fr["tan"])
-	car.global_transform = Transform3D(basis, pos)
+	var psi: float = wrapf(car_heading - _frame_yaw(fr["tan"]), -PI, PI)
+	var slope_ang: float = asin(clampf(Vector3(fr["tan"]).y, -1.0, 1.0))
+	var bank: float = float(fr["bank"])
+	var pitch_a: float = slope_ang * cos(psi) - bank * sin(psi)
+	var roll_a: float = bank * cos(psi) + slope_ang * sin(psi) + edge_roll
+	var b := Basis(Vector3.UP, car_heading)
+	b = b.rotated(b.x, pitch_a)
+	b = b.rotated(b.z, roll_a)
+	car.global_transform = Transform3D(b, pos)
 
 
 func _update_air(delta: float) -> void:
@@ -2090,15 +2426,22 @@ func _update_air(delta: float) -> void:
 	air_vel.y -= GRAV * delta
 	var pos: Vector3 = car.global_position + air_vel * delta
 	car.global_position = pos
-	# track s estimate from forward motion
-	var fr_est: Dictionary = _frame_at(air_s_est)
-	air_s_est += air_vel.dot(fr_est["tan"]) * delta
-	air_s_est = clampf(air_s_est, 0.0, track_len)
+	# Fix Pass 9: the track s estimate comes from projecting the
+	# car's ACTUAL position (the old forward-motion integration
+	# assumed the velocity followed the spine - under the
+	# free-heading model a sliding car leaves at an angle). The
+	# heading is deliberately untouched here: no yaw authority
+	# while airborne.
+	var pr: Array = _project_to_spine(pos, air_s_est)
+	air_s_est = float(pr[0])
 	var fr: Dictionary = _frame_at(air_s_est)
 	var rel: Vector3 = pos - fr["pos"]
 	var lat: float = rel.dot(fr["side"])
 	var h: float = rel.dot(fr["up"])
-	if not bool(fr["gap"]) and h <= CLEARANCE + 0.05 and h > -2.2 and absf(lat) <= HALF_WIDTH and air_vel.y < 2.5:
+	# Fix Pass 9: the landing window widens to the straddle
+	# shoulder - touching down with wheels on the shoulder is a
+	# landing (the support model takes it from there), not a miss.
+	if not bool(fr["gap"]) and h <= CLEARANCE + 0.05 and h > -2.2 and absf(lat) <= HALF_WIDTH + EDGE_FALL_OVERSHOOT and air_vel.y < 2.5:
 		_land(fr, lat, h)
 		return
 	# missed it: the drone catches you
@@ -2136,13 +2479,31 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	# Fix Pass 6: the same impact arrives in the DRIVER a beat
 	# later - an impulse into the body spring, scaled by impact.
 	_body_impulse(vy)
-	car_s = air_s_est
-	car_lat = lat
-	lat_vel = 0.0
-	speed = clampf(air_vel.dot(fr["tan"]), 4.0, 34.0)
+	# Fix Pass 9: the velocity vector lands with the car - the
+	# horizontal air velocity becomes vel2 under the (frozen)
+	# heading, keeping its lateral part, with the old minimum
+	# forward guarantee (a dead drop still rolls away at 4 m/s
+	# along the heading). (s, lat) are then re-derived from the
+	# car's actual position by wide projection.
+	vel2 = Vector2(air_vel.x, air_vel.z)
+	var f2: Vector3 = _heading_fwd()
+	var r2: Vector3 = _heading_right()
+	var vf_land: float = vel2.dot(Vector2(f2.x, f2.z))
+	if vf_land < 4.0:
+		vel2 += Vector2(f2.x, f2.z) * (4.0 - vf_land)
+		vf_land = 4.0
+	elif vf_land > 34.0:
+		vel2 -= Vector2(f2.x, f2.z) * (vf_land - 34.0)
+		vf_land = 34.0
+	speed = vf_land
+	lat_vel = vel2.dot(Vector2(r2.x, r2.z))
+	yaw_rate = 0.0
+	var pr: Array = _project_to_spine(car.global_position, air_s_est, true)
+	car_s = float(pr[0])
+	car_lat = float(pr[1])
 	mode = MODE_DRIVE
 	was_airborne = false
-	_place_car_on_track(fr)
+	_place_car_on_track(_frame_at(car_s))
 
 
 func _update_hang(delta: float) -> void:
@@ -2324,29 +2685,68 @@ func _update_suspension(delta: float) -> void:
 	# Fix Pass 5: per-axle spring model (see the constants block).
 	if mode == MODE_DRIVE:
 		var fr: Dictionary = _frame_at(car_s)
-		var fr_f: Dictionary = _frame_at(car_s + AXLE_F)
-		var fr_r: Dictionary = _frame_at(car_s - AXLE_R)
-		geom_f = (fr_f["pos"] - fr["pos"]).dot(fr["up"])
-		geom_r = (fr_r["pos"] - fr["pos"]).dot(fr["up"])
+		# Fix Pass 9 (Item 2): PER-WHEEL support sampling. Each
+		# wheel's world position (from the car's own pose - the
+		# heading decides where the wheels actually are) projects
+		# to the spine, and the wheel's road rise is measured
+		# against the centre frame exactly as the old per-axle
+		# geom was. The axles' geom/loads/targets are the means of
+		# their wheels, so on a centred, aligned car this reduces
+		# to the Fix Pass 5/7/8 model unchanged.
+		# THE STRADDLE (Item 2 scope addition, Crammond's own
+		# mechanism - Car Behaviour.cpp, CalculateIfCarOffRoad):
+		# a wheel past the ribbon edge rides an invisible sloping
+		# shoulder - its support height falls EDGE_SLOPE per metre
+		# of overshoot - until EDGE_CUTOFF (3/4 of the wheel track
+		# past the edge), where it is fully unsupported: target =
+		# full droop, and its support line hangs below the
+		# shoulder's end, so the body rolls toward the dead side
+		# (the wobble) through the lagged edge_roll in placement.
+		# Steering back restores the support: the save.
+		var car_pos: Vector3 = car.global_position
+		var hf: Vector3 = _heading_fwd()
+		var hr: Vector3 = _heading_right()
+		var up_c: Vector3 = fr["up"]
+		var pos_c: Vector3 = fr["pos"]
+		for wi: int in 4:
+			var wl: Vector2 = WHEEL_LOCALS[wi]
+			var wp: Vector3 = car_pos + hr * wl.x - hf * wl.y
+			var pr: Array = _project_to_spine(wp, car_s)
+			sup_s[wi] = float(pr[0])
+			var wlat: float = float(pr[1])
+			var wfr: Dictionary = _frame_at(sup_s[wi])
+			var rise: float = (Vector3(wfr["pos"]) - pos_c).dot(up_c)
+			var over: float = absf(wlat) - HALF_WIDTH
+			if over > EDGE_CUTOFF:
+				sup_ok[wi] = false
+				sup_rise[wi] = rise - EDGE_CUTOFF * EDGE_SLOPE - 0.30
+			else:
+				sup_ok[wi] = true
+				sup_rise[wi] = rise - maxf(over, 0.0) * EDGE_SLOPE
+		geom_f = (sup_rise[0] + sup_rise[1]) * 0.5
+		geom_r = (sup_rise[2] + sup_rise[3]) * 0.5
 		# Fix Pass 7 (Item 2): the suspension samples the QUANTISED
 		# surface (see _elev_quantised). Swap only the ELEVATION
 		# component of each axle's road rise - subtract the smooth
 		# world-Y rise, add the quantised one - so the frame
 		# projection (bank/pitch geometry) and every other reader
 		# keep the smooth model, and the springs' own load/derivative
-		# response turns the steps into tremble. The slip/skid path
-		# never comes through here: it reads curvature drift in
-		# _update_drive, untouched by the quantisation.
+		# response turns the steps into tremble. Fix Pass 9: the
+		# swap is sampled at each axle's mean WHEEL s (the slip
+		# path never comes through here - it is the real lateral
+		# velocity in _update_drive, untouched by quantisation).
+		var s_f: float = (sup_s[0] + sup_s[1]) * 0.5
+		var s_r: float = (sup_s[2] + sup_s[3]) * 0.5
 		if jitter_on:
-			var p_c: Vector3 = fr["pos"]
-			var p_f: Vector3 = fr_f["pos"]
-			var p_r: Vector3 = fr_r["pos"]
 			var e_c: float = _elev_quantised(car_s)
-			geom_f += (_elev_quantised(car_s + AXLE_F) - e_c) - (p_f.y - p_c.y)
-			geom_r += (_elev_quantised(car_s - AXLE_R) - e_c) - (p_r.y - p_c.y)
+			geom_f += (_elev_quantised(s_f) - e_c) - (_frame_at(s_f)["pos"].y - pos_c.y)
+			geom_r += (_elev_quantised(s_r) - e_c) - (_frame_at(s_r)["pos"].y - pos_c.y)
 		# Crest load: following the road over a crest needs downward
 		# acceleration v^2 * kv; what gravity cannot supply unloads
-		# the springs. Computed per axle from the road's own profile.
+		# the springs. Computed per axle from the road's own profile
+		# (sampled at the axle's mean wheel s, as the geom is).
+		var fr_f: Dictionary = _frame_at(s_f)
+		var fr_r: Dictionary = _frame_at(s_r)
 		var cos_phi: float = maxf(sqrt(maxf(1.0 - fr["tan"].y * fr["tan"].y, 0.0)), 0.5)
 		load_f = clampf(1.0 - speed * speed * float(fr_f["kv"]) / (GRAV * cos_phi), 0.0, 1.25)
 		load_r = clampf(1.0 - speed * speed * float(fr_r["kv"]) / (GRAV * cos_phi), 0.0, 1.25)
@@ -2358,9 +2758,36 @@ func _update_suspension(delta: float) -> void:
 			long_accel_f = lerpf(long_accel_f, la, 0.25)
 		prev_speed = speed
 		var transfer: float = long_accel_f * SUSP_TRANSFER_K
-		var target_f: float = clampf((SUSP_REST + geom_f) * load_f - transfer, 0.0, SUSP_TRAVEL)
-		var target_r: float = clampf((SUSP_REST + geom_r) * load_r + transfer, 0.0, SUSP_TRAVEL)
+		# Per-wheel targets: a supported wheel asks for the road's
+		# rise under it (its OWN rise now, not the axle mean - a
+		# straddling wheel's spring extends down the shoulder);
+		# an unsupported wheel asks for full droop. The axle
+		# spring integrates the mean, as before. The FP7 jitter
+		# swap lives in geom_f/geom_r (the axle means), so each
+		# wheel's target also carries its axle's jitter delta -
+		# the difference between the swapped geom and the smooth
+		# mean (identically zero with jitter OFF).
+		var jit_f: float = geom_f - (sup_rise[0] + sup_rise[1]) * 0.5
+		var jit_r: float = geom_r - (sup_rise[2] + sup_rise[3]) * 0.5
+		var tw: Array[float] = [0.0, 0.0, 0.0, 0.0]
+		for wi2: int in 4:
+			if sup_ok[wi2]:
+				var ld: float = load_f if wi2 < 2 else load_r
+				var tr: float = -transfer if wi2 < 2 else transfer
+				var jd: float = jit_f if wi2 < 2 else jit_r
+				tw[wi2] = clampf((SUSP_REST + sup_rise[wi2] + jd) * ld + tr, 0.0, SUSP_TRAVEL)
+			else:
+				tw[wi2] = 0.0
+		var target_f: float = (tw[0] + tw[1]) * 0.5
+		var target_r: float = (tw[2] + tw[3]) * 0.5
 		_susp_integrate(target_f, target_r, delta)
+		# The straddle wobble: body roll toward the side whose
+		# support line sits lower, lagged so it wallows instead
+		# of snapping. Zero whenever all four wheels are home.
+		var rise_l: float = (sup_rise[0] + sup_rise[2]) * 0.5
+		var rise_r: float = (sup_rise[1] + sup_rise[3]) * 0.5
+		var er_target: float = atan2(rise_r - rise_l, WHEEL_TRACK_M)
+		edge_roll = lerpf(edge_roll, er_target, clampf(EDGE_ROLL_LAG * delta, 0.0, 1.0))
 		# Fix Pass 8 (Item 2): leaving the road is a LOAD decision,
 		# the same rule for both honest ways it happens - this
 		# REPLACES Fix Pass 5's peak-compression history gate,
@@ -2408,6 +2835,7 @@ func _update_suspension(delta: float) -> void:
 		load_f = 1.0
 		load_r = 1.0
 		air_load_frames = 0
+		edge_roll = lerpf(edge_roll, 0.0, clampf(EDGE_ROLL_LAG * delta, 0.0, 1.0))
 		_susp_integrate(SUSP_REST, SUSP_REST, delta)
 	else:
 		# AIR / HANG: no road contact - springs extend to full droop
@@ -2417,6 +2845,7 @@ func _update_suspension(delta: float) -> void:
 		load_f = 1.0
 		load_r = 1.0
 		air_load_frames = 0
+		edge_roll = lerpf(edge_roll, 0.0, clampf(EDGE_ROLL_LAG * delta, 0.0, 1.0))
 		_susp_integrate(0.0, 0.0, delta)
 
 
@@ -2799,12 +3228,34 @@ func _step_log_row() -> void:
 
 
 func debug_warp_to_s(s: float) -> void:
+	# Fix Pass 9: a warp now places the full free-heading state -
+	# heading aligned to the frame, velocity along it, no yaw,
+	# no slip - the same clean state the old model warped into.
 	car_s = clampf(s, 0.0, track_len - 2.0)
 	car_lat = 0.0
 	lat_vel = 0.0
 	speed = 14.0
+	yaw_rate = 0.0
+	edge_roll = 0.0
+	var frw: Dictionary = _frame_at(car_s)
+	car_heading = _frame_yaw(frw["tan"])
+	vel2 = Vector2(frw["tan"].x, frw["tan"].z).normalized() * 14.0
 	mode = MODE_DRIVE
-	_place_car_on_track(_frame_at(car_s))
+	_place_car_on_track(frw)
+
+
+func debug_pin_speed(v: float) -> void:
+	# Fix Pass 9 test fixture: hold the car at speed v along its
+	# own heading with zero slip - the free-heading replacement
+	# for poking `speed` directly (the model now integrates
+	# vel2, so a bare speed assignment would be overwritten by
+	# the decomposition on the next frame). Yaw rate is left
+	# alone: fixtures that pin per-frame on a straight (the
+	# shelf, the climb-top control) still need their steering.
+	speed = v
+	lat_vel = 0.0
+	var f2: Vector3 = _heading_fwd()
+	vel2 = Vector2(f2.x, f2.z) * v
 
 
 func debug_set_hang_dangle() -> void:
@@ -2818,11 +3269,15 @@ func debug_stage_landing(s: float, height: float, fwd_speed: float) -> void:
 	# Fix Pass 5 render-proof staging: put the car ballistic above
 	# the ribbon at s, falling - the production _update_air/_land
 	# path (and its suspension impulse) does the rest.
+	# Fix Pass 9: the landing is judged under the car's heading -
+	# align it to the frame so the staged landing grades as before.
 	var fr: Dictionary = _frame_at(s)
 	mode = MODE_AIR
 	air_from_gap = false
 	air_time = 0.0
 	air_s_est = s
+	car_heading = _frame_yaw(fr["tan"])
+	yaw_rate = 0.0
 	air_vel = fr["tan"] * fwd_speed
 	car.global_transform = Transform3D(
 		Basis(fr["side"], fr["up"], -fr["tan"]),

@@ -27,6 +27,19 @@ extends SceneTree
 ## geometry, no steering authority airborne, graded landings)
 ## + 10a, the climb-top negative control for the load-based
 ## airborne rule that replaced the peak-compression gate.
+## Fix Pass 9: the autopilot is now a STEERING driver (pure
+## pursuit on the car's own heading - the free-heading model
+## has no lateral-offset steering to poke, and no self-drive
+## ships in production). Stage 11 gains the two human grip
+## orders (grip-first-then-reach, held-grip sweep) for the
+## level-based lever activation. New stages: 12 = the
+## free-heading model itself (heading-vs-frame divergence on a
+## straight, real slip + centring vs counter-steer recovery,
+## sweeper divergence measured in stage 8); 13 = the
+## edge-straddle save (shoulder support, roll toward the off
+## side, the save, the fall past the cutoff, both edges).
+## Stage 2f's width check is the Crammond proportion: road =
+## 6.0x the measured front wheel track.
 ## NOT covered here (XR layer, reported UNVERIFIED, never passed
 ## silently): grab-wheel hand tracking, switch flipping by hand
 ## proximity, HMD lean reading, panel legibility in the headset.
@@ -121,18 +134,93 @@ func check_api_surface() -> void:
 
 
 func autopilot() -> void:
-	# keep the car centred; pre-compensate the banked corner's drift
-	var lat: float = main.car_lat
+	# Fix Pass 9: the autopilot is a STEERING driver now (test
+	# code only - no self-drive ships). Pure pursuit: aim the
+	# car's own heading at a spine point a speed-scaled
+	# lookahead ahead, and convert the heading error into a
+	# wheel angle in the same +-PI range the hands use (sign:
+	# positive wheel = right turn, so the wheel opposes the
+	# heading error). Speed is curvature-capped the same way a
+	# careful driver caps it: the lateral-acceleration budget
+	# (11 m/s^2 - the model's own grip limit) over the coming
+	# 46 m, and 24 m/s wherever the vertical curvature says
+	# humps (the stage-10 cruise the humps were shaped for).
+	_autopilot_drive(0.0, true)
+
+
+func autopilot_pursuit() -> void:
+	# Pursuit steering WITHOUT speed management - the fixture
+	# for stages that must overdrive a corner on purpose
+	# (2f/2g's forced slip): the speed-managed autopilot brakes
+	# to the grip-limited pace and the car simply grips, which
+	# is correct driving and a useless slip fixture.
+	_autopilot_drive(0.0, false)
+
+
+func autopilot_steer(lat_off: float = 0.0) -> void:
+	# Steering only, at a lateral offset from the centreline -
+	# the straddle stage parks the car on the shoulder with
+	# this while the stage itself owns the throttle. A PD lane-
+	# change law, NOT the pursuit: the desired heading is the
+	# frame direction corrected by an approach angle from the
+	# lateral error, DAMPED by the car's lateral velocity -
+	# the undamped version overshot the shoulder target all
+	# the way to the fall line (the heading obeys at once, the
+	# velocity's lateral lag carries the car onward). The
+	# damping term's sign: the velocity already points
+	# lat_vel/vf radians toward the +lat side of the heading,
+	# so the heading aims that much back the other way
+	# (+lat_vel in this formula - an earlier draft had it
+	# backwards and anti-damped the car off the edge). Used
+	# only on straights (the crest straight, the home
+	# straight), where the frame direction is the road's.
+	# The law aims the VELOCITY, not the heading: desired
+	# velocity direction = frame direction + a GENTLE approach
+	# angle from the lateral error (capped at ~8 deg - the
+	# straddle target sits only 1.6 m from the fall line, and
+	# at the 11 m/s^2 grip limit a faster approach cannot be
+	# stopped inside it; the ~24 deg approach measured in the
+	# FP9 probe arrived with 5 m/s of lateral velocity and
+	# went over), and the desired heading is that direction
+	# plus the current slip angle (the heading must lead the
+	# velocity by exactly the angle it lags).
+	var fr: Dictionary = main._frame_at(main.car_s)
+	var fy: float = main._frame_yaw(fr["tan"])
+	var lat_err: float = main.car_lat - lat_off
+	var slip_ang: float = atan2(main.lat_vel, maxf(absf(main.speed), 3.0))
+	var desired: float = fy + clampf(lat_err * 0.12, -0.14, 0.14) + slip_ang
+	var err: float = wrapf(desired - main.car_heading, -PI, PI)
+	main.wheel_angle = clampf(-err * 1.6, -1.0, 1.0) * PI
+
+
+func _autopilot_drive(lat_off: float, with_speed: bool) -> void:
 	var s: float = main.car_s
-	var steer_frac: float = clampf(-lat * 0.30, -0.6, 0.6)
-	if s > 128.0 and s < 182.0:
-		steer_frac = clampf(-0.45 - lat * 0.25, -0.85, 0.85)
-	# Fix Pass 7: the extension's mirrored sweeper needs the
-	# mirrored pre-compensation (its span is read from the built
-	# track, not hand-copied).
-	if s > main.sweeper_s0 - 3.0 and s < main.sweeper_s1 + 5.0:
-		steer_frac = clampf(0.45 - lat * 0.25, -0.85, 0.85)
-	main.wheel_angle = steer_frac * PI
+	var spd: float = maxf(main.speed, 0.0)
+	var la: float = clampf(spd * 0.55, 6.0, 22.0)
+	var fr_t: Dictionary = main._frame_at(s + la)
+	var tgt: Vector3 = fr_t["pos"] + fr_t["side"] * lat_off
+	var pos: Vector3 = main.car.global_position
+	var desired: float = atan2(-(tgt.x - pos.x), -(tgt.z - pos.z))
+	var err: float = wrapf(desired - main.car_heading, -PI, PI)
+	main.wheel_angle = clampf(-err * 1.6, -1.0, 1.0) * PI
+	if with_speed:
+		var max_kv: float = 0.0
+		var max_curv: float = 0.0
+		var ss: float = s
+		while ss < s + 46.0:
+			var fr_q: Dictionary = main._frame_at(ss)
+			max_kv = maxf(max_kv, absf(float(fr_q["kv"])))
+			max_curv = maxf(max_curv, absf(float(fr_q["curv"])))
+			ss += 4.0
+		var v_allow: float = clampf(sqrt(11.0 / maxf(max_curv, 0.0001)), 9.0, 34.0)
+		if max_kv > 0.012:
+			v_allow = minf(v_allow, 24.0)
+		if main.speed < v_allow:
+			main.test_throttle = 0.9
+			main.test_brake = 0.0
+		else:
+			main.test_throttle = 0.0
+			main.test_brake = 0.7
 
 
 func grip_flip_switch(switch_idx: int, hand: String = "R") -> void:
@@ -140,8 +228,11 @@ func grip_flip_switch(switch_idx: int, hand: String = "R") -> void:
 	# PRODUCTION grip path - the synthetic hand is posed on the
 	# switch's grab segment (production geometry via
 	# _dash_ctl_segment), proximity is resolved by
-	# _dash_ctl_near, and the flip must come from _poll_grab's
-	# fresh-grip edge into _activate_dash_ctl -> _flip_switch.
+	# _dash_ctl_near, and the flip must come from _poll_grab
+	# into _activate_dash_ctl -> _flip_switch. (Fix Pass 9:
+	# pose-then-grip is one of the two human orders the
+	# level-based activation serves; stage 11a covers the
+	# other.)
 	# Nothing here calls _flip_switch directly. The poll calls
 	# are synchronous (no physics frames between posing and
 	# polling), so the swinging car cannot move the segment
@@ -200,14 +291,14 @@ func measure_shelf(jit_window: bool) -> Array:
 	main.jitter_on = false
 	for i: int in 24:
 		autopilot()
-		main.speed = 20.0
+		main.debug_pin_speed(20.0)
 		await physics_frame
 	main.jitter_on = jit_window
 	var sf: Array = []
 	var sr: Array = []
 	for i2: int in 100:
 		autopilot()
-		main.speed = 20.0
+		main.debug_pin_speed(20.0)
 		await physics_frame
 		sf.append(main.c_f)
 		sr.append(main.c_r)
@@ -346,7 +437,7 @@ func _run() -> void:
 	# lag is the whole effect, (c) order by impact, (d) return to
 	# ~zero at rest.
 	main.debug_warp_to_s(10.0)
-	main.speed = 0.0
+	main.debug_pin_speed(0.0)
 	main.test_throttle = 0.0
 	await frames(150) # settle from the warp: spring back to rest
 	check(absf(main.body_sink) < 0.002,
@@ -391,7 +482,7 @@ func _run() -> void:
 	# straight (measured 27 deg of frame bank at s=185); the frame on
 	# the post-corner straight must now be flat.
 	main.debug_warp_to_s(10.0)
-	main.speed = 0.0
+	main.debug_pin_speed(0.0)
 	main.test_throttle = 0.0
 	await frames(30)
 	var fr_2b: Dictionary = main._frame_at(main.car_s)
@@ -446,37 +537,52 @@ func _run() -> void:
 	check(main._dash_ctl_near(btn_pos + Vector3(0.0, 0.20, 0.0)) == -1,
 		"stage2d: hand 0.20 m from a dash button activates nothing")
 
-	# Stage 2f (Fix Pass 6, Items 2 + 3): the 8 m road and the
+	# Stage 2f (Fix Pass 6, Items 2 + 3): the road width and the
 	# audio state machine. Sound QUALITY is not asserted anywhere
 	# here (headless cannot hear) - only that the channels track
 	# the model's state: engine pitch monotonic with speed, skid
 	# gain ~0 while gripping and while airborne, > 0 under forced
 	# slip, and the focus-out latch stops both players.
-	check(absf(main.HALF_WIDTH - 4.0) < 0.001,
-		"stage2f: road is 8 m wide (half width %.1f m)" % main.HALF_WIDTH)
+	# Fix Pass 9 (Item 3): the width is Crammond's PROPORTION -
+	# 6.0x the measured front wheel track (1.56 m) = 9.36 m.
+	check(absf(main.HALF_WIDTH - 3.0 * main.WHEEL_TRACK_M) < 0.001,
+		"stage2f: road is 6.0x the wheel track (%.2f m full, track %.2f m)" % [main.HALF_WIDTH * 2.0, main.WHEEL_TRACK_M])
 	main.debug_warp_to_s(10.0)
 	main.test_throttle = 0.0
-	main.speed = 6.0
+	main.debug_pin_speed(6.0)
 	await frames(50)
 	var pitch_lo: float = main.audio_engine_pitch()
-	main.speed = 26.0
+	main.debug_pin_speed(26.0)
 	await frames(50)
 	var pitch_hi: float = main.audio_engine_pitch()
 	check(pitch_hi > pitch_lo + 0.3,
 		"stage2f: engine pitch tracks speed (%.2f at ~6 m/s -> %.2f at ~26 m/s)" % [pitch_lo, pitch_hi])
 	check(main.audio_skid_gain() < 0.02,
 		"stage2f: skid silent while gripping on the straight (gain %.3f)" % main.audio_skid_gain())
-	# Forced slip: mid-bank at speed - the model's drift is large.
-	main.debug_warp_to_s(160.0)
-	main.speed = 24.0
+	# Forced slip: the banked corner at speed - the model's real
+	# lateral velocity is large (Fix Pass 9: slip_state derives
+	# from it). Warped to the corner ENTRY and given 80 frames:
+	# at 24 m/s the R30 corner demands ~19 m/s^2 against an
+	# ~11 m/s^2 grip limit plus the bank's help, so the slide
+	# develops over ~2/3 s and saturates - the old model's
+	# instantaneous drift proxy read full slip in 35 frames,
+	# the real one has to break loose first (measured, probe).
+	main.debug_warp_to_s(145.0)
+	main.debug_pin_speed(24.0)
 	main.test_throttle = 0.3
-	await frames(35, true)
+	main.test_brake = 0.0
+	for i2f: int in 80:
+		autopilot_pursuit()
+		await physics_frame
 	check(main.audio_skid_gain() > 0.15,
 		"stage2f: skid sounds under forced slip at the bank (gain %.2f, slip %.2f)" % [main.audio_skid_gain(), main.slip_state])
 	main.test_throttle = 0.0
-	# Airborne: tires unload, the skid silences.
+	# Airborne: tires unload, the skid silences. (30 frames:
+	# the gain follower decays at 22/s from the segment's full
+	# slip - from 1.0 it needs ~0.3 s to fall silent, where the
+	# old model's smaller slip cleared it in 10 frames.)
 	main.debug_stage_landing(232.0, 3.0, 12.0)
-	await frames(10)
+	await frames(30)
 	check(main.mode == main.MODE_AIR and main.audio_skid_gain() < 0.05,
 		"stage2f: skid silent while airborne (gain %.3f)" % main.audio_skid_gain())
 	var landed2: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 300)
@@ -493,7 +599,7 @@ func _run() -> void:
 	check(not main.audio_latched and main.engine_player.playing,
 		"stage2f: focus-in unlatch resumes the engine in a live race")
 	main.debug_warp_to_s(10.0)
-	main.speed = 10.0
+	main.debug_pin_speed(10.0)
 	await frames(5)
 
 	# Stage 2g (Fix Pass 7, Item 2): the Crammond jitter mechanism.
@@ -508,9 +614,10 @@ func _run() -> void:
 	# tremble in the 5-15 mm target band; jitter OFF collapses to
 	# ~0 (the negative control). (c) The skid must not hear the
 	# tremble: forced-slip readings at the bank are identical ON
-	# vs OFF (the slip path reads the smooth curvature, never the
-	# quantised surface). (d) The toggle flips the state and the
-	# DIAG block reports it.
+	# vs OFF (Fix Pass 9: slip is the real lateral velocity, and
+	# the plan-view trajectory it follows is jitter-independent -
+	# the quantised surface only moves the springs). (d) The
+	# toggle flips the state and the DIAG block reports it.
 	var q_flat: float = 0.0
 	var q_climb: float = 0.0
 	for iq: int in 201:
@@ -540,19 +647,21 @@ func _run() -> void:
 	check(float(shelf_off[2]) < 0.002,
 		"stage2g: NEGATIVE CONTROL - jitter OFF is ~silent on the shelf (avg HF travel %.1f mm p2p)"
 			% (float(shelf_off[2]) * 1000.0))
-	main.debug_warp_to_s(160.0)
-	main.speed = 24.0
+	main.debug_warp_to_s(145.0)
+	main.debug_pin_speed(24.0)
 	main.test_throttle = 0.3
+	main.test_brake = 0.0 # measure_shelf's speed-managed autopilot leaves brake behind
 	main.jitter_on = true
-	for isl: int in 35:
-		autopilot()
+	for isl: int in 80:
+		autopilot_pursuit()
 		await physics_frame
 	var slip_jit: float = main.slip_state
-	main.debug_warp_to_s(160.0)
-	main.speed = 24.0
+	main.debug_warp_to_s(145.0)
+	main.debug_pin_speed(24.0)
+	main.test_brake = 0.0
 	main.jitter_on = false
-	for isl2: int in 35:
-		autopilot()
+	for isl2: int in 80:
+		autopilot_pursuit()
 		await physics_frame
 	var slip_smooth: float = main.slip_state
 	main.test_throttle = 0.0
@@ -572,7 +681,7 @@ func _run() -> void:
 	# original start premise, the s=10 warp stage 2f used to end
 	# on. No assertion changes.)
 	main.debug_warp_to_s(10.0)
-	main.speed = 10.0
+	main.debug_pin_speed(10.0)
 	await frames(5)
 	main.test_throttle = 0.9
 	var start_h: float = main.car.global_position.y
@@ -705,6 +814,13 @@ func _run() -> void:
 	var stairs_work: float = 0.0
 	var t8: int = 0
 	var lap_done: bool = false
+	# Fix Pass 9 (Item 2, assertion d): heading-vs-frame
+	# divergence through the banked sweeper - the car runs at a
+	# slip angle there, so its heading and the frame's heading
+	# are measurably different quantities now.
+	var sweep_div_max: float = 0.0
+	var sweep_div_sum: float = 0.0
+	var sweep_div_n: int = 0
 	while t8 < 20000:
 		autopilot()
 		main.test_boost = (main.car_s > 185.0 and main.car_s < main.gap_s0) \
@@ -716,6 +832,12 @@ func _run() -> void:
 		t8 += 1
 		if main.car_s > main.sweeper_s0 and main.car_s < main.sweeper_s1:
 			in_sweeper = true
+			if main.mode == main.MODE_DRIVE:
+				var fr8: Dictionary = main._frame_at(main.car_s)
+				var dv8: float = rad_to_deg(absf(wrapf(main.car_heading - main._frame_yaw(fr8["tan"]), -PI, PI)))
+				sweep_div_max = maxf(sweep_div_max, dv8)
+				sweep_div_sum += dv8
+				sweep_div_n += 1
 		if main.mode == main.MODE_AIR and main.air_s_est > main.gap2_s0 - 8.0 and main.air_s_est < main.gap2_s1 + 2.0:
 			gap2_air = true
 		if main.car_s > main.ext_s0 and main.car_s < main.sweeper_s0:
@@ -739,6 +861,10 @@ func _run() -> void:
 		"stage8: crest straight works the suspension (peak avg compression %.3f m)" % crest_work)
 	check(stairs_work > main.SUSP_REST + 0.15,
 		"stage8: staircase hammers the suspension (peak avg compression %.3f m)" % stairs_work)
+	var sweep_div_avg: float = sweep_div_sum / maxf(float(sweep_div_n), 1.0)
+	check(sweep_div_max > 3.0,
+		"stage8: heading diverges from the frame heading through the sweeper (max %.1f deg, typical %.1f deg over %d frames)"
+			% [sweep_div_max, sweep_div_avg, sweep_div_n])
 	print("stage8: measured full-lap time %.1f s (game clock) over %.0f m of ribbon" % [main.finished_time, main.track_len])
 
 	# Stage 9 (Fix Pass 8, Item 1): the INSTRUMENTED lap. A full
@@ -926,8 +1052,10 @@ func _run() -> void:
 	# the stated cruise (24 m/s) over the reshaped humps -
 	# airborne episodes from GEOMETRY (load clamps to ~zero at
 	# both axles), steering with no authority while airborne
-	# (lateral state frozen across each flight), landings that
-	# grade through the production path without damage.
+	# (Fix Pass 9: the HEADING is frozen across each flight -
+	# the free-heading form of the old lateral freeze),
+	# landings that grade through the production path without
+	# damage.
 	main.jitter_on = true # back to the shipped default for stage 10
 	main.debug_warp_to_s(100.0)
 	main.test_throttle = 0.0
@@ -936,7 +1064,7 @@ func _run() -> void:
 	var t10a: int = 0
 	while main.car_s < 195.0 and t10a < 1200:
 		autopilot()
-		main.speed = 30.0 # pinned, measure_shelf style
+		main.debug_pin_speed(30.0) # pinned, measure_shelf style
 		await physics_frame
 		t10a += 1
 		if main.car_s > 125.0:
@@ -954,16 +1082,16 @@ func _run() -> void:
 	var episodes10: Array = []
 	var in_air10: bool = false
 	var ep_frames10: int = 0
-	var ep_lat0: float = 0.0
-	var ep_latv0: float = 0.0
+	var ep_head0: float = 0.0
 	var grades10: Array = []
 	var dent10: int = main.dent_level
 	var min_load10b: float = 1.0
 	var air_frames10: int = 0
 	var t10b: int = 0
 	while main.car_s < main.sweeper_s0 - 5.0 and t10b < 1800:
-		autopilot()
-		main.speed = 24.0 # the stated cruise the humps were shaped for
+		if main.mode == main.MODE_DRIVE:
+			autopilot_steer()
+			main.debug_pin_speed(24.0) # the stated cruise the humps were shaped for
 		await physics_frame
 		t10b += 1
 		min_load10b = minf(min_load10b, minf(main.load_f, main.load_r))
@@ -971,27 +1099,27 @@ func _run() -> void:
 			if not in_air10:
 				in_air10 = true
 				ep_frames10 = 0
-				ep_lat0 = main.car_lat
-				ep_latv0 = main.lat_vel
-				# Hard-over wheel poke mid-flight: _update_air
-				# has no steering channel - the lateral state
-				# must come out of the flight untouched.
+				ep_head0 = main.car_heading
+				# Hard-over wheel poke for the whole flight:
+				# _update_air integrates no steering channel -
+				# the heading must come out of the flight
+				# untouched.
 				main.wheel_angle = PI * 0.9
 			ep_frames10 += 1
 			air_frames10 += 1
 		elif in_air10:
 			in_air10 = false
-			episodes10.append([ep_frames10, ep_lat0, ep_latv0, main.car_lat, main.lat_vel])
+			episodes10.append([ep_frames10, ep_head0, main.car_heading])
 			grades10.append(String(main.last_touchdown).split(" ")[0])
 		if main.mode == main.MODE_HANG:
 			break
 	if in_air10:
-		episodes10.append([ep_frames10, ep_lat0, ep_latv0, main.car_lat, main.lat_vel])
+		episodes10.append([ep_frames10, ep_head0, main.car_heading])
 		grades10.append(String(main.last_touchdown).split(" ")[0])
-	var lat_ok10: bool = episodes10.size() > 0
+	var head_ok10: bool = episodes10.size() > 0
 	for ep10: Array in episodes10:
-		if absf(float(ep10[3]) - float(ep10[1])) > 0.001 or absf(float(ep10[4]) - float(ep10[2])) > 0.001:
-			lat_ok10 = false
+		if absf(wrapf(float(ep10[2]) - float(ep10[1]), -PI, PI)) > deg_to_rad(1.0):
+			head_ok10 = false
 	var grades_ok10: bool = grades10.size() == episodes10.size()
 	for g10: String in grades10:
 		if g10 == "HARD" or g10 == "-" or g10 == "":
@@ -1002,29 +1130,31 @@ func _run() -> void:
 		"stage10b: total hump air time %.2f s at cruise (floor 0.8 s)" % (float(air_frames10) / 90.0))
 	check(min_load10b <= 0.031,
 		"stage10b: crest load reaches ~zero at both axles (min %.3f) - air from geometry" % min_load10b)
-	check(lat_ok10,
-		"stage10b: no ground steering authority while airborne (lateral state frozen across all %d flights)" % episodes10.size())
+	check(head_ok10,
+		"stage10b: no steering authority while airborne (heading frozen across all %d flights)" % episodes10.size())
 	check(grades_ok10 and main.dent_level == dent10,
 		"stage10b: hump landings grade normally, no damage (grades %s, dent %d)" % [str(grades10), main.dent_level])
 	main.wheel_angle = 0.0
 
-	# Stage 11 (Fix Pass 8, Item 0): THE LEVER REGRESSION HUNT.
-	# Chris, run 8: the prep levers worked at the Drop Start
-	# (his capture shows the sequence completing) and were dead
-	# at some later point in the same session, while the wheel
-	# - same hands, same grip channels, same _poll_grab - kept
-	# working. The flip is EDGE-triggered where the wheel is
-	# level-triggered, so the suspect class is state that stops
-	# fresh edges or re-arming after the first cycle. This stage
-	# runs the prep sequence through the PRODUCTION grip path
-	# (grip_flip_switch: posed hand, _poll_grab edge, segment
-	# proximity, _activate_dash_ctl) on THREE successive
-	# dangles in one session - Drop Start, drone recovery after
-	# a forced fall, and a fresh Drop Start after FINISH +
-	# restart - plus a held-grip probe (a grip held across many
-	# polls must flip exactly once; if the edge state could
-	# stick, this is where it shows). Every switch must flip in
-	# every dangle.
+	# Stage 11 (Fix Pass 8, Item 0; Fix Pass 9, Item 1): THE
+	# LEVERS. FP8 hunted a state regression and did not reproduce
+	# one headless; run 9 produced the decisive evidence - the
+	# panel said HOLD (grip arrived, hand in range) and the
+	# levers still did not move, because the flip fired on the
+	# grip EDGE inside the zone and a human hand squeezes FIRST
+	# and reaches SECOND, spending the edge in empty air. FP9
+	# makes activation LEVEL-based inside the zone (fires once
+	# per continuous grab-and-zone entry, re-arms on release or
+	# zone exit). This stage now proves BOTH human orders
+	# through the production grip path, plus the FP8 three-
+	# dangle regression coverage unchanged:
+	#   11a: grip-first-then-reach, then a HELD-GRIP SWEEP
+	#        across the remaining switches (each fires on zone
+	#        entry, exactly once), prep completes, credit lands.
+	#   11b: recovery dangle - wrong-order reset, a held-grip
+	#        probe (parked in the zone: exactly one flip), then
+	#        the original pose-then-grip sequence.
+	#   11c: post-FINISH Drop Start, pose-then-grip throughout.
 	main.test_throttle = 0.0
 	main.test_boost = false
 	# --- dangle A: fresh Drop Start (the production restart
@@ -1033,26 +1163,47 @@ func _run() -> void:
 	await frames(4)
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
 		"stage11a: fresh Drop Start dangle (mode=%d phase=%s)" % [main.mode, main.hang_phase])
-	# held-grip probe on the sequence's first switch
+	var boost_a: float = main.boost_meter
+	# (a) GRIP FIRST, THEN REACH - the run-9 failure order.
 	var hold_idx: int = int(main.prep_order[0])
 	var hold_ctl: int = main.dash_ctl_kinds.find("switch%d" % hold_idx)
 	var hold_seg: Array[Vector3] = main._dash_ctl_segment(hold_ctl)
-	main.test_hand_pos["R"] = (hold_seg[0] + hold_seg[1]) * 0.5
+	var hold_mid: Vector3 = (hold_seg[0] + hold_seg[1]) * 0.5
+	main.test_hand_pos["R"] = hold_mid + Vector3(0.0, 0.55, 0.0)
 	main.test_hand_set = true
-	check(main._dash_ctl_near(main.test_hand_pos["R"]) == hold_ctl,
-		"stage11a: posed hand resolves to the target switch's control")
+	check(main._dash_ctl_near(main.test_hand_pos["R"]) == -1,
+		"stage11a: the reach starts outside every control zone")
 	main.test_grip["R"] = 1.0
-	for ih: int in 6:
+	for ih: int in 2:
+		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	check(main.prep_index == 0,
+		"stage11a: gripping in empty air fires nothing (index %d)" % main.prep_index)
+	main.test_hand_pos["R"] = hold_mid # hand arrives, grip STILL held
+	for ih2: int in 2:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
 	check(main.prep_index == 1 and main.switch_on[hold_idx],
-		"stage11a: a HELD grip flips exactly once (edge, not level) - prep_index %d" % main.prep_index)
+		"stage11a: grip-first-then-reach flips the switch on zone entry (index %d)" % main.prep_index)
+	# (b) HELD-GRIP SWEEP: without ever releasing, the hand
+	# moves to the next switch's segment, then the last - each
+	# fires exactly once on entry and the sequence completes.
+	for ia: int in range(1, main.prep_order.size()):
+		var sw_idx: int = int(main.prep_order[ia])
+		var sw_ctl: int = main.dash_ctl_kinds.find("switch%d" % sw_idx)
+		var sw_seg: Array[Vector3] = main._dash_ctl_segment(sw_ctl)
+		main.test_hand_pos["R"] = (sw_seg[0] + sw_seg[1]) * 0.5
+		for ih3: int in 2:
+			main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	check(main.prep_done, "stage11a: held-grip sweep completes the prep sequence")
+	check(main.boost_meter > boost_a, "stage11a: prep credit lands (%.0f -> %.0f)" % [boost_a, main.boost_meter])
+	# Parked in the last zone, still gripping: no re-fire (a
+	# re-fire now would TOGGLE the switch back off - _flip_switch's
+	# post-completion branch - so a true latch is observable).
+	for ih4: int in 4:
+		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	check(main.switch_on[int(main.prep_order[2])] and main.prep_index == 3,
+		"stage11a: a parked held grip does not re-fire (index %d)" % main.prep_index)
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	var boost_a: float = main.boost_meter
-	for ia: int in range(1, main.prep_order.size()):
-		grip_flip_switch(int(main.prep_order[ia]))
-	check(main.prep_done, "stage11a: Drop Start prep completes through the grip path")
-	check(main.boost_meter > boost_a, "stage11a: prep credit lands (%.0f -> %.0f)" % [boost_a, main.boost_meter])
 	# --- forced fall -> drone recovery dangle ---
 	main._do_release()
 	var drv_a: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
@@ -1064,32 +1215,62 @@ func _run() -> void:
 	# frame), so a state-variable teleport falls back onto the
 	# tarmac, while a real edge crossing starts at the edge
 	# with outward velocity and cannot land. Pin the wheel hard
-	# over and let the drive code carry the car off.
+	# over and let the drive code carry the car off. Fix Pass 9:
+	# the drive now runs until the DRONE catches the car (a
+	# mere AIR sighting no longer ends the stage - under the
+	# free-heading model a hard-over turn crosses the shoulder
+	# progressively, and the straddle state must not be
+	# mistaken for the fall). AND the speed must be built FIRST,
+	# centred: at full lock the car's turning circle is ~9.6 m
+	# across - nearly inscribed in the 9.36 m road - so a
+	# hard-over pin from low speed donuts on the ribbon
+	# forever (measured: 4500 frames, no fall). At 18+ m/s the
+	# yaw-rate cap stretches the radius past 11 m and the car
+	# sweeps across the fall line in about a second.
+	main.test_throttle = 0.9
+	var tsp: int = 0
+	while main.speed < 17.0 and tsp < 600 and main.mode == main.MODE_DRIVE:
+		autopilot()
+		await physics_frame
+		tsp += 1
 	main.test_throttle = 0.6
-	var fell_b: bool = false
 	var tf: int = 0
-	while tf < 900:
+	var dang_b: bool = false
+	while tf < 3000:
 		main.wheel_angle = PI
 		await physics_frame
 		tf += 1
-		if main.mode == main.MODE_AIR:
-			fell_b = true
+		if main.mode == main.MODE_HANG and main.hang_phase == "dangle":
+			dang_b = true
 			break
-		if main.mode != main.MODE_DRIVE:
+		if main.mode == main.MODE_DONE:
 			break
-	check(fell_b, "stage11b: steering hard over drives the car off the ribbon edge")
 	main.wheel_angle = 0.0
-	var dang_b: bool = await wait_until(
-		func() -> bool: return main.mode == main.MODE_HANG and main.hang_phase == "dangle", 2500)
 	main.test_throttle = 0.0
-	check(dang_b, "stage11b: forced fall ends in a drone-recovery dangle (mode=%d phase=%s)" % [main.mode, main.hang_phase])
+	check(dang_b, "stage11b: steering hard over drives the car off the edge into a drone-recovery dangle (mode=%d phase=%s, %d frames)" % [main.mode, main.hang_phase, tf])
 	check(not main.is_drop_start, "stage11b: this dangle is a recovery, not a Drop Start")
 	# wrong switch first: the production reset, through the grip path
 	var wrong_idx: int = int(main.prep_order[1])
 	grip_flip_switch(wrong_idx)
 	check(main.prep_index == 0 and not main.switch_on[wrong_idx],
 		"stage11b: wrong-order grip flip resets the sequence (index %d)" % main.prep_index)
-	for ib: int in main.prep_order.size():
+	# held-grip probe on the sequence's first switch: a grip
+	# parked in the zone across many polls flips EXACTLY once
+	# (a second fire would be the wrong switch now and reset
+	# the sequence to 0 - so index == 1 proves the latch).
+	var hold_idx_b: int = int(main.prep_order[0])
+	var hold_ctl_b: int = main.dash_ctl_kinds.find("switch%d" % hold_idx_b)
+	var hold_seg_b: Array[Vector3] = main._dash_ctl_segment(hold_ctl_b)
+	main.test_hand_pos["R"] = (hold_seg_b[0] + hold_seg_b[1]) * 0.5
+	main.test_hand_set = true
+	main.test_grip["R"] = 1.0
+	for ihb: int in 6:
+		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	check(main.prep_index == 1 and main.switch_on[hold_idx_b],
+		"stage11b: a HELD grip parked in the zone flips exactly once (index %d)" % main.prep_index)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	for ib: int in range(1, main.prep_order.size()):
 		grip_flip_switch(int(main.prep_order[ib]))
 	check(main.prep_done, "stage11b: recovery-dangle prep completes through the grip path")
 	# --- FINISH, restart, fresh Drop Start dangle ---
@@ -1121,6 +1302,143 @@ func _run() -> void:
 	main.test_hand_set = false
 	main.test_grip["R"] = 0.0
 	main.test_grip["L"] = 0.0
+
+	# Stage 12 (Fix Pass 9, Item 2): THE FREE-HEADING MODEL.
+	# (a) On a dead straight, a held wheel angle turns the
+	# car's own HEADING away from the frame's heading while
+	# the car stays on the ribbon - the sensation Chris found
+	# missing in run 9 ("it more slides... riding a rail")
+	# cannot exist in the old model and must exist in this
+	# one. (b) A hard flick at speed breaks the tires loose
+	# with REAL lateral velocity (slip_state is derived from
+	# it); centring the wheel lets grip recover it, and
+	# counter-steering recovers it faster.
+	main.debug_warp_to_s(20.0)
+	main.debug_pin_speed(14.0)
+	main.test_throttle = 0.35
+	var div12_max: float = 0.0
+	var lat12_max: float = 0.0
+	for i12: int in 36:
+		main.wheel_angle = 0.45 * PI
+		await physics_frame
+		var fr12: Dictionary = main._frame_at(main.car_s)
+		div12_max = maxf(div12_max, rad_to_deg(absf(wrapf(
+			main.car_heading - main._frame_yaw(fr12["tan"]), -PI, PI))))
+		lat12_max = maxf(lat12_max, absf(main.car_lat))
+	main.wheel_angle = 0.0
+	main.test_throttle = 0.0
+	check(div12_max > 12.0,
+		"stage12a: a held wheel turns the HEADING off the frame on a straight (max divergence %.1f deg, floor 12)" % div12_max)
+	check(lat12_max < main.HALF_WIDTH and main.mode == main.MODE_DRIVE,
+		"stage12a: the car stays on the ribbon while its heading is its own (max |lat| %.2f m)" % lat12_max)
+	# (b) slip and recovery on the home straight. The flick is
+	# 36 frames (0.4 s): the yaw inertia (YAW_TAU 0.16 s) eats a
+	# shorter flick - a 20-frame flick measured only 0.22 peak
+	# slip because the heading had barely begun to rotate when
+	# it ended. 0.4 s of hard lock rotates the heading ~23 deg
+	# while the velocity lags ~13 deg behind it: real slip.
+	main.debug_warp_to_s(main.track_len - 190.0)
+	main.debug_pin_speed(20.0)
+	main.test_throttle = 0.3
+	var peak12: float = 0.0
+	for i12b: int in 36:
+		main.wheel_angle = 0.9 * PI
+		await physics_frame
+		peak12 = maxf(peak12, main.slip_state)
+	check(peak12 > 0.5,
+		"stage12b: a hard flick at 20 m/s breaks the tires loose (peak slip %.2f, floor 0.5)" % peak12)
+	main.wheel_angle = 0.0 # recovery A: centre and let grip work
+	var rec_a12: int = 0
+	while main.slip_state >= 0.08 and rec_a12 < 400 and main.mode == main.MODE_DRIVE:
+		await physics_frame
+		rec_a12 += 1
+	main.debug_warp_to_s(main.track_len - 190.0)
+	main.debug_pin_speed(20.0)
+	var peak12b: float = 0.0
+	for i12c: int in 36:
+		main.wheel_angle = 0.9 * PI
+		await physics_frame
+		peak12b = maxf(peak12b, main.slip_state)
+	main.wheel_angle = -0.55 * PI # recovery B: counter-steer
+	var rec_b12: int = 0
+	while main.slip_state >= 0.08 and rec_b12 < 400 and main.mode == main.MODE_DRIVE:
+		await physics_frame
+		rec_b12 += 1
+	main.wheel_angle = 0.0
+	main.test_throttle = 0.0
+	check(rec_b12 < rec_a12,
+		"stage12b: counter-steer shortens the slip recovery (%d frames vs %d centred)" % [rec_b12, rec_a12])
+	check(main.mode == main.MODE_DRIVE,
+		"stage12b: still driving after the flick and both recoveries (mode=%d)" % main.mode)
+
+	# Stage 13 (Fix Pass 9, Item 2 scope addition): THE
+	# EDGE-STRADDLE SAVE, Crammond's invisible sloping
+	# shoulder. At moderate overshoot the car stays SUPPORTED
+	# (no fall), rolls measurably toward the off side (the
+	# wobble), and steering back restores full support (the
+	# save). Past the cutoff the car goes over and the normal
+	# fall/drone path engages. Both edges, mirrored.
+	for sgn13: float in [1.0, -1.0]:
+		var side_name: String = "right" if sgn13 > 0.0 else "left"
+		main.debug_warp_to_s(main.track_len - 190.0)
+		main.test_throttle = 0.25 # gentle: the whole manoeuvre must fit the home straight
+		# Settle on the centreline first - a LONG settle: the
+		# warp does not reset the springs, and the previous
+		# side's release landing can still be ringing (its
+		# rebound hop fired mid-hold on the left run and tripped
+		# the mode watch - a landing transient, not a straddle
+		# failure). 150 frames is several ring periods past it.
+		for ic13: int in 150:
+			autopilot_steer(0.0)
+			await physics_frame
+		var roll_sum13: float = 0.0
+		var roll_n13: int = 0
+		var drove13: bool = true
+		for ih13: int in 320:
+			autopilot_steer(sgn13 * (main.HALF_WIDTH + 0.35))
+			await physics_frame
+			if main.mode != main.MODE_DRIVE:
+				drove13 = false
+			if ih13 >= 240:
+				roll_sum13 += main.car.global_transform.basis.y.dot(main._heading_right())
+				roll_n13 += 1
+		var roll13: float = roll_sum13 / maxf(float(roll_n13), 1.0)
+		check(drove13,
+			"stage13: %s straddle at moderate overshoot stays supported - no fall" % side_name)
+		check(roll13 * sgn13 > 0.08,
+			"stage13: %s straddle rolls toward the off side (up-along-right %.3f, ~%.0f deg)" % [side_name, roll13, rad_to_deg(asin(clampf(roll13, -1.0, 1.0)))])
+		check(absf(main.car_lat - sgn13 * (main.HALF_WIDTH + 0.35)) < 0.55,
+			"stage13: %s straddle holds its line on the shoulder (car_lat %.2f m)" % [side_name, main.car_lat])
+		for is13: int in 200: # the save: steer back to centre
+			autopilot_steer(0.0)
+			await physics_frame
+		check(main.mode == main.MODE_DRIVE and absf(main.car_lat) < 0.6,
+			"stage13: %s save - steering back restores the centreline (car_lat %.2f m)" % [side_name, main.car_lat])
+		var roll_save13: float = main.car.global_transform.basis.y.dot(main._heading_right())
+		check(absf(roll_save13) < 0.035,
+			"stage13: %s save - the wobble is gone once support is back (roll %.3f)" % [side_name, roll_save13])
+		var fell13: bool = false
+		for io13: int in 260:
+			autopilot_steer(sgn13 * (main.HALF_WIDTH + 2.55))
+			await physics_frame
+			if main.mode == main.MODE_AIR:
+				fell13 = true
+				break
+			if main.mode != main.MODE_DRIVE:
+				break
+		check(fell13, "stage13: %s - past the cutoff the car goes over (mode=%d)" % [side_name, main.mode])
+		main.test_throttle = 0.0
+		var dang13: bool = await wait_until(
+			func() -> bool: return main.mode == main.MODE_HANG and main.hang_phase == "dangle", 2500)
+		check(dang13, "stage13: %s - the drone recovery engages after the fall" % side_name)
+		main.pend_th_f = 0.0
+		main.pend_th_l = 0.0
+		main.pend_om_f = 0.0
+		main.pend_om_l = 0.0
+		await frames(4)
+		main._do_release()
+		var drv13: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+		check(drv13, "stage13: %s - release resumes driving for the mirror run" % side_name)
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
