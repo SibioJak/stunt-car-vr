@@ -15,6 +15,14 @@ extends Node3D
 ## and look around; C / controller primary click moves the rig to
 ## a slow outside orbit so the car can be judged from off-board.
 ##
+## The seat is ANCHORED exactly like the game (Fix Pass 2/3 there):
+## a SeatOffset node between the car body and the rig carries a
+## rigid correction, applied once the tracked pose is stable, that
+## lands the HMD precisely on EYE_ANCHOR - without it the tracked
+## seated height stacks on top of the anchor and the driver floats
+## a metre over the car (the "high chair"). R / the left
+## controller's menu button re-seats (re-arms the anchor).
+##
 ## --lt-lite (user arg) disables SSAO / SSIL / volumetric fog.
 ## It exists so this scene can be render-captured under software
 ## Vulkan (SwiftShader) in CI; a real GPU should run it full.
@@ -33,7 +41,8 @@ var lite_mode: bool = false
 
 var car: Node3D
 var car_body: Node3D
-var seat_rig: Node3D # child of car_body at EYE_ANCHOR; home of the XR origin (cockpit)
+var seat_offset: Node3D # child of car_body; carries the anchor correction
+var seat_rig: Node3D # child of seat_offset at EYE_ANCHOR; home of the XR origin (cockpit)
 var orbit_anchor: Node3D # child of orbit_pivot; the XR origin's outside home
 var orbit_pivot: Node3D
 var origin: XROrigin3D
@@ -45,6 +54,27 @@ var view_orbit: bool = false
 var orbit_angle: float = 0.6
 var look_yaw: float = 0.0
 var look_pitch: float = 0.0
+
+# Seat anchor, ported from the game (its Fix Pass 2 + 3): the
+# correction applies only on a STABLE tracked pose - the camera's
+# local position must move less than ANCHOR_STABLE_EPS across
+# ANCHOR_STABLE_FRAMES consecutive physics frames. The first valid
+# pose off a Virtual Desktop stream can be a transient snapshot;
+# anchoring on it would bake a wrong rigid correction for the
+# whole session. If no stable pose arrives within
+# ANCHOR_FALLBACK_FRAMES (~10 s), apply from whatever pose exists
+# and re-apply once when a stable pose later shows up.
+const ANCHOR_STABLE_FRAMES: int = 20
+const ANCHOR_STABLE_EPS: float = 0.01
+const ANCHOR_FALLBACK_FRAMES: int = 600
+
+var anchor_pending: bool = false
+var anchor_wait_frames: int = 0
+var anchor_state: String = "NONE"
+var anchor_stable_frames: int = 0
+var anchor_last_cam_pos: Vector3 = Vector3.ZERO
+var anchor_have_last: bool = false
+var anchor_reapply_watch: bool = false
 
 var env: Environment
 var track_frames: Array = [] # Dictionaries: pos, tan, side, up (every 2 m)
@@ -925,13 +955,21 @@ func _build_cockpit() -> void:
 
 var hand_ctrl: Dictionary = {}
 var _btn_was: Dictionary = {"L": false, "R": false}
+var _menu_was: Dictionary = {"L": false, "R": false}
 
 
 func _build_rig() -> void:
+	# Rig stack: car_body -> SeatOffset -> SeatRig (at EYE_ANCHOR)
+	# -> XROrigin. The anchor correction lives on SeatOffset and is
+	# never touched by the view toggle; the origin itself stays at
+	# zero local transform relative to the rig.
+	seat_offset = Node3D.new()
+	seat_offset.name = "SeatOffset"
+	car_body.add_child(seat_offset)
 	seat_rig = Node3D.new()
 	seat_rig.name = "SeatRig"
 	seat_rig.position = EYE_ANCHOR
-	car_body.add_child(seat_rig)
+	seat_offset.add_child(seat_rig)
 	orbit_pivot = Node3D.new()
 	orbit_pivot.name = "OrbitPivot"
 	orbit_pivot.position = car_home.origin + Vector3(0.0, 0.7, 0.0)
@@ -982,10 +1020,123 @@ func _build_rig() -> void:
 		get_viewport().use_xr = true
 		xr_active = true
 		print("LOOKTEST: OpenXR initialized - VR mode")
+		_arm_anchor()
 	else:
 		fallback_cam.current = true
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		print("LOOKTEST: no XR runtime - desktop fallback camera")
+
+
+# ---------------------------------------------------------------- anchor
+# Ported from the game (scripts/main.gd there: _arm_anchor,
+# _process_anchor_pending, _hmd_has_tracking_data,
+# _apply_seat_anchor), minus the lean-neutral capture (no lean
+# here) and the panel DIAG reporting (state prints instead).
+
+func _recenter() -> void:
+	# Recenter means "put my eye on the cockpit anchor", not the
+	# raw XR reference reset (center_on_hmd leaves the tracked
+	# seated height stacked on top of the cockpit offset - the
+	# driver floated). It just re-arms the stability-gated anchor.
+	if xr_active:
+		_arm_anchor()
+
+
+func _arm_anchor() -> void:
+	anchor_pending = true
+	anchor_wait_frames = 0
+	anchor_stable_frames = 0
+	anchor_have_last = false
+	anchor_reapply_watch = false
+	anchor_state = "PENDING"
+	print("LOOKTEST: anchor armed")
+
+
+func _process_anchor_pending() -> void:
+	if not xr_active:
+		anchor_pending = false
+		return
+	# Pose stability is tracked continuously (same as the game): a
+	# pose counts as stable only after the camera's local position
+	# has moved < ANCHOR_STABLE_EPS across ANCHOR_STABLE_FRAMES
+	# consecutive physics frames WITH tracking data present.
+	if _hmd_has_tracking_data():
+		var cam_pos: Vector3 = xr_cam.transform.origin
+		if anchor_have_last and cam_pos.distance_to(anchor_last_cam_pos) < ANCHOR_STABLE_EPS:
+			anchor_stable_frames += 1
+		else:
+			anchor_stable_frames = 0
+		anchor_last_cam_pos = cam_pos
+		anchor_have_last = true
+	else:
+		anchor_stable_frames = 0
+		anchor_have_last = false
+	if view_orbit:
+		# The correction belongs to the seat stack; while the rig
+		# is outside on the orbit anchor an application would be
+		# measured against the wrong parent. Stability keeps
+		# accruing above; the application lands when the cockpit
+		# view returns.
+		return
+	if anchor_pending:
+		anchor_wait_frames += 1
+		if anchor_stable_frames >= ANCHOR_STABLE_FRAMES:
+			_apply_seat_anchor()
+			anchor_state = "APPLIED-STABLE"
+			anchor_pending = false
+			print("LOOKTEST: anchor APPLIED-STABLE")
+		elif anchor_wait_frames > ANCHOR_FALLBACK_FRAMES:
+			# ~10 s with no stable pose: apply from whatever pose
+			# exists (graceful degradation), but keep watching:
+			# when a stable tracked pose later appears, re-apply
+			# ONCE from the real pose.
+			_apply_seat_anchor()
+			anchor_state = "APPLIED-FALLBACK"
+			anchor_pending = false
+			anchor_reapply_watch = true
+			print("LOOKTEST: anchor APPLIED-FALLBACK")
+	elif anchor_reapply_watch and anchor_stable_frames >= ANCHOR_STABLE_FRAMES:
+		_apply_seat_anchor()
+		anchor_state = "APPLIED-STABLE"
+		anchor_reapply_watch = false
+		print("LOOKTEST: anchor APPLIED-STABLE (re-applied)")
+
+
+func _hmd_has_tracking_data() -> bool:
+	# XRCamera3D has NO tracking query in Godot 4.7: get_is_tracking
+	# does not exist anywhere, and get_has_tracking_data is
+	# XRNode3D-only - XRCamera3D is not an XRNode3D (the game's
+	# Hotfix 1: the wrong call error-spammed every physics frame).
+	# Ask the head tracker's pose directly instead.
+	var head_tracker: XRTracker = XRServer.get_tracker(&"head")
+	if head_tracker == null:
+		return false
+	var pose_tracker: XRPositionalTracker = head_tracker as XRPositionalTracker
+	if pose_tracker == null:
+		return false
+	var head_pose: XRPose = pose_tracker.get_pose(&"default")
+	return head_pose != null and head_pose.has_tracking_data
+
+
+func _apply_seat_anchor() -> void:
+	# Offset the seat so the HMD lands exactly on EYE_ANCHOR in
+	# car space, yaw-aligned to the car's heading. The correction
+	# is rigid and sits ABOVE the XR origin (on SeatOffset), so
+	# head motion afterwards is relative to the anchor. (car_body
+	# stands in for the game's car node: its local transform under
+	# the car is identity, so car space == car-body space here.)
+	var cam_car: Transform3D = car_body.global_transform.affine_inverse() * xr_cam.global_transform
+	var fwd: Vector3 = -cam_car.basis.z
+	fwd.y = 0.0
+	if fwd.length() < 0.05:
+		fwd = Vector3(0.0, 0.0, -1.0)
+	fwd = fwd.normalized()
+	# Yaw that rotates the current horizontal view direction onto
+	# the car's forward (-Z in car space).
+	var yaw: float = atan2(fwd.z, fwd.x) + PI * 0.5
+	var rot := Basis(Vector3.UP, yaw)
+	var corr := Transform3D(rot, EYE_ANCHOR - rot * cam_car.origin)
+	seat_offset.transform = corr * seat_offset.transform
 
 
 func _toggle_view() -> void:
@@ -1010,6 +1161,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		var k: InputEventKey = event
 		if k.pressed and not k.echo and (k.keycode == KEY_C or k.keycode == KEY_SPACE):
 			_toggle_view()
+		if k.pressed and not k.echo and k.keycode == KEY_R:
+			_recenter()
 		if k.pressed and k.keycode == KEY_ESCAPE and not xr_active:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if event is InputEventMouseButton and not xr_active:
@@ -1023,8 +1176,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			fallback_cam.rotation = Vector3(look_pitch, look_yaw, 0.0)
 
 
+func _physics_process(_delta: float) -> void:
+	_process_anchor_pending()
+
+
 func _process(delta: float) -> void:
-	# controller primary click toggles the view (edge-detected)
+	# controller primary click toggles the view (edge-detected);
+	# the menu button re-seats (re-arms the anchor) - the primary
+	# click is taken by the view toggle, and on Quest hardware the
+	# menu button physically lives on the LEFT controller.
 	if xr_active:
 		for hand: String in ["L", "R"]:
 			var c: XRController3D = hand_ctrl[hand]
@@ -1032,6 +1192,10 @@ func _process(delta: float) -> void:
 			if now and not bool(_btn_was[hand]):
 				_toggle_view()
 			_btn_was[hand] = now
+			var mnow: bool = c.is_button_pressed(&"menu_button")
+			if mnow and not bool(_menu_was[hand]):
+				_recenter()
+			_menu_was[hand] = mnow
 	if view_orbit:
 		if xr_active:
 			orbit_pivot.rotation.y -= delta * TAU / 80.0

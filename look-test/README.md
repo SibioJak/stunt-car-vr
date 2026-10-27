@@ -27,6 +27,20 @@ as the game (plain `left_hand` / `right_hand`, `default` pose).
 
 - You spawn **seated in the cockpit** at the game's exact eye
   anchor (0, 1.14, 0.05 in car space). Look around.
+- **The seat is anchored, like the game.** The rig carries the
+  game's seat-anchor correction (its Fix Pass 2/3): once your
+  tracked head pose settles, a rigid offset lands your eye
+  exactly on the anchor — your seated height no longer stacks on
+  top of it and floats you over the car. (The first version of
+  this package skipped the anchor and perched the driver a metre
+  too high — the "high chair." Fixed 2026-10-27.) Virtual
+  Desktop's own reset view does *not* do this; the anchoring is
+  the game's job, and it happens automatically at spawn.
+- **Re-seat any time:** press **R** (keyboard) or the **left
+  controller's menu button**. That re-runs the same anchor: sit
+  how you want to sit, re-seat, and your eye lands on the anchor
+  again. (The controllers' primary click stays the view toggle,
+  so it isn't the re-seat button.)
 - **C key** (or **either controller's primary click**) toggles to a
   slow **outside orbit** — the rig itself steps out of the car and
   circles it, so you can judge the car and ribbon from off-board.
@@ -68,7 +82,7 @@ the real judge, as always.
 ## Honest frame cost
 
 Measured on the vista framing (1280×800, this scene, full
-dressing): **100 nodes, 219 draw calls, 82,272 primitives** —
+dressing): **101 nodes, 219 draw calls, 82,272 primitives** —
 `tests/capture.gd` re-measures and prints this on every run.
 (The bundled capture frames were rendered on a software Vulkan
 driver, since the build sandbox has no GPU; the scene itself is
