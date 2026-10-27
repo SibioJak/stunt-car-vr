@@ -790,6 +790,140 @@ the circuit's geography reads as the mountain it measures
 as; the spur's legibility at the fork and the ring's feel
 from the seat; and everything still carried from run 10.
 
+## Fix Pass 11 (after headset run 11: seat, zones, rake, drone,
+## lever, speed — six items, one commit each)
+
+Built in the owner's order where the brief demanded it:
+rake geometry first (the seat and zone measurements are
+taken on the raked car), speed last (re-derived on the
+final car). Every number below is from the suites on the
+final tree unless a stage is named.
+
+**Item 6 — rake / big rear tyres (aa705f2).** Rear radius
+0.34 → 0.47 m (Ø 0.94), front stays 0.30; widths 0.24 /
+0.36. The radius enters through the suspension attach
+terms (the (s, lat) support sampling is positional and
+radius-free), so the stance is derived: measured body
+pitch −3.37° against the atan(0.17/3.0) = 3.24° prediction,
+wheel-bottom offset front/rear 0.010 m on one contact
+plane, rear tyre AABB Ø 0.99 vs front 0.63 m
+(tests/rake_profile_view.png). A deliberate deviation
+from Crammond's equal-wheel car, at the owner's direction,
+noted in the constants.
+
+**Item 1 — seat (0806d02).** EYE_ANCHOR +0.12 m to
+(0, 1.26, 0.05); the wheel hub rose with it (drop 0.29,
+forward 0.45). Measured with a per-mesh grazing
+construction in the render proof: nearest visible road
+20.6 m at the raised seat vs 54.9 m at the old height
+(the binding obstruction is the blower's top-front edge).
+In-cockpit trim: two hold levers on the left pod
+(white SEAT+ front, black SEAT− rear), ±0.15 m at
+0.30 m/s, live, shown on the DIAG WHEEL line.
+BRIEF/CODE MISMATCH: "persists in the profile" had no
+referent — the game had no persistence at all. A minimal
+user://settings.cfg now stores seat.trim only.
+The anchor yaw cure is ported from the look test: a 25°
+cone — automatic anchor applies land translation only
+outside it (yaw debt is caught up when the head is stable
+and inside the cone); the explicit bake (both-grips
+squeeze, also ported, or the stick click) always applies.
+Staged in smoke stage 22, including a posed 40° case:
+translation applied, eye error 0.000 m, yaw held.
+
+**Item 2 — lever zones are geometry (d494309).** Measured
+defects first: the three dash buttons were cylinders
+spanning y 0.88..0.92 inside a dash slab topping at
+0.93 — fully buried, invisible, firing on proximity
+alone; the switch pivots sat at 0.90 with activation
+segments starting below the surface (the run-11 "sweet
+spot inside the console"). Fixes: pivots on the surface
+(0.93), buttons on it (0.95), every segment now runs
+along its visible handle (+0.02 → cap centre).
+debug_dash_ctl_audit() is PERMANENT (smoke stage 23 +
+the render proof's pose): segment samples within
+0.035 m of the control's own meshes and inside no other
+car mesh. Measured: 0 violations, worst deviation
+0.000 m. tests/zone_overlay_view.png draws every zone
+over its control.
+
+**Item 3 — drone approach (09a174a).** The carrier faced
+its velocity for the whole carry; a walk-back's velocity
+points back along the track, so it arrived ~180° from
+the drop heading and spun at the station. Now the yaw
+goal is the drop heading from the final approach (last
+waypoint or < 45 m), and the carry→dangle transition
+has a yaw gate (< 0.08 rad, bounded by a 3 s station
+wait so a short leg degrades, never sticks). Pendulum
+and walk-back tiers untouched. Stage 24 stages the
+owner's case (circuit s 900, drop 158 m behind): max
+yaw error mid-carry 180°, error at the dangle 0.0°,
+aligned 30 frames before arrival.
+
+**Item 4 — the drop lever (b30fae1).** Big lever on the
+right pod (0.50 m shaft, red knob) at (0.72, 0.71, −0.10),
+0.80 m from the hub — outside the wheel-grab radius,
+overlapping no dash zone. Grip near the upper shaft
+latches it; it follows the hand's arc angle (rest −0.30,
+detent +0.40, max +0.65 rad); past the detent the release
+fires once per pull with a haptic pulse on the pulling
+hand (XRInterface.trigger_haptic_pulse via the existing
+"haptic" action, API-guarded, null-safe). Early grip
+release: springs home at 3.5 rad/s, no drop. The XR
+trigger release is retired — the panel names the lever;
+SPACE/test hooks remain the desktop path. The lever is
+inside Item 2's audit (rest and full throw) and the DIAG
+ZONE line (DRP:). Stage 25 stages latch / follow /
+detent-drop / spring-home through _poll_grab.
+tests/drop_lever_view.png: the lever mid-pull.
+
+**Item 5 — speed (8f910b6).** TOP_SPEED 34 → 48 m/s
+(173 km/h on the panel). Engine/brake/drag unchanged.
+Stage 26, standing start on the circuit's opening
+straight: vmax = the 48.0 clamp, 0→45 in 6.0 s,
+0→24 in 2.0 s. Steering re-derived via a shared
+_lock_scale(): at ≤ 24 m/s it is the FP10 expression
+verbatim (stage 26 asserts float equality at
+0/6/12/18/24); above, the falloff blends 26 → 40 across
+24..40: lock 0.507 @30, 0.523 @34, 0.518 @38, 0.410 @48
+(old extrapolation: 0.227). Engine pitch renormalised
+(settled 1.99 @ pin 34, 2.57 @ pin 48). Humps at pin 48:
+the car flies and lands throughout, no drone call —
+fresh car 31 flights, longest 1.7 s; in-suite, after 25
+stages of accumulated state, 50 short hops. NO hump
+re-tune: the evidence does not force one, and the call
+is recorded here rather than buried. Gaps cross at the
+raised envelope (stage 20 on autopilot_fast); stage 19's
+three laps complete in 19,119 frames; stage 9 and the
+other calibrated fixtures keep the 34 cap. Optic flow:
+edge strips dashed 3 m on / 2 m off (both tracks + spur),
+no FOV tricks — and frame cost fell: 55,510 prims vs
+60,754 at the pass baseline (137 nodes / 57 draws).
+
+Suites on the final tree: SMOKE 224/224, API guard
+70/70, render proof 106/106.
+
+Brief/code mismatches found this pass (2): the profile
+that did not exist (Item 1, above), and Item 6's "radius
+in suspension sampling" — sampling is positional; the
+radius enters via attach/ride-height and the meshes.
+Item 2 also surfaced a fact the brief did not state:
+the FP10 buttons were wholly inside the dash slab.
+
+UNVERIFIED (only the headset proves these): the raised
+seat's sightline and the trim levers' ergonomics in the
+headset; whether the anchor yaw cure and the both-grips
+recenter behave on the live rig (the stability-gate chain
+is staged headless only); lever-zone feel against the
+new geometry; the drop lever's throw, detent and whether
+the haptic pulse is perceptible at all; the drone's
+approach as seen from the dangle; whether 48 m/s FEELS
+fast (the dashes are the one lever pulled — the sensation
+itself is the owner's verdict); the hump row at 48 in the
+stomach, not the log; and everything still carried from
+run 11 (his FP10 circuit and loop verdicts were still
+open when this pass was briefed).
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
