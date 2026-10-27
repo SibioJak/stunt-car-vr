@@ -1,0 +1,4 @@
+.godot/
+*.uid
+tests/*.png.import
+tests/last_run_summary.txt
