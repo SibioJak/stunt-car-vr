@@ -12,16 +12,32 @@ extends Node3D
 ## ACES tonemapping, exponential haze, glow, SSAO/SSIL.
 ##
 ## There is NO driving. You spawn seated at the game's eye anchor
-## and look around; C / controller primary click moves the rig to
-## a slow outside orbit so the car can be judged from off-board.
+## and look around; C / the right controller's A button moves the
+## rig to a slow outside orbit so the car can be judged from
+## off-board. (NOT the stick click: primary_click IS the
+## thumbstick click in this action map, and it kept firing the
+## orbit by accident - patch 2 moved the binding.)
 ##
 ## The seat is ANCHORED exactly like the game (Fix Pass 2/3 there):
 ## a SeatOffset node between the car body and the rig carries a
 ## rigid correction, applied once the tracked pose is stable, that
 ## lands the HMD precisely on EYE_ANCHOR - without it the tracked
 ## seated height stacks on top of the anchor and the driver floats
-## a metre over the car (the "high chair"). R / the left
-## controller's menu button re-seats (re-arms the anchor).
+## a metre over the car (the "high chair"). Re-seat any time by
+## squeezing BOTH grip buttons together, either controller's menu
+## button, or R.
+##
+## Patch 2 (yaw): the anchor's correction rotates the head's
+## facing AT APPLY TIME onto the car's forward, and the stability
+## gate watches position only - hold your head still but turned
+## and the turn gets baked in as "forward" (the owner's view sat
+## ~45 degrees off for a whole session). So the AUTOMATIC apply
+## now refuses the yaw half when the head deviates from the car's
+## forward by more than ANCHOR_YAW_CONE_DEG: it lands the eye on
+## the anchor (translation only) and applies the yaw later, the
+## moment the head comes inside the cone on a stable pose. An
+## EXPLICIT re-seat (grips / menu / R) always bakes: where you
+## face at that moment becomes forward, by definition.
 ##
 ## --lt-lite (user arg) disables SSAO / SSIL / volumetric fog.
 ## It exists so this scene can be render-captured under software
@@ -75,6 +91,13 @@ var anchor_stable_frames: int = 0
 var anchor_last_cam_pos: Vector3 = Vector3.ZERO
 var anchor_have_last: bool = false
 var anchor_reapply_watch: bool = false
+# Patch 2: the auto-apply bakes yaw only inside this cone around
+# the car's forward; outside it, translation lands and the yaw
+# waits (anchor_yaw_pending) for the head to enter the cone. An
+# explicit re-seat sets anchor_bake_yaw for its one application.
+const ANCHOR_YAW_CONE_DEG: float = 25.0
+var anchor_yaw_pending: bool = false
+var anchor_bake_yaw: bool = false
 
 var env: Environment
 var track_frames: Array = [] # Dictionaries: pos, tan, side, up (every 2 m)
@@ -954,8 +977,9 @@ func _build_cockpit() -> void:
 # ---------------------------------------------------------------- rig & views
 
 var hand_ctrl: Dictionary = {}
-var _btn_was: Dictionary = {"L": false, "R": false}
+var _ax_was: bool = false
 var _menu_was: Dictionary = {"L": false, "R": false}
+var _grips_both_was: bool = false
 
 
 func _build_rig() -> void:
@@ -1032,24 +1056,31 @@ func _build_rig() -> void:
 # _process_anchor_pending, _hmd_has_tracking_data,
 # _apply_seat_anchor), minus the lean-neutral capture (no lean
 # here) and the panel DIAG reporting (state prints instead).
+# Patch 2 divergence from the game: the yaw cone + deferred yaw
+# described in the file header (the game carries the same latent
+# bake-at-apply behaviour; fixing it there is a separate call).
 
 func _recenter() -> void:
 	# Recenter means "put my eye on the cockpit anchor", not the
 	# raw XR reference reset (center_on_hmd leaves the tracked
 	# seated height stacked on top of the cockpit offset - the
-	# driver floated). It just re-arms the stability-gated anchor.
+	# driver floated). It re-arms the stability-gated anchor as an
+	# EXPLICIT application: the head's facing when it lands becomes
+	# the car's forward (standard recenter semantics), so the yaw
+	# cone does not apply to it.
 	if xr_active:
-		_arm_anchor()
+		_arm_anchor(true)
 
 
-func _arm_anchor() -> void:
+func _arm_anchor(explicit_bake: bool = false) -> void:
 	anchor_pending = true
 	anchor_wait_frames = 0
 	anchor_stable_frames = 0
 	anchor_have_last = false
 	anchor_reapply_watch = false
+	anchor_bake_yaw = explicit_bake
 	anchor_state = "PENDING"
-	print("LOOKTEST: anchor armed")
+	print("LOOKTEST: anchor armed (explicit=%s)" % str(explicit_bake))
 
 
 func _process_anchor_pending() -> void:
@@ -1081,25 +1112,40 @@ func _process_anchor_pending() -> void:
 	if anchor_pending:
 		anchor_wait_frames += 1
 		if anchor_stable_frames >= ANCHOR_STABLE_FRAMES:
-			_apply_seat_anchor()
-			anchor_state = "APPLIED-STABLE"
+			var bake: bool = anchor_bake_yaw
+			anchor_bake_yaw = false
+			var yawed: bool = _apply_seat_anchor(bake)
+			anchor_state = "APPLIED-STABLE" if yawed else "APPLIED-NOYAW"
 			anchor_pending = false
-			print("LOOKTEST: anchor APPLIED-STABLE")
+			print("LOOKTEST: anchor ", anchor_state)
 		elif anchor_wait_frames > ANCHOR_FALLBACK_FRAMES:
 			# ~10 s with no stable pose: apply from whatever pose
 			# exists (graceful degradation), but keep watching:
 			# when a stable tracked pose later appears, re-apply
 			# ONCE from the real pose.
-			_apply_seat_anchor()
-			anchor_state = "APPLIED-FALLBACK"
+			var bake2: bool = anchor_bake_yaw
+			anchor_bake_yaw = false
+			var yawed2: bool = _apply_seat_anchor(bake2)
+			anchor_state = "APPLIED-FALLBACK" if yawed2 else "APPLIED-NOYAW"
 			anchor_pending = false
 			anchor_reapply_watch = true
-			print("LOOKTEST: anchor APPLIED-FALLBACK")
+			print("LOOKTEST: anchor ", anchor_state, " (fallback)")
 	elif anchor_reapply_watch and anchor_stable_frames >= ANCHOR_STABLE_FRAMES:
-		_apply_seat_anchor()
-		anchor_state = "APPLIED-STABLE"
+		var bake3: bool = anchor_bake_yaw
+		anchor_bake_yaw = false
+		var yawed3: bool = _apply_seat_anchor(bake3)
+		anchor_state = "APPLIED-STABLE" if yawed3 else "APPLIED-NOYAW"
 		anchor_reapply_watch = false
-		print("LOOKTEST: anchor APPLIED-STABLE (re-applied)")
+		print("LOOKTEST: anchor ", anchor_state, " (re-applied)")
+	elif anchor_yaw_pending and anchor_stable_frames >= ANCHOR_STABLE_FRAMES \
+			and absf(_head_yaw_dev()) <= deg_to_rad(ANCHOR_YAW_CONE_DEG):
+		# The deferred yaw half of an automatic application: the
+		# head has come inside the cone on a stable pose, so baking
+		# now maps his near-forward onto the car's forward - never
+		# a turned head.
+		_apply_seat_anchor(true)
+		anchor_state = "APPLIED-STABLE"
+		print("LOOKTEST: anchor APPLIED-STABLE (yaw caught up)")
 
 
 func _hmd_has_tracking_data() -> bool:
@@ -1118,25 +1164,67 @@ func _hmd_has_tracking_data() -> bool:
 	return head_pose != null and head_pose.has_tracking_data
 
 
-func _apply_seat_anchor() -> void:
-	# Offset the seat so the HMD lands exactly on EYE_ANCHOR in
-	# car space, yaw-aligned to the car's heading. The correction
-	# is rigid and sits ABOVE the XR origin (on SeatOffset), so
-	# head motion afterwards is relative to the anchor. (car_body
-	# stands in for the game's car node: its local transform under
-	# the car is identity, so car space == car-body space here.)
-	var cam_car: Transform3D = car_body.global_transform.affine_inverse() * xr_cam.global_transform
+func _cam_in_car() -> Transform3D:
+	# The HMD's transform in car space. (car_body stands in for the
+	# game's car node: its local transform under the car is
+	# identity, so car space == car-body space here.)
+	return car_body.global_transform.affine_inverse() * xr_cam.global_transform
+
+
+func _head_fwd_car(cam_car: Transform3D) -> Vector3:
+	# The HMD's horizontal forward in car space.
 	var fwd: Vector3 = -cam_car.basis.z
 	fwd.y = 0.0
 	if fwd.length() < 0.05:
-		fwd = Vector3(0.0, 0.0, -1.0)
-	fwd = fwd.normalized()
+		return Vector3(0.0, 0.0, -1.0)
+	return fwd.normalized()
+
+
+func _yaw_dev_of(fwd: Vector3) -> float:
+	# Signed yaw of a horizontal car-space forward away from the
+	# car's forward (-Z in car space): 0 looking down the car,
+	# +PI/2 looking out the right side, -PI/2 out the left.
+	return atan2(fwd.x, -fwd.z)
+
+
+func _head_yaw_dev() -> float:
+	return _yaw_dev_of(_head_fwd_car(_cam_in_car()))
+
+
+func _apply_seat_anchor(force_bake: bool) -> bool:
+	# Offset the seat so the HMD lands exactly on EYE_ANCHOR in
+	# car space, yaw-aligned to the car's heading. The correction
+	# is rigid and sits ABOVE the XR origin (on SeatOffset), so
+	# head motion afterwards is relative to the anchor.
+	#
+	# Patch 2: the yaw half of this correction maps the head's
+	# CURRENT facing onto the car's forward - it bakes. That is
+	# the definition of an explicit recenter (force_bake), but an
+	# AUTOMATIC application must not bake a head that happens to
+	# be turned when the pose settles: the stability gate watches
+	# position only, so a still-but-turned head passes it and the
+	# turn becomes "forward" for the whole session (the owner's
+	# 45-degree view). Automatic calls therefore land the
+	# translation only when the head sits outside
+	# ANCHOR_YAW_CONE_DEG, and leave anchor_yaw_pending set; the
+	# yaw lands when the head enters the cone (see the watch in
+	# _process_anchor_pending). Returns true when the yaw was
+	# applied (the correction is complete).
+	var cam_car: Transform3D = _cam_in_car()
+	var fwd: Vector3 = _head_fwd_car(cam_car)
+	if not force_bake and absf(_yaw_dev_of(fwd)) > deg_to_rad(ANCHOR_YAW_CONE_DEG):
+		var corr_t := Transform3D(Basis.IDENTITY, EYE_ANCHOR - cam_car.origin)
+		seat_offset.transform = corr_t * seat_offset.transform
+		anchor_yaw_pending = true
+		return false
 	# Yaw that rotates the current horizontal view direction onto
 	# the car's forward (-Z in car space).
 	var yaw: float = atan2(fwd.z, fwd.x) + PI * 0.5
 	var rot := Basis(Vector3.UP, yaw)
 	var corr := Transform3D(rot, EYE_ANCHOR - rot * cam_car.origin)
 	seat_offset.transform = corr * seat_offset.transform
+	anchor_yaw_pending = false
+	return true
 
 
 func _toggle_view() -> void:
@@ -1181,21 +1269,33 @@ func _physics_process(_delta: float) -> void:
 
 
 func _process(delta: float) -> void:
-	# controller primary click toggles the view (edge-detected);
-	# the menu button re-seats (re-arms the anchor) - the primary
-	# click is taken by the view toggle, and on Quest hardware the
-	# menu button physically lives on the LEFT controller.
+	# Controller inputs (all edge-detected):
+	# - Orbit toggle: the RIGHT controller's A button (ax_button
+	#   in this action map). Patch 2 moved it OFF primary_click:
+	#   in the shipped action map primary_click is the THUMBSTICK
+	#   click, and stick clicks kept firing the orbit by accident.
+	#   Stick clicks now do nothing.
+	# - Re-seat: either controller's menu button (on Quest
+	#   hardware it physically lives on the LEFT controller), or
+	#   the unmissable one - BOTH grip buttons squeezed together.
 	if xr_active:
+		var rc: XRController3D = hand_ctrl["R"]
+		var ax_now: bool = rc.is_button_pressed(&"ax_button")
+		if ax_now and not _ax_was:
+			_toggle_view()
+		_ax_was = ax_now
 		for hand: String in ["L", "R"]:
 			var c: XRController3D = hand_ctrl[hand]
-			var now: bool = c.is_button_pressed(&"primary_click")
-			if now and not bool(_btn_was[hand]):
-				_toggle_view()
-			_btn_was[hand] = now
 			var mnow: bool = c.is_button_pressed(&"menu_button")
 			if mnow and not bool(_menu_was[hand]):
 				_recenter()
 			_menu_was[hand] = mnow
+		var lc: XRController3D = hand_ctrl["L"]
+		var grips_both: bool = lc.is_button_pressed(&"grip_click") \
+			and rc.is_button_pressed(&"grip_click")
+		if grips_both and not _grips_both_was:
+			_recenter()
+		_grips_both_was = grips_both
 	if view_orbit:
 		if xr_active:
 			orbit_pivot.rotation.y -= delta * TAU / 80.0

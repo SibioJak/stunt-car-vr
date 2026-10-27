@@ -36,15 +36,29 @@ as the game (plain `left_hand` / `right_hand`, `default` pose).
   too high — the "high chair." Fixed 2026-10-27.) Virtual
   Desktop's own reset view does *not* do this; the anchoring is
   the game's job, and it happens automatically at spawn.
-- **Re-seat any time:** press **R** (keyboard) or the **left
-  controller's menu button**. That re-runs the same anchor: sit
-  how you want to sit, re-seat, and your eye lands on the anchor
-  again. (The controllers' primary click stays the view toggle,
-  so it isn't the re-seat button.)
-- **C key** (or **either controller's primary click**) toggles to a
+- **Which way is forward, at spawn:** the anchor also aligns
+  your facing with the car's — but an automatic application
+  refuses to bake in a turned head. If your head is more than
+  ~25° off the car's forward when the pose settles, only the
+  height/position half lands; the yaw half applies itself the
+  moment you look back down the car. (Before this fix, a head
+  held still but turned at spawn became "forward" for the whole
+  session — the view sat ~45° off and nothing would shift it.)
+  If the world ever sits rotated, look down the car and squeeze
+  both grips (below).
+- **Re-seat any time:** **squeeze BOTH grip buttons together** —
+  that's the one you can't miss — or either controller's **menu
+  button**, or **R** on the keyboard. A re-seat is explicit, so
+  it uses standard recenter semantics: *where you are facing
+  when it lands becomes forward.* Look where you want forward
+  to be, hold still for a beat, then re-seat. The Meta/system
+  recenter does **not** do this — the offset lives in the game,
+  above the runtime's reference frame.
+- **C key** (or the **right controller's A button**) toggles to a
   slow **outside orbit** — the rig itself steps out of the car and
   circles it, so you can judge the car and ribbon from off-board.
-  Same input toggles back.
+  Same input toggles back. The thumbstick clicks used to fire
+  this by accident; they now do nothing.
 - No headset? It runs on the desktop too: mouse looks around the
   cockpit, **C** toggles the orbit, click re-captures the mouse,
   Esc releases it.
