@@ -2271,6 +2271,20 @@ func _run() -> void:
 	check(main._build_diag_block().contains("SEAT +0.00"),
 		"stage22: DIAG shows the seat trim")
 
+	# ---------- stage 23: Fix Pass 11 (Item 2) - zone geometry -----
+	# The PERMANENT audit (it stays in the suite): every control
+	# _poll_grab can fire has its activation segment ON its
+	# visible handle and no segment sample buried in other
+	# bodywork. The render proof asserts the same audit in its
+	# pose and draws the zones as markers over the controls.
+	var audit23: Dictionary = main.debug_dash_ctl_audit()
+	var viol23: Array = audit23["violations"]
+	check(viol23.is_empty(),
+		"stage23: zone audit clean (%d violations%s)" % [viol23.size(),
+			"" if viol23.is_empty() else ": " + str(viol23.slice(0, 2))])
+	check(float(audit23["worst"]) <= main.DASH_AUDIT_TOL,
+		"stage23: worst segment-to-handle deviation %.3f m (tol %.3f)" % [float(audit23["worst"]), main.DASH_AUDIT_TOL])
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:

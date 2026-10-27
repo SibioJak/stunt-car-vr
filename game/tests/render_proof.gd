@@ -323,6 +323,45 @@ func _run() -> void:
 		main.diag_root.get_node("DiagBoard") as MeshInstance3D, main.fallback_cam, "DIAG board")
 	check(main.diag_label.text.contains("ANCHOR"), "DIAG board shows the live DIAG block")
 
+	# Fix Pass 11 (Item 2): the zone audit holds in this pose too,
+	# and the zones are drawn over the controls for the record -
+	# magenta markers along every activation segment (start,
+	# middle, end), photographed from the eye, then removed.
+	var audit_rp: Dictionary = main.debug_dash_ctl_audit()
+	var viol_rp: Array = audit_rp["violations"]
+	check(viol_rp.is_empty(),
+		"zone audit clean in the proof pose (%d violations%s)" % [viol_rp.size(),
+			"" if viol_rp.is_empty() else ": " + str(viol_rp.slice(0, 2))])
+	check(float(audit_rp["worst"]) <= main.DASH_AUDIT_TOL,
+		"worst segment-to-handle deviation %.3f m (tol %.3f)" % [float(audit_rp["worst"]), main.DASH_AUDIT_TOL])
+	var to_body_rp: Transform3D = main.car_body.global_transform.affine_inverse()
+	var markers: Array[MeshInstance3D] = []
+	var mark_mat := StandardMaterial3D.new()
+	mark_mat.albedo_color = Color(1.0, 0.0, 1.0)
+	mark_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	for ci2: int in main.dash_ctl_nodes.size():
+		var seg2: Array = main._dash_ctl_segment(ci2)
+		for si2: int in 3:
+			var sp2: Vector3 = (seg2[0] as Vector3).lerp(seg2[1] as Vector3, float(si2) / 2.0)
+			var mk := MeshInstance3D.new()
+			var sm2 := SphereMesh.new()
+			sm2.radius = 0.025
+			sm2.height = 0.05
+			mk.mesh = sm2
+			mk.material_override = mark_mat
+			# The segment runs along the handle's CENTRELINE -
+			# markers placed on it would be swallowed by the
+			# handle meshes. Stand them 5.5 cm toward the driver
+			# (body +Z) so the photograph shows the zone's line
+			# floating on the control it belongs to.
+			mk.position = to_body_rp * sp2 + Vector3(0.0, 0.0, 0.055)
+			main.car_body.add_child(mk)
+			markers.append(mk)
+	await snap(main.fallback_cam, "zone_overlay_view.png")
+	for mk2: MeshInstance3D in markers:
+		main.car_body.remove_child(mk2)
+		mk2.free()
+
 	# Fix Pass 3 (Item 4): the stood-up wheel must FACE the driver.
 	# Project the rim circle (in the tilt node's local XZ plane)
 	# through the anchor camera and measure the screen-space ellipse:

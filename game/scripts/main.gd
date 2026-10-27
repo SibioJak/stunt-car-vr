@@ -2201,10 +2201,16 @@ func _build_cockpit() -> void:
 	hub.material_override = _mat_unshaded(Color(1.0, 0.75, 0.15))
 	wheel_spin.add_child(hub)
 	# 3 prep switches on the dash (lever pivots)
+	# Fix Pass 11 (Item 2): the pivots sat at y 0.90, INSIDE the
+	# dash slab (its top is 0.93) - the lever's base and the
+	# first ~3 cm of its activation segment lived below the
+	# surface the driver sees, which is exactly where run 11
+	# put the left lever's sweet spot ("looks below lever,
+	# maybe inside console"). Pivots now sit ON the surface.
 	var switch_cols: Array[Color] = [Color(0.9, 0.2, 0.15), Color(0.95, 0.8, 0.15), Color(0.2, 0.5, 0.95)]
 	for i: int in 3:
 		var piv := Node3D.new()
-		piv.position = Vector3(-0.30 + 0.30 * float(i), 0.90, -0.60)
+		piv.position = Vector3(-0.30 + 0.30 * float(i), 0.93, -0.60)
 		piv.rotation_degrees = Vector3(-38, 0, 0)
 		car_body.add_child(piv)
 		switch_pivots.append(piv)
@@ -2218,7 +2224,11 @@ func _build_cockpit() -> void:
 	# each other only at their exact midpoints; activation is
 	# nearest-control (Item 0), so the closer button wins.
 	var rst := Node3D.new()
-	rst.position = Vector3(0.40, 0.90, -0.60)
+	# Fix Pass 11 (Item 2): was y 0.90 - the button cylinder
+	# (height 0.04) spanned 0.88..0.92, ENTIRELY inside the
+	# dash slab (top 0.93): an invisible control that fired by
+	# proximity alone. It now sits ON the dash (0.93..0.97).
+	rst.position = Vector3(0.40, 0.95, -0.60)
 	car_body.add_child(rst)
 	var rst_mi := MeshInstance3D.new()
 	var rst_m := CylinderMesh.new()
@@ -2230,7 +2240,7 @@ func _build_cockpit() -> void:
 	rst.add_child(rst_mi)
 	_register_dash_ctl(rst, "restart")
 	var lnt := Node3D.new()
-	lnt.position = Vector3(-0.52, 0.90, -0.60)
+	lnt.position = Vector3(-0.52, 0.95, -0.60) # on the dash (Item 2, as restart)
 	car_body.add_child(lnt)
 	var ln_mi := MeshInstance3D.new()
 	var ln_m := CylinderMesh.new()
@@ -2244,7 +2254,7 @@ func _build_cockpit() -> void:
 	_register_dash_ctl(lnt, "lean")
 	# Purple TRACK button: ribbon <-> mountain circuit
 	var trk := Node3D.new()
-	trk.position = Vector3(0.57, 0.90, -0.60)
+	trk.position = Vector3(0.57, 0.95, -0.60) # on the dash (Item 2, as restart)
 	car_body.add_child(trk)
 	var trk_mi := MeshInstance3D.new()
 	var trk_m := CylinderMesh.new()
@@ -2322,7 +2332,10 @@ func _build_cockpit() -> void:
 	# (seat trim lines) and the wheel hub rose 9 cm with the
 	# seat; the bottom rows' sightlines clipped the rim and the
 	# right switch knob in the render proof again.
-	panel_root.position = Vector3(0.78, 1.58, -1.66)
+	# Fix Pass 11 (Item 2): +4 cm more - Item 2 put the switch
+	# pivots ON the dash (+3 cm), and the BOOST cap now grazes
+	# the bottom row the FP4 layout threaded just over it.
+	panel_root.position = Vector3(0.78, 1.62, -1.66)
 	panel_root.rotation_degrees = Vector3(-2, -24, 0)
 	car_body.add_child(panel_root)
 	_box(panel_root, Vector3(0.80, 1.24, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)), "PanelBoard")
@@ -3031,7 +3044,14 @@ func _dash_ctl_segment(i: int) -> Array[Vector3]:
 	var node: Node3D = dash_ctl_nodes[i]
 	if dash_ctl_kinds[i].begins_with("switch") or dash_ctl_kinds[i].begins_with("seat"):
 		var xf: Transform3D = node.global_transform
-		return [xf * Vector3(0.0, -0.02, 0.0), xf * Vector3(0.0, 0.19, 0.0)]
+		# Fix Pass 11 (Item 2): the segment starts at local
+		# +0.02, just above the mounting surface - it used to
+		# start at -0.02, under the (then buried) pivot, so the
+		# first part of every lever's zone was inside the dash.
+		# The far end stays at the cap centre (0.19): the zone
+		# IS the visible handle's path, asserted geometrically
+		# by debug_dash_ctl_audit (smoke stage 23).
+		return [xf * Vector3(0.0, 0.02, 0.0), xf * Vector3(0.0, 0.19, 0.0)]
 	var p: Vector3 = node.global_position
 	return [p, p]
 
@@ -4662,3 +4682,69 @@ func debug_stage_landing(s: float, height: float, fwd_speed: float) -> void:
 	car.global_transform = Transform3D(
 		Basis(fr["side"], fr["up"], -fr["tan"]),
 		fr["pos"] + fr["up"] * (CLEARANCE + height))
+
+
+# --- Fix Pass 11 (Item 2): the lever-zone geometry audit ---------
+# Standing assertion machinery - smoke stage 23 and the render
+# proof run it on every pass from here on, so a future mesh edit
+# that displaces a zone fails the suite instead of shipping.
+# For every control _poll_grab can fire:
+#   (a) each sample along its activation segment must sit within
+#       DASH_AUDIT_TOL of the control's OWN meshes (point-to-AABB
+#       in each mesh's local space - the zone lies ON the handle);
+#   (b) no sample may be buried inside any OTHER car-body mesh
+#       (inside its AABB shrunk by 5 mm) - the buried buttons and
+#       the below-the-console lever base of run 11, as a test.
+const DASH_AUDIT_TOL: float = 0.035
+const DASH_AUDIT_SAMPLES: int = 5
+
+
+func _pt_aabb_dist(p: Vector3, ab: AABB) -> float:
+	var dx: float = maxf(maxf(ab.position.x - p.x, 0.0), p.x - ab.end.x)
+	var dy: float = maxf(maxf(ab.position.y - p.y, 0.0), p.y - ab.end.y)
+	var dz: float = maxf(maxf(ab.position.z - p.z, 0.0), p.z - ab.end.z)
+	return Vector3(dx, dy, dz).length()
+
+
+func _pt_in_aabb(p: Vector3, ab: AABB, shrink: float) -> bool:
+	return p.x > ab.position.x + shrink and p.x < ab.end.x - shrink \
+		and p.y > ab.position.y + shrink and p.y < ab.end.y - shrink \
+		and p.z > ab.position.z + shrink and p.z < ab.end.z - shrink
+
+
+func _collect_meshes(n: Node, out: Array[MeshInstance3D]) -> void:
+	for child: Node in n.get_children():
+		if child is MeshInstance3D:
+			out.append(child as MeshInstance3D)
+		_collect_meshes(child, out)
+
+
+func debug_dash_ctl_audit() -> Dictionary:
+	var all_meshes: Array[MeshInstance3D] = []
+	_collect_meshes(car_body, all_meshes)
+	var worst: float = 0.0
+	var violations: Array[String] = []
+	for i: int in dash_ctl_nodes.size():
+		var node: Node3D = dash_ctl_nodes[i]
+		var own: Array[MeshInstance3D] = []
+		_collect_meshes(node, own)
+		if node is MeshInstance3D:
+			own.append(node as MeshInstance3D)
+		var seg: Array[Vector3] = _dash_ctl_segment(i)
+		for si: int in DASH_AUDIT_SAMPLES:
+			var t: float = float(si) / float(DASH_AUDIT_SAMPLES - 1)
+			var p: Vector3 = seg[0].lerp(seg[1], t)
+			var best: float = 1e9
+			for mi: MeshInstance3D in own:
+				var lp: Vector3 = mi.global_transform.affine_inverse() * p
+				best = minf(best, _pt_aabb_dist(lp, mi.get_aabb()))
+			worst = maxf(worst, best)
+			if best > DASH_AUDIT_TOL:
+				violations.append("%s sample %d: %.3f m from its own mesh" % [dash_ctl_kinds[i], si, best])
+			for mi2: MeshInstance3D in all_meshes:
+				if own.has(mi2):
+					continue
+				var lp2: Vector3 = mi2.global_transform.affine_inverse() * p
+				if _pt_in_aabb(lp2, mi2.get_aabb(), 0.005):
+					violations.append("%s sample %d: buried in %s" % [dash_ctl_kinds[i], si, mi2.name])
+	return {"worst": worst, "violations": violations}
