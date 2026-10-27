@@ -201,9 +201,26 @@ const LEAN_TILT_STEP_DEG: float = 10.0
 const PEND_LEN_F: float = 5.5
 const PEND_LEN_L: float = 3.9
 const PEND_DAMP: float = 0.10
-const DIP_K: float = 30.0
-const DIP_DAMP: float = 6.5
-const DIP_SLACK_IMPULSE: float = -1.5 # dip impulse at/below this -> lines slack
+# Fix Pass 10 (Item 2) - PIVOT-DRIVEN FLIGHT. The Fix Pass 5 dip
+# was a procedural hash schedule moving a virtual pivot offset;
+# the brief retires it: the carrier (drone) now has real flight
+# state - position (anchor_pos), velocity, measured acceleration
+# - and flies an actual path: it brakes to a hover at the catch,
+# retraces the road back to the drop point, and holds station
+# over it. The pendulum integrates the pivot's MEASURED
+# acceleration (lag under acceleration, overshoot on braking
+# and turns, settle at station), the car's yaw seeks the
+# carrier's yaw on a laggy spring (never rigid), and the dips
+# survive as FLOWN manoeuvres: the carrier descends on a smooth
+# profile and climbs back, so line tension, slack and the catch
+# all follow from the carrier's real vertical acceleration.
+const CARRIER_SPEED: float = 9.0 # m/s cruise (the old carry's step rate)
+const CARRIER_ACCEL: float = 6.0 # m/s^2 - flight accel/brake limit
+const CARRIER_YAW_RATE: float = 0.9 # rad/s the carrier turns at speed
+const ORIENT_YAW_K: float = 3.2 # car-facing seek spring (overshoots)
+const ORIENT_YAW_DAMP: float = 2.0
+const DIP_DUR: float = 1.6 # s, one flown dip
+const DIP_SLACK_ACCEL: float = -5.5 # measured carrier accel (m/s^2) that slacks the lines
 # Fix Pass 3: the seat anchor applies only on a STABLE tracked pose:
 # the camera's local position must move less than ANCHOR_STABLE_EPS
 # across ANCHOR_STABLE_FRAMES consecutive physics frames. The old code
@@ -412,15 +429,30 @@ var sup_s: Array[float] = [0.0, 0.0, 0.0, 0.0] # each wheel's spine s (load samp
 var edge_roll: float = 0.0
 var view_node: Node3D # seat-stack node carrying suspension view motion
 
-# Fix Pass 5 dangle state: drone dips, line slack, catch blend, and a
-# lagged orientation direction (compliance - the car settles a beat
-# behind the swing instead of being rigidly framed to the pivot).
-var pivot_pos: Vector3 = Vector3.ZERO # effective hang pivot (anchor + dip)
-var dip_y: float = 0.0
-var dip_vy: float = 0.0
-var dip_accel: float = 0.0
+# Dangle state: line slack, catch blend, and a lagged orientation
+# direction (compliance - the car settles a beat behind the swing
+# instead of being rigidly framed to the pivot).
+# Fix Pass 10 (Item 2): pivot_pos IS the carrier's position now
+# (anchor_pos - no procedural offset). The carrier's flight state:
+var pivot_pos: Vector3 = Vector3.ZERO # the carrier's position (== anchor_pos)
+var carrier_vel: Vector3 = Vector3.ZERO
+var carrier_accel: Vector3 = Vector3.ZERO # measured, lightly filtered
+var carrier_yaw: float = 0.0 # the carrier's own heading
+var carrier_path: Array[Vector3] = [] # retrace waypoints for the carry
+var carrier_wp: int = 0
+var orient_yaw: float = 0.0 # the car's facing under the lines (springy)
+var orient_yaw_v: float = 0.0
+var dip_t: float = -1.0 # flown-dip progress; -1 = not dipping
+var dip_depth: float = 0.0
 var dip_timer: float = 2.0
 var dip_seed: int = 0
+# Test hooks (smoke only, same pattern as test_grip): inject a
+# pivot acceleration / a yaw target to prove the pendulum and the
+# facing seek answer the PIVOT, not a schedule.
+var test_pivot_accel_on: bool = false
+var test_pivot_accel: Vector3 = Vector3.ZERO
+var test_yaw_target_on: bool = false
+var test_yaw_target: float = 0.0
 var slack_t: float = 0.0
 var hang_pos: Vector3 = Vector3.ZERO # car position while lines are slack
 var hang_vel: Vector3 = Vector3.ZERO
@@ -2072,6 +2104,14 @@ func start_race() -> void:
 	anchor_pos = fr["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR)
 	anchor_target = anchor_pos
 	pivot_pos = anchor_pos
+	# Fix Pass 10 (Item 2): carrier at station over the gantry.
+	carrier_vel = Vector3.ZERO
+	carrier_accel = Vector3.ZERO
+	carrier_path.clear()
+	carrier_wp = 0
+	carrier_yaw = _frame_yaw(fr["tan"])
+	orient_yaw = carrier_yaw
+	orient_yaw_v = 0.0
 	# Fix Pass 5: bigger, out-of-phase starting swing (see PEND_LEN_*).
 	pend_th_f = 0.34
 	pend_th_l = 0.26
@@ -2106,10 +2146,12 @@ func _reset_suspension() -> void:
 
 
 func _reset_dangle_feel() -> void:
-	dip_y = 0.0
-	dip_vy = 0.0
-	dip_accel = 0.0
+	# Fix Pass 10 (Item 2): the dip state is the FLOWN-dip state
+	# (progress/depth/cadence); the procedural pivot offset is gone.
+	dip_t = -1.0
+	dip_depth = 0.0
 	dip_timer = 2.0
+	dip_seed = 0
 	slack_t = 0.0
 	catch_t = 1.0
 	orient_have = false
@@ -2205,6 +2247,25 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 	anchor_target = fr["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR)
 	anchor_pos = catch_pos + Vector3.UP * (HANG_LEN + 1.6)
 	pivot_pos = anchor_pos
+	# Fix Pass 10 (Item 2): the carrier starts at a hover over the
+	# catch and flies the RETRACE path back to the drop point -
+	# spine samples every ~30 m at hang height plus a clearance
+	# margin, so it follows the road's shape (climbs, descends)
+	# instead of cutting a straight line through it.
+	carrier_vel = Vector3.ZERO
+	carrier_accel = Vector3.ZERO
+	carrier_yaw = _frame_yaw(_frame_at(from_s)["tan"])
+	carrier_path.clear()
+	carrier_wp = 0
+	var back_dist: float = wrapf(from_s - drop_target_s, 0.0, track_len) if track_closed \
+		else maxf(0.0, from_s - drop_target_s)
+	var steps: int = int(back_dist / 30.0)
+	for k: int in range(1, steps + 1):
+		var s_k: float = wrapf(from_s - 30.0 * float(k), 0.0, track_len) if track_closed \
+			else from_s - 30.0 * float(k)
+		var fr_k: Dictionary = _frame_at(s_k)
+		carrier_path.append(fr_k["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR + 1.2))
+	carrier_path.append(anchor_target)
 	_reset_dangle_feel()
 	# initial pendulum angles from the catch offset
 	var off: Vector3 = catch_pos - anchor_pos
@@ -2318,16 +2379,19 @@ func _do_release() -> void:
 	air_vel = tip + f * 3.0
 	if slack_t > 0.0:
 		air_vel = hang_vel + f * 3.0
-	air_vel.y += dip_vy * 0.5
+	# Fix Pass 10 (Item 2): the carrier's vertical motion at the
+	# release carries in (was the procedural dip velocity).
+	air_vel.y += carrier_vel.y * 0.5
 	air_s_est = drop_target_s
 	air_start_s = drop_target_s # a botched release falls from HERE
 	air_time = 0.0
 	air_from_gap = false
 	# Fix Pass 9: the released car flies and lands under the
-	# heading it HUNG with - aligned to the drop section (the
-	# hang orients the car to the section; see _orient_car_hang).
+	# heading it HUNG with (see _orient_car_hang - Fix Pass 10:
+	# that heading is the spring-settled orient_yaw, which at a
+	# settled dangle equals the drop section's direction).
 	# The horizontal air velocity becomes the velocity vector.
-	car_heading = _frame_yaw(f)
+	car_heading = orient_yaw
 	yaw_rate = 0.0
 	vel2 = Vector2(air_vel.x, air_vel.z)
 	mode = MODE_AIR
@@ -2626,8 +2690,123 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	_place_car_on_track(_frame_at(car_s))
 
 
+func _carrier_dip_offset() -> Vector2:
+	# (y offset, y velocity) of the FLOWN dip at its current
+	# progress: a raised-cosine descent 0 -> -depth -> 0 over
+	# DIP_DUR. Peak vertical acceleration = depth * 2pi^2 /
+	# DIP_DUR^2 (6.6-10.8 m/s^2 over the depth range) - deep
+	# dips outrun the car's ability to follow and slack the
+	# lines; shallow ones just soften the swing.
+	if dip_t < 0.0:
+		return Vector2.ZERO
+	var ph: float = dip_t / DIP_DUR
+	var y: float = -dip_depth * (0.5 - 0.5 * cos(TAU * ph))
+	var vy: float = -dip_depth * (PI / DIP_DUR) * sin(TAU * ph)
+	return Vector2(y, vy)
+
+
+func _step_carrier(delta: float) -> void:
+	# Fix Pass 10 (Item 2): the carrier's flight integrator. It
+	# replaces both the old constant-speed carry step and the
+	# procedural dip offset: anchor_pos is a flown position with
+	# velocity and an acceleration LIMIT, and carrier_accel is
+	# MEASURED from the velocity change the limit allowed -
+	# the pendulum (and the slack trigger) read that, never a
+	# schedule.
+	var target: Vector3 = anchor_target
+	var target_vel: Vector3 = Vector3.ZERO
+	var arrive: bool = true # true: closing behaviour; false: cruise through
+	if hang_phase == "attach":
+		target = anchor_pos # hold station over the catch while lines settle
+	elif hang_phase == "carry":
+		if carrier_wp < carrier_path.size():
+			target = carrier_path[carrier_wp]
+			arrive = carrier_wp == carrier_path.size() - 1
+			if not arrive and anchor_pos.distance_to(target) < 2.5:
+				carrier_wp += 1
+				target = carrier_path[carrier_wp]
+				arrive = carrier_wp == carrier_path.size() - 1
+	elif hang_phase == "dangle":
+		# Flown dips on the old hash cadence (deterministic -
+		# the smoke depends on reproducible behaviour), but the
+		# dip is a manoeuvre: the station target descends on the
+		# dip profile and the carrier flies down to it and back.
+		if dip_t < 0.0:
+			dip_timer -= delta
+			if dip_timer <= 0.0:
+				dip_seed += 1
+				var h1: float = sin(float(dip_seed) * 12.9898) * 43758.5453
+				var h2: float = sin(float(dip_seed) * 78.233) * 12543.21
+				dip_depth = 0.85 + 0.55 * (h1 - floor(h1))
+				dip_timer = 6.5 + 4.5 * (h2 - floor(h2))
+				dip_t = 0.0
+		else:
+			dip_t += delta
+			if dip_t >= DIP_DUR:
+				dip_t = -1.0
+		var doff: Vector2 = _carrier_dip_offset()
+		target = anchor_target + Vector3(0.0, doff.x, 0.0)
+		target_vel = Vector3(0.0, doff.y, 0.0)
+	# velocity command
+	var desired: Vector3
+	if test_pivot_accel_on:
+		desired = carrier_vel # acceleration is injected below
+	elif arrive:
+		desired = target_vel + (target - anchor_pos) * 1.4
+		if desired.length() > CARRIER_SPEED:
+			desired = desired.normalized() * CARRIER_SPEED
+	else:
+		var to: Vector3 = target - anchor_pos
+		desired = to.normalized() * CARRIER_SPEED if to.length() > 0.01 else Vector3.ZERO
+	# integrate under the accel limit; station-keeping gets a
+	# higher limit (the rig works hard over the drop point -
+	# that authority is what lets it fly the deep dips).
+	var prev_vel: Vector3 = carrier_vel
+	if test_pivot_accel_on:
+		carrier_vel += test_pivot_accel * delta
+	else:
+		var accel_lim: float = 11.0 if hang_phase == "dangle" else CARRIER_ACCEL
+		var dv: Vector3 = desired - carrier_vel
+		var max_dv: float = accel_lim * delta
+		if dv.length() > max_dv:
+			dv = dv.normalized() * max_dv
+		carrier_vel += dv
+	var inst_accel: Vector3 = (carrier_vel - prev_vel) / maxf(delta, 0.0001)
+	carrier_accel = carrier_accel.lerp(inst_accel, 0.5)
+	anchor_pos += carrier_vel * delta
+	pivot_pos = anchor_pos
+	# Carrier yaw: at speed it faces its velocity; at station it
+	# faces the drop section - both rate-limited, so a heading
+	# change is a turn the car gets twisted through afterwards.
+	var yaw_goal: float = carrier_yaw
+	var hv: Vector3 = Vector3(carrier_vel.x, 0.0, carrier_vel.z)
+	if hv.length() > 0.8:
+		yaw_goal = atan2(-hv.normalized().x, -hv.normalized().z)
+	elif hang_phase == "dangle":
+		yaw_goal = _frame_yaw(_frame_at(drop_target_s)["tan"])
+	var max_turn: float = CARRIER_YAW_RATE * delta
+	carrier_yaw += clampf(wrapf(yaw_goal - carrier_yaw, -PI, PI), -max_turn, max_turn)
+	# Slack: a hard flown descent drops the carrier out from
+	# under the car faster than the car can follow - measured
+	# acceleration, not the old impulse threshold on a schedule.
+	if hang_phase == "dangle" and carrier_accel.y < DIP_SLACK_ACCEL \
+			and slack_t <= 0.0 and catch_t >= 1.0:
+		slack_t = 0.15
+		hang_pos = car.global_position
+		var fr_s: Dictionary = _frame_at(drop_target_s)
+		hang_vel = (fr_s["tan"] * (pend_om_f * cos(pend_th_f))
+			+ fr_s["side"] * (pend_om_l * cos(pend_th_l))) * HANG_LEN
+		hang_vel += carrier_vel
+	# Arrival at the drop point ends the carry.
+	if hang_phase == "carry" and carrier_wp >= carrier_path.size() - 1:
+		if anchor_pos.distance_to(anchor_target) < 0.08 and carrier_vel.length() < 0.35:
+			anchor_pos = anchor_target
+			carrier_vel = Vector3.ZERO
+			hang_phase = "dangle"
+
+
 func _update_hang(delta: float) -> void:
-	_update_dip(delta)
+	_step_carrier(delta)
 	match hang_phase:
 		"attach":
 			anchor_t += delta / 1.0
@@ -2643,13 +2822,7 @@ func _update_hang(delta: float) -> void:
 				anchor_t = 0.0
 			return
 		"carry":
-			var dist: float = anchor_pos.distance_to(anchor_target)
-			var step: float = 9.0 * delta
-			if dist <= step:
-				anchor_pos = anchor_target
-				hang_phase = "dangle"
-			else:
-				anchor_pos = anchor_pos.move_toward(anchor_target, step)
+			pass # the carrier flies the retrace path (see _step_carrier)
 		"dangle":
 			pass
 	_step_pendulum(delta)
@@ -2675,36 +2848,6 @@ func _update_hang(delta: float) -> void:
 	_orient_car_hang(delta, hang_phase == "attach")
 
 
-func _update_dip(delta: float) -> void:
-	# Drone dips (dangle only): irregular brief drops of the pivot with
-	# a spring correction - the drone is visibly working to hold the
-	# load. Deterministic hash scheduling (same dangle, same dips -
-	# the smoke depends on reproducible behaviour). A hard dip drops
-	# the pivot out from under the car faster than the car can
-	# follow: the lines go slack (see the dangle branch above).
-	if hang_phase == "dangle":
-		dip_timer -= delta
-		if dip_timer <= 0.0:
-			dip_seed += 1
-			var h1: float = sin(float(dip_seed) * 12.9898) * 43758.5453
-			var frac1: float = h1 - floor(h1)
-			var h2: float = sin(float(dip_seed) * 78.233) * 12543.21
-			var frac2: float = h2 - floor(h2)
-			dip_vy = -(0.9 + 1.1 * frac1)
-			dip_timer = 2.4 + 2.2 * frac2
-			if dip_vy <= DIP_SLACK_IMPULSE and slack_t <= 0.0 and catch_t >= 1.0:
-				slack_t = 0.15
-				hang_pos = car.global_position
-				var fr_s: Dictionary = _frame_at(drop_target_s)
-				hang_vel = (fr_s["tan"] * (pend_om_f * cos(pend_th_f))
-					+ fr_s["side"] * (pend_om_l * cos(pend_th_l))) * HANG_LEN
-				hang_vel.y += dip_vy
-	dip_accel = -DIP_K * dip_y - DIP_DAMP * dip_vy
-	dip_vy += dip_accel * delta
-	dip_y += dip_vy * delta
-	pivot_pos = anchor_pos + Vector3(0.0, dip_y, 0.0)
-
-
 func _catch_lines(fr: Dictionary) -> void:
 	# Re-derive the pendulum from the car's real offset/velocity so
 	# the swing continues from the fall, not from stale angles.
@@ -2724,15 +2867,27 @@ func _step_pendulum(delta: float) -> void:
 	# Fix Pass 5: two axes on DIFFERENT pendulum lengths (PEND_LEN_F /
 	# PEND_LEN_L), so the resultant path is a diagonal Lissajous that
 	# never settles into a clean single-plane rhythm, with light
-	# damping so the swing persists. The pivot's own acceleration
-	# modulates effective gravity (drone dip = the swing goes soft;
-	# the correction = it firms up) - the compliance lives here and
-	# in the slack/catch path, not in a cosmetic wobble.
+	# damping so the swing persists.
+	# Fix Pass 10 (Item 2): the pivot is the CARRIER, and the
+	# pendulum integrates its measured acceleration: effective
+	# gravity gains the carrier's vertical acceleration (a flown
+	# dip softens the swing, the climb-out firms it), and the
+	# carrier's horizontal acceleration along each pendulum axis
+	# drives that axis directly (equilibrium tilt -atan(a/g) -
+	# the car lags when the carrier accelerates, overshoots when
+	# it brakes or turns, and settles when it holds station).
+	# Axes stay the DROP section's frame: the hang geometry
+	# (_hang_car_pos, _catch_lines) is written in that frame.
 	if slack_t > 0.0:
 		return
-	var g_eff: float = clampf(GRAV + dip_accel, 2.0, 22.0)
-	pend_om_f += (-(g_eff / PEND_LEN_F) * sin(pend_th_f) - PEND_DAMP * pend_om_f) * delta
-	pend_om_l += (-(g_eff / PEND_LEN_L) * sin(pend_th_l) - PEND_DAMP * pend_om_l) * delta
+	var fr: Dictionary = _frame_at(drop_target_s)
+	var g_eff: float = clampf(GRAV + carrier_accel.y, 2.0, 22.0)
+	var a_f: float = carrier_accel.dot(fr["tan"])
+	var a_l: float = carrier_accel.dot(fr["side"])
+	pend_om_f += (-(g_eff / PEND_LEN_F) * sin(pend_th_f)
+		- (a_f / PEND_LEN_F) * cos(pend_th_f) - PEND_DAMP * pend_om_f) * delta
+	pend_om_l += (-(g_eff / PEND_LEN_L) * sin(pend_th_l)
+		- (a_l / PEND_LEN_L) * cos(pend_th_l) - PEND_DAMP * pend_om_l) * delta
 	pend_th_f += pend_om_f * delta
 	pend_th_l += pend_om_l * delta
 
@@ -2744,7 +2899,6 @@ func _hang_car_pos(fr: Dictionary) -> Vector3:
 
 
 func _orient_car_hang(delta: float, snap: bool) -> void:
-	var fr: Dictionary = _frame_at(drop_target_s)
 	var down_dir: Vector3 = (car.global_position - pivot_pos).normalized()
 	# Fix Pass 5 compliance: the car's attitude follows a LAGGED hang
 	# direction - it settles a beat behind the swing instead of being
@@ -2755,8 +2909,22 @@ func _orient_car_hang(delta: float, snap: bool) -> void:
 	else:
 		orient_dir = orient_dir.lerp(down_dir, clampf(7.0 * delta, 0.0, 1.0)).normalized()
 	down_dir = orient_dir
+	# Fix Pass 10 (Item 2): the car's FACING is no longer the drop
+	# frame's tangent (rigid - the car snapped to the drop heading
+	# for the whole carry). It seeks the CARRIER's yaw on an
+	# underdamped spring: when the drone turns, the car twists
+	# after it, overshoots a little, and settles - alignment is a
+	# target chased slowly, never a lock.
+	var yaw_goal: float = test_yaw_target if test_yaw_target_on else carrier_yaw
+	if snap:
+		orient_yaw = yaw_goal
+		orient_yaw_v = 0.0
+	else:
+		var yerr: float = wrapf(yaw_goal - orient_yaw, -PI, PI)
+		orient_yaw_v += (ORIENT_YAW_K * yerr - ORIENT_YAW_DAMP * orient_yaw_v) * delta
+		orient_yaw += orient_yaw_v * delta
 	var y_axis: Vector3 = -down_dir
-	var facing: Vector3 = fr["tan"]
+	var facing: Vector3 = Vector3(-sin(orient_yaw), 0.0, -cos(orient_yaw))
 	var z_raw: Vector3 = -facing - y_axis * ((-facing).dot(y_axis))
 	var z_axis: Vector3 = z_raw.normalized()
 	if z_raw.length() < 0.1:
@@ -3254,32 +3422,26 @@ func _update_drone_visual(_delta: float) -> void:
 		return
 	if mode == MODE_HANG:
 		drone.global_position = pivot_pos + Vector3.UP * 0.35
-		# tilt toward travel while carrying; Fix Pass 5: a dip tilts
-		# the drone as it drops and corrects (it is WORKING to hold
-		# the load, not parked above it).
-		var tilt: float = 0.16 if hang_phase == "carry" else 0.03 * sin(pend_th_f)
-		tilt += dip_vy * 0.05
-		# Fix Pass 6 (Item 4): the drone is a LIFT RIG, not a free
-		# quad - during the hang it holds its YAW aligned to the
-		# car's heading, so lift-line i runs drone corner i ->
-		# car corner i and no pair of lines can cross (Chris's
-		# run-6 photo: the wires crossed into an X). The corner
-		# ORDER in _drone_corners/_car_corners matches (x-major,
-		# then z); with yaw shared, the plan-view segments form a
-		# quad's sides, never its diagonals. The yaw source is the
-		# track frame at the drop target until the car is close
-		# under the drone, then the car's own heading (its swing
-		# yaw stays within a few degrees of the frame's - the
-		# pendulum swings in the frame's axes).
-		var fwd_src: Vector3 = _frame_at(drop_target_s)["tan"]
-		if hang_phase == "dangle":
-			fwd_src = -car.global_transform.basis.z
-		var flat_fwd: Vector3 = Vector3(fwd_src.x, 0.0, fwd_src.z)
-		var hang_yaw: float = drone.rotation.y
-		if flat_fwd.length() > 0.05:
-			hang_yaw = atan2(-flat_fwd.normalized().x, -flat_fwd.normalized().z)
-		drone.rotation_degrees = Vector3(rad_to_deg(tilt), rad_to_deg(hang_yaw),
-			rad_to_deg(pend_th_l * 0.4) + dip_vy * 2.2)
+		# Fix Pass 10 (Item 2): the drone IS the carrier - it sits
+		# at the pivot, yaws with carrier_yaw, and tilts INTO its
+		# measured acceleration like a real lift rig working the
+		# load (nose down accelerating, back under braking, rolled
+		# into a turn). The canned carry tilt and dip wiggles are
+		# retired with the procedural pivot they served.
+		# Fix Pass 6 (Item 4) wire rule still holds: lift-line i
+		# runs drone corner i -> car corner i and no pair can
+		# cross - the car's facing seeks this same carrier_yaw
+		# (with lag), so the two yaws never diverge past a few
+		# degrees in a turn, far from the ~90 deg a crossing
+		# would need.
+		var cf: Vector3 = Vector3(-sin(carrier_yaw), 0.0, -cos(carrier_yaw))
+		var cr: Vector3 = Vector3(-cf.z, 0.0, cf.x)
+		var a_fwd: float = carrier_accel.dot(cf)
+		var a_lat: float = carrier_accel.dot(cr)
+		var tilt: float = clampf(a_fwd * 0.030, -0.38, 0.38) + 0.03 * sin(pend_th_f)
+		var roll: float = clampf(-a_lat * 0.030, -0.38, 0.38) + pend_th_l * 0.4
+		drone.rotation_degrees = Vector3(rad_to_deg(tilt), rad_to_deg(carrier_yaw),
+			rad_to_deg(roll))
 		var dc: Array[Vector3] = _drone_corners()
 		var cc: Array[Vector3] = _car_corners()
 		for i: int in 4:
@@ -3383,6 +3545,16 @@ func debug_set_hang_dangle() -> void:
 		hang_phase = "dangle"
 		anchor_pos = anchor_target
 		pivot_pos = anchor_pos
+		carrier_vel = Vector3.ZERO
+		carrier_accel = Vector3.ZERO
+
+
+func debug_carrier_turn(dyaw: float) -> void:
+	# Fix Pass 10 (Item 2, stage 17): step the carrier's yaw -
+	# the drone "has turned"; the car's facing must chase it on
+	# the orient spring (overshoot, then settle), which is what
+	# the stage measures.
+	carrier_yaw = wrapf(carrier_yaw + dyaw, -PI, PI)
 
 
 func debug_stage_landing(s: float, height: float, fwd_speed: float) -> void:

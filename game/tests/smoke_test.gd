@@ -1667,6 +1667,157 @@ func _run() -> void:
 			check(main._drop_piece_ok(main.drop_target_s) and main._drop_runup_ok(main.drop_target_s),
 				"stage16: live drop piece + run-up valid (drop %.0f)" % main.drop_target_s)
 
+	# ---------- stage 17: Fix Pass 10 (Item 2) - pivot-driven flight ----
+	# (a) The pendulum integrates the PIVOT's acceleration: inject
+	# a sustained 3 m/s^2 along the drop frame's tangent. The
+	# swing must LAG first (small angle early) and settle at the
+	# physical equilibrium -atan(a/g) = -0.297 rad.
+	main.start_race()
+	await frames(4)
+	main.dip_timer = 1000.0 # keep flown dips out of the measurements
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	await frames(3)
+	var fr17: Dictionary = main._frame_at(main.drop_target_s)
+	main.test_pivot_accel = (fr17["tan"] as Vector3) * 3.0
+	main.test_pivot_accel_on = true
+	await frames(21) # ~0.23 s at the project's 90 Hz tick
+	var early17: float = main.pend_th_f
+	check(absf(early17) < 0.10,
+		"stage17: swing LAGS a step pivot acceleration (th_f %.3f rad at 0.23 s, bound 0.10)" % early17)
+	# The pendulum is LIGHTLY damped by design (PEND_DAMP 0.10 -
+	# the swing persists; that is the FP5 feel), so a step in
+	# pivot acceleration rings around the new equilibrium for
+	# many seconds: the equilibrium claim is a MEAN claim. Inject
+	# for ~13 s and average the last ~4.7 s (one full period of
+	# the 5.5 m axis) - the oscillation cancels, the mean is the
+	# equilibrium.
+	await frames(726)
+	var sum17: float = 0.0
+	var ring17: float = 0.0
+	for i17m: int in 423:
+		await physics_frame
+		sum17 += main.pend_th_f
+		ring17 = maxf(ring17, absf(main.pend_th_f))
+	var mean17: float = sum17 / 423.0
+	check(mean17 < -0.20 and mean17 > -0.38,
+		"stage17: equilibrium tilt under sustained pivot accel (mean th_f %.3f, expect ~-0.297)" % mean17)
+	check(ring17 > 0.40,
+		"stage17: the step RINGS past equilibrium before settling (peak |th_f| %.3f in the mean window)" % ring17)
+	main.test_pivot_accel_on = false
+	# (b) The car's facing seeks a yaw TARGET on its spring:
+	# step the target 90 deg - the facing must overshoot the
+	# target, then settle on it. Then the production path: turn
+	# the CARRIER and confirm the car realigns to it (no
+	# permanent twist left behind).
+	main.start_race()
+	await frames(4)
+	main.dip_timer = 1000.0
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	await frames(30)
+	var y17: float = main.orient_yaw
+	main.test_yaw_target = wrapf(y17 + PI / 2.0, -PI, PI)
+	main.test_yaw_target_on = true
+	var over17: float = 0.0
+	var settle17: bool = false
+	for i17: int in 720:
+		await physics_frame
+		var err17: float = wrapf(main.orient_yaw - main.test_yaw_target, -PI, PI)
+		over17 = maxf(over17, err17)
+		if i17 > 200 and absf(err17) < deg_to_rad(1.0):
+			settle17 = true
+			break
+	check(over17 > deg_to_rad(1.0),
+		"stage17: car yaw OVERSHOOTS a target step (%.2f deg past, floor 1.0)" % rad_to_deg(over17))
+	check(settle17,
+		"stage17: car yaw settles on the target (err %.2f deg)" % rad_to_deg(wrapf(main.orient_yaw - main.test_yaw_target, -PI, PI)))
+	main.test_yaw_target_on = false
+	main.debug_carrier_turn(PI / 2.0)
+	var realign17: bool = await wait_until(
+		func() -> bool: return absf(wrapf(main.orient_yaw - main.carrier_yaw, -PI, PI)) < deg_to_rad(1.5), 900)
+	check(realign17, "stage17: car realigns to the carrier after a carrier turn (no permanent twist)")
+	# (c) Production carry: fall off the staircase, get carried
+	# ~110 m back along the retrace path. The flight must EXCITE
+	# the pendulum (accel/braking/turns), the hang must SETTLE
+	# after arrival, and a flown dip at full depth must slack
+	# the lines through MEASURED carrier acceleration.
+	for idx: Variant in main.prep_order.duplicate():
+		grip_flip_switch(int(idx), "R")
+	main._do_release()
+	var drv17: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv17, "stage17: setup release lands into DRIVE")
+	main.debug_warp_to_s(main.stairs_s0 + 15.0)
+	main._call_drone()
+	var path17: int = 0
+	var peak17: float = 0.0
+	var saw_carry17: bool = false
+	var f17: int = 0
+	while f17 < 5000:
+		await physics_frame
+		f17 += 1
+		if main.hang_phase == "carry":
+			saw_carry17 = true
+			path17 = main.carrier_path.size()
+		if saw_carry17:
+			peak17 = maxf(peak17, maxf(absf(main.pend_th_f), absf(main.pend_th_l)))
+		if saw_carry17 and main.hang_phase == "dangle":
+			break
+	main.dip_timer = 1000.0 # settle window stays dip-free; the dip test re-arms it
+	check(saw_carry17 and path17 >= 2,
+		"stage17: recovery flies a retrace path (%d waypoints)" % path17)
+	check(peak17 > 0.10,
+		"stage17: the carry excites the pendulum (peak %.3f rad, floor 0.10)" % peak17)
+	# settle: with the carrier AT STATION the swing must DECAY at
+	# the pendulum's own light damping - never be re-pumped.
+	# Two 2 s windows ~7 s apart: the later peak must be well
+	# under the earlier (e^{-0.05*7} = 0.70 is the physics).
+	await frames(90)
+	var win_a17: float = 0.0
+	for i17b: int in 180:
+		await physics_frame
+		win_a17 = maxf(win_a17, maxf(absf(main.pend_th_f), absf(main.pend_th_l)))
+	await frames(480)
+	var win_b17: float = 0.0
+	for i17c: int in 180:
+		await physics_frame
+		win_b17 = maxf(win_b17, maxf(absf(main.pend_th_f), absf(main.pend_th_l)))
+	check(win_b17 < 0.80 * win_a17,
+		"stage17: swing decays at station, not re-pumped (window peaks %.3f -> %.3f rad)" % [win_a17, win_b17])
+	check(win_b17 < 0.75 * peak17,
+		"stage17: hang settles after arrival (late %.3f vs carry peak %.3f)" % [win_b17, peak17])
+	# flown dip at full depth -> measured accel -> slack
+	main.dip_timer = 0.05 # next dip almost immediately
+	var dip_seen17: bool = false
+	var slack_seen17: bool = false
+	var min_acc17: float = 0.0
+	f17 = 0
+	while f17 < 2400 and not slack_seen17:
+		await physics_frame
+		f17 += 1
+		if main.dip_t >= 0.0:
+			if not dip_seen17:
+				dip_seen17 = true
+				main.dip_depth = 1.40 # range maximum - the flight stays production
+			min_acc17 = minf(min_acc17, main.carrier_accel.y)
+		if main.slack_t > 0.0:
+			slack_seen17 = true
+	check(dip_seen17, "stage17: a flown dip occurs at the dangle")
+	check(min_acc17 < -3.0,
+		"stage17: the dip is real carrier acceleration (min %.1f m/s^2)" % min_acc17)
+	check(slack_seen17,
+		"stage17: full-depth dip slacks the lines via measured accel (min %.1f, threshold %.1f)" % [min_acc17, main.DIP_SLACK_ACCEL])
+	# and the whole hang still hands off to a drive
+	for idx: Variant in main.prep_order.duplicate():
+		grip_flip_switch(int(idx), "R")
+	main._do_release()
+	var drv17b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv17b, "stage17: release after the carried, dipped hang resumes driving")
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
