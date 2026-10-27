@@ -64,13 +64,17 @@ VR (Quest):
 - Call the drone (while driving): left X button
 - Restart race: left Y button · Lean experiment on/off: right B button
   (or the green dash button; red dash button = restart)
+- Switch track (while dangling): GRIP near the purple dash button —
+  the mountain circuit (default) and the original test ribbon;
+  a circuit race is 3 laps to the finish, the ribbon is
+  point-to-point
 - Recenter: click the left stick
 - Road-jitter experiment on/off: click the right stick (state shows
   as JIT in the DIAG block; default ON)
 
 Desktop fallback (no headset): the mirror rig drives the same car.
 - W/S throttle/brake · A/D steer · SHIFT boost · SPACE release
-- 1/2/3 flip FUEL/SPARK/BOOST · L call drone · R restart
+- 1/2/3 flip FUEL/SPARK/BOOST · L call drone · R restart · V switch track
 - T lean experiment on/off · Q/E lean body left/right · C recenter
 - J road-jitter experiment on/off (default ON)
 - Mouse drag steers while the left button is held

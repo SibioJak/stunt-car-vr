@@ -304,6 +304,20 @@ var t_curv: Array[float] = []
 var t_gap: Array[bool] = []
 var t_kv: Array[float] = [] # vertical curvature per sample (crest +)
 var track_len: float = 0.0
+# Fix Pass 10 (Item 3): two tracks, one live set of arrays.
+# track_data holds each track's Dictionary (arrays, length,
+# closed flag, feature spans, scene root); _activate_track
+# points the live arrays at one of them.
+var track_data: Dictionary = {}
+var active_track: String = ""
+const RACE_LAPS: int = 3 # circuit race length (the ribbon is point-to-point)
+var lap_count: int = 0
+# Fix Pass 10 (Item 4): loop-spur state - the spur is a branch
+# surface off the circuit with its own arc parameter (spur_s);
+# while on_spur, driving/suspension read the spur's frames.
+var on_spur: bool = false
+var spur_s: float = 0.0
+var spur_lat: float = 0.0
 var gap_s0: float = 0.0
 var gap_s1: float = 0.0
 # Fix Pass 7 (Item 1): extension anchors, recorded by the generator
@@ -609,12 +623,13 @@ func _box(parent: Node, size: Vector3, pos: Vector3, mat: Material, bname: Strin
 
 func _ready() -> void:
 	_build_environment()
-	_build_track()
+	track_data["ribbon"] = _build_ribbon()
+	track_data["circuit"] = _build_circuit()
 	_build_car()
 	_build_drone()
 	_build_rig()
 	_build_audio()
-	start_race()
+	_set_track("circuit") # Fix Pass 10 (Item 3): the mountain circuit is the default track
 	set_process(true)
 
 
@@ -808,35 +823,67 @@ var _gen_pos: Vector3 = Vector3.ZERO
 var _gen_yaw: float = 0.0
 var _gen_phi: float = 0.0
 var _gen_bank: float = 0.0
+# Fix Pass 10 (Item 3): generation writes into BUILD arrays,
+# not the live ones - a finished track is a data Dictionary
+# (see _finalize_track) and _activate_track points the live
+# t_* arrays at it. Two tracks now exist (the test ribbon and
+# the mountain circuit) and each keeps its own arrays.
+var b_pts: Array[Vector3] = []
+var b_tan: Array[Vector3] = []
+var b_bank: Array[float] = []
+var b_curv: Array[float] = []
+var b_gap: Array[bool] = []
 
 
 func _gen_append(is_gap: bool, curv: float) -> void:
 	var hd := Vector3(-sin(_gen_yaw), 0.0, -cos(_gen_yaw))
 	var tanv: Vector3 = (hd * cos(_gen_phi) + Vector3.UP * sin(_gen_phi)).normalized()
-	t_pts.append(_gen_pos)
-	t_tan.append(tanv)
-	t_bank.append(_gen_bank)
-	t_curv.append(curv)
-	t_gap.append(is_gap)
+	b_pts.append(_gen_pos)
+	b_tan.append(tanv)
+	b_bank.append(_gen_bank)
+	b_curv.append(curv)
+	b_gap.append(is_gap)
+
+
+func _gen_step(step_len: float, yaw_rate: float, phi_target: float, bank_target: float, is_gap: bool, phi_rate: float, bank_rate: float) -> void:
+	_gen_phi = move_toward(_gen_phi, phi_target, phi_rate * step_len)
+	_gen_bank = move_toward(_gen_bank, bank_target, bank_rate * step_len)
+	_gen_yaw += yaw_rate * step_len
+	var hd := Vector3(-sin(_gen_yaw), 0.0, -cos(_gen_yaw))
+	var tanv: Vector3 = (hd * cos(_gen_phi) + Vector3.UP * sin(_gen_phi)).normalized()
+	_gen_pos += tanv * step_len
+	_gen_append(is_gap, yaw_rate)
 
 
 func _walk(steps: int, yaw_rate: float, phi_target: float, bank_target: float, is_gap: bool, phi_rate: float = 0.006, bank_rate: float = 0.012) -> void:
 	for i: int in steps:
-		_gen_phi = move_toward(_gen_phi, phi_target, phi_rate)
-		_gen_bank = move_toward(_gen_bank, bank_target, bank_rate)
-		_gen_yaw += yaw_rate
-		var hd := Vector3(-sin(_gen_yaw), 0.0, -cos(_gen_yaw))
-		var tanv: Vector3 = (hd * cos(_gen_phi) + Vector3.UP * sin(_gen_phi)).normalized()
-		_gen_pos += tanv * 1.0
-		_gen_append(is_gap, yaw_rate)
+		_gen_step(1.0, yaw_rate, phi_target, bank_target, is_gap, phi_rate, bank_rate)
 
 
-func _build_track() -> void:
-	t_pts.clear()
-	t_tan.clear()
-	t_bank.clear()
-	t_curv.clear()
-	t_gap.clear()
+func _walkf(steps_f: float, yaw_rate: float, phi_target: float, bank_target: float, is_gap: bool, phi_rate: float = 0.006, bank_rate: float = 0.012) -> void:
+	# Fractional-length walk (the circuit solver's tail): whole
+	# steps plus one partial step, so a section's length or
+	# radius is a continuous variable the solver can trim.
+	var whole: int = int(floor(steps_f))
+	var frac: float = steps_f - float(whole)
+	for i: int in whole:
+		_gen_step(1.0, yaw_rate, phi_target, bank_target, is_gap, phi_rate, bank_rate)
+	if frac > 0.001:
+		_gen_step(frac, yaw_rate, phi_target, bank_target, is_gap, phi_rate, bank_rate)
+
+
+func _build_ribbon() -> Dictionary:
+	# The Fix Pass 1-9 test ribbon, generated exactly as before
+	# (six-plus runs of verdicts compare against it) - now into
+	# build arrays, and returned as a track data Dictionary.
+	var root := Node3D.new()
+	root.name = "TrackRibbon"
+	add_child(root)
+	b_pts = []
+	b_tan = []
+	b_bank = []
+	b_curv = []
+	b_gap = []
 	_gen_pos = Vector3(0.0, 30.0, 0.0)
 	_gen_yaw = 0.0
 	_gen_phi = 0.0
@@ -868,9 +915,9 @@ func _build_track() -> void:
 	# top-10 height step in the BEFORE table.
 	_walk(2, 0.0, deg_to_rad(10.0), 0.0, false, 0.012, 0.10) # launch lip, shaped entry
 	_walk(8, 0.0, deg_to_rad(10.0), 0.0, false, 0.034, 0.10) # launch lip
-	gap_s0 = float(t_pts.size())
+	gap_s0 = float(b_pts.size())
 	_walk(14, 0.0, deg_to_rad(2.0), 0.0, true, 0.020) # THE GAP - no ribbon
-	gap_s1 = float(t_pts.size())
+	gap_s1 = float(b_pts.size())
 	_walk(40, 0.0, deg_to_rad(-3.4), 0.0, false, 0.020) # landing straight
 	_walk(90, 0.0, deg_to_rad(-13.7), 0.0, false) # descent
 	_walk(50, 0.0, 0.0, 0.0, false) # finish straight (the old lap's end)
@@ -884,7 +931,7 @@ func _build_track() -> void:
 	# gap at the same 14 m spec -> a final climb and a long home
 	# straight to the new finish (the gantry below derives from
 	# track_len, so it follows on its own).
-	ext_s0 = float(t_pts.size() - 1)
+	ext_s0 = float(b_pts.size() - 1)
 	# Fix Pass 8 (Item 2): the crest straight's gentle rollers
 	# (Fix Pass 7: 4 x +-5 deg over 70 m, kv ~0.006) compressed
 	# the springs - 0.162 m peak - but NEVER unloaded them: at
@@ -907,9 +954,9 @@ func _build_track() -> void:
 		_walk(19, 0.0, deg_to_rad(-11.0), 0.0, false, 0.021) # over the top (kv ~0.021: unloads)
 		_walk(13, 0.0, 0.0, 0.0, false, 0.016) # flatten out (the landing side)
 	_walk(20, 0.0, 0.0, 0.0, false) # settle flat out of the humps
-	sweeper_s0 = float(t_pts.size())
+	sweeper_s0 = float(b_pts.size())
 	_walk(47, -deg_to_rad(90.0) / 47.0, 0.0, deg_to_rad(-34.0), false) # banked sweeper, mirrored
-	sweeper_s1 = float(t_pts.size())
+	sweeper_s1 = float(b_pts.size())
 	_walk(3, 0.0, 0.0, 0.0, false, 0.006, 0.03) # flatten out: shaped bank unwind, as post-corner
 	_walk(17, 0.0, 0.0, 0.0, false, 0.006, 0.075) # flatten out: unwind completes
 	# Fix Pass 8 (Item 1): the staircase keeps UNIFORM phi
@@ -925,71 +972,306 @@ func _build_track() -> void:
 	# 5 samples), each cycle drops ~1.9 m, and the suspension
 	# still bottoms on every drop (stage 8 asserts it): the
 	# staircase still reads as steps.
-	stairs_s0 = float(t_pts.size() - 1)
+	stairs_s0 = float(b_pts.size() - 1)
 	for step_i: int in 6: # descending staircase: drop, tread, drop...
 		_walk(5, 0.0, deg_to_rad(-22.0), 0.0, false, 0.077)
 		_walk(6, 0.0, 0.0, 0.0, false, 0.077)
-	stairs_s1 = float(t_pts.size() - 1)
+	stairs_s1 = float(b_pts.size() - 1)
 	_walk(30, 0.0, 0.0, 0.0, false, 0.020) # flat run to the second lip
 	_walk(2, 0.0, deg_to_rad(10.0), 0.0, false, 0.012, 0.10) # second launch lip, shaped entry
 	_walk(8, 0.0, deg_to_rad(10.0), 0.0, false, 0.034, 0.10) # second launch lip
-	gap2_s0 = float(t_pts.size())
+	gap2_s0 = float(b_pts.size())
 	_walk(14, 0.0, deg_to_rad(2.0), 0.0, true, 0.020) # THE SECOND GAP - same 14 m spec
-	gap2_s1 = float(t_pts.size())
+	gap2_s1 = float(b_pts.size())
 	_walk(40, 0.0, deg_to_rad(-3.4), 0.0, false, 0.020) # second landing straight
 	_walk(90, 0.0, deg_to_rad(13.0), 0.0, false) # final climb
 	_walk(200, 0.0, 0.0, 0.0, false) # long home straight to the new finish
-	track_len = float(t_pts.size() - 1)
-	# Fix Pass 5: per-sample vertical curvature of the road profile,
-	# kv = -d(elevation angle)/ds. Positive over a crest (the road
-	# falls away); the suspension's crest load factor reads it.
-	t_kv.clear()
-	for ki: int in t_tan.size():
-		var km: int = maxi(ki - 1, 0)
-		var kp: int = mini(ki + 1, t_tan.size() - 1)
-		var phi_m: float = asin(clampf(t_tan[km].y, -1.0, 1.0))
-		var phi_p: float = asin(clampf(t_tan[kp].y, -1.0, 1.0))
-		t_kv.append(-(phi_p - phi_m) / float(kp - km))
-	# Fix Pass 8 (Item 1): curvature is what a 3 m wheelbase FEELS
-	# - an average over the contact patches, not a point value -
-	# so the stored profile gets one [0.25, 0.5, 0.25] smoothing
-	# pass. The raw per-sample kv stepped the suspension's crest
-	# load factor at every sample join (part of the run-8 step
-	# family); a plateau (the humps' fall-away, the climb-top
-	# bend) is several samples long and survives the pass intact.
-	var kv_raw: Array[float] = []
-	kv_raw.assign(t_kv)
-	for ki2: int in t_kv.size():
-		var km2: int = maxi(ki2 - 1, 0)
-		var kp2: int = mini(ki2 + 1, t_kv.size() - 1)
-		t_kv[ki2] = 0.25 * kv_raw[km2] + 0.5 * kv_raw[ki2] + 0.25 * kv_raw[kp2]
-	# Fix Pass 8 (Item 1): the same [0.25, 0.5, 0.25] pass over
-	# the stored POINTS and TANGENTS. The generator's profile is
-	# a polygon - slope corners at every sample - and a frame
-	# straddling a corner concentrates the slope change into one
-	# view step (the run-8 jumps: measured worst 0.019 m /
-	# 1.57 deg, all at joins). One smoothing pass rounds every
-	# corner over ~2 samples: a join's step spreads across
-	# neighbouring frames instead of snapping in one. The
-	# deviation is small and honest - at most ~1.5 cm at the
-	# sharpest corners (the staircase edges), millimetres on
-	# the gentle profile - and everything downstream (mesh,
-	# placement, suspension, the air line) reads the same
-	# smoothed arrays through _frame_at, so the world stays
-	# self-consistent. The quantised jitter surface (_elev_smooth
-	# / _elev_quantised) reads the smoothed profile too and
-	# re-facets it at 5 m / 0.05 m, so the Crammond tremble is
-	# unchanged in kind (stage 2g re-measures its band).
-	var pts_raw: Array[Vector3] = []
-	pts_raw.assign(t_pts)
-	var tan_raw: Array[Vector3] = []
-	tan_raw.assign(t_tan)
-	for si: int in t_pts.size():
-		var sm: int = maxi(si - 1, 0)
-		var sp: int = mini(si + 1, t_pts.size() - 1)
-		t_pts[si] = 0.25 * pts_raw[sm] + 0.5 * pts_raw[si] + 0.25 * pts_raw[sp]
-		t_tan[si] = (0.25 * tan_raw[sm] + 0.5 * tan_raw[si] + 0.25 * tan_raw[sp]).normalized()
+	var feats: Dictionary = {
+		"gap_s0": gap_s0, "gap_s1": gap_s1, "gap2_s0": gap2_s0, "gap2_s1": gap2_s1,
+		"ext_s0": ext_s0, "sweeper_s0": sweeper_s0, "sweeper_s1": sweeper_s1,
+		"stairs_s0": stairs_s0, "stairs_s1": stairs_s1}
+	var d: Dictionary = _finalize_track(false, feats)
+	d["root"] = root
+	_activate_track(d)
+	_build_track_meshes(d)
+	return d
 
+
+var _cir_start: Vector3 = Vector3.ZERO
+
+
+func _build_circuit() -> Dictionary:
+	# Fix Pass 10 (Item 3): THE MOUNTAIN CIRCUIT. A closed loop
+	# built from the same generator vocabulary as the ribbon,
+	# to the owner's geography: "huge tall ramps, massive dips,
+	# big swinging curves, some straightaways." One signature
+	# climb (+70 m), one massive dip (~50 m down to a valley and
+	# back out), four long banked swinging curves (radii
+	# 100-140 m, both directions), two straightaways >= 350 m,
+	# the 14 m gap and the five-hump row carried over at their
+	# FP7/FP8 shapes. Total heading change is exactly 360 deg
+	# by construction (each curve's yaw rate is its total angle
+	# over its step count); elevation and plan closure are
+	# SOLVED on the tail (return-straight length / pitch and
+	# the last curve's radius are continuous variables trimmed
+	# by a Newton iteration, see _solve_circuit_tail).
+	var root := Node3D.new()
+	root.name = "TrackCircuit"
+	add_child(root)
+	b_pts = []
+	b_tan = []
+	b_bank = []
+	b_curv = []
+	b_gap = []
+	_cir_start = Vector3(0.0, 60.0, 0.0)
+	_gen_pos = _cir_start
+	_gen_yaw = 0.0
+	_gen_phi = 0.0
+	_gen_bank = 0.0
+	_gen_append(false, 0.0)
+	var feats: Dictionary = {}
+	var curves: Array = []
+	# S1: home straight (spur entry/merge spans recorded for Item 4)
+	_walk(380, 0.0, 0.0, 0.0, false)
+	feats["home_len"] = 380.0
+	feats["spur_entry_s"] = 170.0
+	feats["spur_join_s"] = 380.0
+	# S2: curve A - left, the long opening sweeper (R~244),
+	# tipping the lap westward and gently down toward the dip
+	var a_s0: float = float(b_pts.size() - 1)
+	_walk(340, deg_to_rad(80.0) / 340.0, deg_to_rad(-2.0), deg_to_rad(26.0), false)
+	_walk(3, 0.0, deg_to_rad(-2.0), 0.0, false, 0.006, 0.03)
+	_walk(17, 0.0, deg_to_rad(-2.0), 0.0, false, 0.006, 0.075)
+	curves.append([a_s0, float(b_pts.size() - 1), 1.0, 340.0 / deg_to_rad(80.0)])
+	# S3-S4: THE DIP - a long descent to a valley floor, then flat
+	var dip_s0: float = float(b_pts.size() - 1)
+	_walk(180, 0.0, deg_to_rad(-16.0), 0.0, false)
+	_walk(90, 0.0, 0.0, 0.0, false)
+	feats["dip_s0"] = dip_s0
+	feats["dip_s1"] = float(b_pts.size() - 1)
+	# S5: climb out of the valley
+	_walk(140, 0.0, deg_to_rad(13.0), 0.0, false)
+	# S6: mid straight (second >= 350 m straightaway)
+	_walk(350, 0.0, deg_to_rad(2.0), 0.0, false)
+	feats["mid_len"] = 350.0
+	# S7: curve B - left HAIRPIN (R~108): the lap turns back
+	# east for the climb side
+	var b_s0: float = float(b_pts.size() - 1)
+	_walk(340, deg_to_rad(180.0) / 340.0, deg_to_rad(3.0), deg_to_rad(26.0), false)
+	_walk(3, 0.0, deg_to_rad(3.0), 0.0, false, 0.006, 0.03)
+	_walk(17, 0.0, deg_to_rad(3.0), 0.0, false, 0.006, 0.075)
+	curves.append([b_s0, float(b_pts.size() - 1), 1.0, 340.0 / deg_to_rad(180.0)])
+	# S8: link
+	_walk(35, 0.0, 0.0, 0.0, false)
+	# S9: THE SIGNATURE CLIMB - 240 m at up to +17.5 deg (~+70 m)
+	feats["climb_s0"] = float(b_pts.size() - 1)
+	_walk(235, 0.0, deg_to_rad(17.5), 0.0, false)
+	feats["climb_s1"] = float(b_pts.size() - 1)
+	# S10: shelf, then the carried-over lip + 14 m gap + landing
+	_walk(25, 0.0, 0.0, 0.0, false)
+	_walk(2, 0.0, deg_to_rad(10.0), 0.0, false, 0.012, 0.10)
+	_walk(8, 0.0, deg_to_rad(10.0), 0.0, false, 0.034, 0.10)
+	feats["gap_s0"] = float(b_pts.size())
+	_walk(14, 0.0, deg_to_rad(2.0), 0.0, true, 0.020)
+	feats["gap_s1"] = float(b_pts.size())
+	feats["gap2_s0"] = feats["gap_s0"]
+	feats["gap2_s1"] = feats["gap_s1"]
+	_walk(40, 0.0, deg_to_rad(-3.4), 0.0, false, 0.020)
+	# S11: the five-hump row, carried over at FP8's shape on a
+	# descending base (climb in +3, over the top to -19, out at
+	# the -8 base - the same 22-degree sweep per hump)
+	feats["ext_s0"] = float(b_pts.size() - 1)
+	for hump: int in 5:
+		_walk(13, 0.0, deg_to_rad(3.0), 0.0, false, 0.016)
+		_walk(19, 0.0, deg_to_rad(-19.0), 0.0, false, 0.021)
+		_walk(13, 0.0, deg_to_rad(-8.0), 0.0, false, 0.016)
+	_walk(20, 0.0, deg_to_rad(-8.0), 0.0, false)
+	feats["hump_s1"] = float(b_pts.size() - 1)
+	# S12: curve C - right, the long return sweeper (R~236),
+	# descending, setting the lap due south for the tail
+	var c_s0: float = float(b_pts.size() - 1)
+	_walk(330, -deg_to_rad(80.0) / 330.0, deg_to_rad(-7.0), deg_to_rad(-26.0), false)
+	_walk(3, 0.0, deg_to_rad(-7.0), 0.0, false, 0.006, 0.03)
+	_walk(17, 0.0, deg_to_rad(-7.0), 0.0, false, 0.006, 0.075)
+	curves.append([c_s0, float(b_pts.size() - 1), -1.0, 330.0 / deg_to_rad(80.0)])
+	feats["curves"] = curves
+	feats["sweeper_s0"] = -1.0
+	feats["sweeper_s1"] = -1.0
+	feats["stairs_s0"] = -1.0
+	feats["stairs_s1"] = -1.0
+	# S13-S15: the solver tail (return straight -> curve D ->
+	# curve E unwinding its bank onto the seam)
+	var snap: Array = [_gen_pos, _gen_yaw, _gen_phi, _gen_bank,
+		b_pts.size(), b_tan.size(), b_bank.size(), b_curv.size(), b_gap.size()]
+	var sol: Array = _solve_circuit_tail(snap)
+	feats["tail"] = [sol[0], sol[1], sol[2]]
+	feats["closure_err_m"] = sol[3]
+	var d: Dictionary = _finalize_track(true, feats)
+	d["root"] = root
+	_activate_track(d)
+	_build_track_meshes(d)
+	return d
+
+
+func _gen_circuit_tail(snap: Array, lr: float, phi_h: float, r_e: float) -> Vector3:
+	# (Re)generate the circuit's tail from the snapshot and
+	# return the closure residual: where the NEXT step after
+	# the last sample would land, minus the start point. Zero
+	# residual = exact closure (the wrap segment then has the
+	# same ~1 m length and heading as every other segment).
+	_gen_pos = snap[0]
+	_gen_yaw = snap[1]
+	_gen_phi = snap[2]
+	_gen_bank = snap[3]
+	b_pts.resize(int(snap[4]))
+	b_tan.resize(int(snap[5]))
+	b_bank.resize(int(snap[6]))
+	b_curv.resize(int(snap[7]))
+	b_gap.resize(int(snap[8]))
+	# return straight: pitch ramps from the snapshot's phi to
+	# phi_h over 45 m, holds for the rest of lr, ramps to 0
+	var phi_s: float = _gen_phi
+	_walkf(45.0, 0.0, phi_h, 0.0, false, absf(phi_h - phi_s) / 45.0)
+	_walkf(maxf(lr - 90.0, 0.0), 0.0, phi_h, 0.0, false)
+	_walkf(45.0, 0.0, 0.0, 0.0, false, absf(phi_h) / 45.0)
+	# curve E - the closing HAIRPIN, left 180 deg at the
+	# solver radius; its bank unwinds over the final 20 m so
+	# the seam itself is flat and unbanked
+	var arc_e: float = deg_to_rad(180.0) * r_e
+	_walkf(arc_e - 20.0, 1.0 / r_e, 0.0, deg_to_rad(26.0), false)
+	_walkf(20.0, 1.0 / r_e, 0.0, 0.0, false, 0.006, deg_to_rad(26.0) / 20.0)
+	var hd := Vector3(-sin(_gen_yaw), 0.0, -cos(_gen_yaw))
+	var tanv: Vector3 = (hd * cos(_gen_phi) + Vector3.UP * sin(_gen_phi)).normalized()
+	return (_gen_pos + tanv * 1.0) - _cir_start
+
+
+func _solve_circuit_tail(snap: Array) -> Array:
+	# Newton iteration (finite-difference Jacobian, damped) on
+	# (return-straight length, its hold pitch, curve E radius)
+	# against the 3-component closure residual. The couplings
+	# are weak (pitch barely moves the plan; length/radius
+	# barely move elevation), so this converges in a few
+	# iterations to sub-centimetre closure.
+	var x: Array = [190.0, 0.0, 102.0]
+	var f0: Vector3 = _gen_circuit_tail(snap, float(x[0]), float(x[1]), float(x[2]))
+	var deltas: Array = [0.6, 0.002, 0.6]
+	for it: int in 10:
+		if maxf(absf(f0.x), maxf(absf(f0.y), absf(f0.z))) < 0.01:
+			break
+		var cols: Array = []
+		for j: int in 3:
+			var xp: Array = x.duplicate()
+			xp[j] = float(xp[j]) + float(deltas[j])
+			var fp: Vector3 = _gen_circuit_tail(snap, float(xp[0]), float(xp[1]), float(xp[2]))
+			cols.append((fp - f0) / float(deltas[j]))
+		var a: Vector3 = cols[0]
+		var b: Vector3 = cols[1]
+		var c: Vector3 = cols[2]
+		var det: float = a.dot(b.cross(c))
+		if absf(det) < 1e-9:
+			break
+		var nf: Vector3 = -f0
+		x[0] = clampf(float(x[0]) + nf.dot(b.cross(c)) / det * 0.85, 80.0, 420.0)
+		x[1] = clampf(float(x[1]) + a.dot(nf.cross(c)) / det * 0.85, -0.03, 0.20)
+		x[2] = clampf(float(x[2]) + a.dot(b.cross(nf)) / det * 0.85, 80.0, 150.0)
+		f0 = _gen_circuit_tail(snap, float(x[0]), float(x[1]), float(x[2]))
+	_gen_circuit_tail(snap, float(x[0]), float(x[1]), float(x[2]))
+	return [x[0], x[1], x[2], f0.length()]
+
+
+func _finalize_track(closed: bool, features: Dictionary) -> Dictionary:
+	# Shared track finalization for both tracks: per-sample
+	# vertical curvature, then the smoothing passes. On a
+	# CLOSED track every neighbour index wraps the seam, so
+	# the seam is smoothed and curved exactly like any other
+	# join (that is what makes it invisible in the step
+	# metrics - stage 19 measures across it).
+	# Fix Pass 5: kv = -d(elevation angle)/ds, positive over a
+	# crest (the road falls away); the suspension reads it.
+	var n: int = b_pts.size()
+	var kv: Array[float] = []
+	kv.resize(n)
+	for ki: int in n:
+		var km: int = (ki - 1 + n) % n if closed else maxi(ki - 1, 0)
+		var kp: int = (ki + 1) % n if closed else mini(ki + 1, n - 1)
+		var phi_m: float = asin(clampf(b_tan[km].y, -1.0, 1.0))
+		var phi_p: float = asin(clampf(b_tan[kp].y, -1.0, 1.0))
+		kv[ki] = -(phi_p - phi_m) / (2.0 if closed else float(kp - km))
+	# Fix Pass 8 (Item 1): one [0.25, 0.5, 0.25] smoothing pass
+	# over kv (curvature is what a 3 m wheelbase FEELS - an
+	# average over the contact patches, not a point value),
+	# then the same pass over the stored POINTS and TANGENTS
+	# (the generator's polygon corners otherwise concentrate
+	# each slope change into one view step). Everything
+	# downstream reads the same smoothed arrays through
+	# _frame_at, so the world stays self-consistent.
+	var kv_raw: Array[float] = []
+	kv_raw.assign(kv)
+	for ki2: int in n:
+		var km2: int = (ki2 - 1 + n) % n if closed else maxi(ki2 - 1, 0)
+		var kp2: int = (ki2 + 1) % n if closed else mini(ki2 + 1, n - 1)
+		kv[ki2] = 0.25 * kv_raw[km2] + 0.5 * kv_raw[ki2] + 0.25 * kv_raw[kp2]
+	var pts_raw: Array[Vector3] = []
+	pts_raw.assign(b_pts)
+	var tan_raw: Array[Vector3] = []
+	tan_raw.assign(b_tan)
+	for si: int in n:
+		var sm: int = (si - 1 + n) % n if closed else maxi(si - 1, 0)
+		var sp: int = (si + 1) % n if closed else mini(si + 1, n - 1)
+		b_pts[si] = 0.25 * pts_raw[sm] + 0.5 * pts_raw[si] + 0.25 * pts_raw[sp]
+		b_tan[si] = (0.25 * tan_raw[sm] + 0.5 * tan_raw[si] + 0.25 * tan_raw[sp]).normalized()
+	return {
+		"pts": b_pts, "tan": b_tan, "bank": b_bank, "curv": b_curv,
+		"gap": b_gap, "kv": kv,
+		"len": float(n) if closed else float(n - 1),
+		"closed": closed, "features": features}
+
+
+func _activate_track(d: Dictionary) -> void:
+	# Point the live arrays at one track's data and mirror its
+	# feature spans into the globals the game logic reads
+	# (gap_s0 and friends always describe the ACTIVE track).
+	t_pts = d["pts"]
+	t_tan = d["tan"]
+	t_bank = d["bank"]
+	t_curv = d["curv"]
+	t_gap = d["gap"]
+	t_kv = d["kv"]
+	track_len = float(d["len"])
+	track_closed = bool(d["closed"])
+	var f: Dictionary = d["features"]
+	gap_s0 = float(f["gap_s0"])
+	gap_s1 = float(f["gap_s1"])
+	gap2_s0 = float(f["gap2_s0"])
+	gap2_s1 = float(f["gap2_s1"])
+	ext_s0 = float(f["ext_s0"])
+	sweeper_s0 = float(f["sweeper_s0"])
+	sweeper_s1 = float(f["sweeper_s1"])
+	stairs_s0 = float(f["stairs_s0"])
+	stairs_s1 = float(f["stairs_s1"])
+	lap_count = 0
+	for key: String in track_data:
+		(track_data[key]["root"] as Node3D).visible = key == active_track
+
+
+func _set_track(tname: String) -> void:
+	# Switch the active track and restart the race on it (the
+	# dash's purple button / desktop V). Item 4's spur state
+	# resets here too - a track switch is a full reset.
+	if not track_data.has(tname):
+		return
+	active_track = tname
+	_activate_track(track_data[tname])
+	on_spur = false
+	spur_s = 0.0
+	start_race()
+	_update_panel()
+
+
+func _build_track_meshes(d: Dictionary) -> void:
+	# Meshes for one track, parented to its root (only the
+	# active track's root is visible). Reads _frame_at, so the
+	# track must be ACTIVE when this runs (the builders do).
 	# --- ribbon mesh (box section: dark top + orange skirt sides/bottom,
 	# unshaded edge strips) and stilts, merged ---
 	# Fix Pass 1: the flat grey ribbon washed out against the sky and read
@@ -1014,10 +1296,11 @@ func _build_track() -> void:
 	var skirt_c := Color(1.0, 0.5, 0.05)
 	var bot_c := Color(0.55, 0.27, 0.03)
 	var edge_c := Color(1.0, 0.72, 0.10)
-	for i: int in t_pts.size() - 1:
-		if t_gap[i] or t_gap[i + 1]:
-			continue
+	var seg_n: int = t_pts.size() if bool(d["closed"]) else t_pts.size() - 1
+	for i: int in seg_n:
 		var frame0: Dictionary = _frame_at(float(i))
+		if bool(frame0["gap"]):
+			continue
 		var frame1: Dictionary = _frame_at(float(i + 1))
 		var p0: Vector3 = frame0["pos"]
 		var p1: Vector3 = frame1["pos"]
@@ -1055,12 +1338,14 @@ func _build_track() -> void:
 			var bot := Vector3(p0.x, DESERT_FLOOR_Y, p0.z)
 			_add_box_verts(stilt_pos, stilt_nrm, stilt_col, (top + bot) * 0.5,
 				Vector3(0.55, top.y - bot.y, 0.55), Color(0.42, 0.42, 0.46))
-	_add_mesh(surf_pos, surf_nrm, surf_col, "TrackSurface")
-	_add_mesh(skirt_pos, skirt_nrm, skirt_col, "TrackSkirt")
-	_add_mesh(edge_pos, edge_nrm, edge_col, "TrackEdges", true)
-	_add_mesh(stilt_pos, stilt_nrm, stilt_col, "Stilts")
-	_build_gantry(2.0, Color(0.15, 0.6, 0.2), "START")
-	_build_gantry(track_len - 2.0, Color(0.7, 0.15, 0.15), "FINISH")
+	var troot: Node3D = d["root"]
+	_add_mesh(surf_pos, surf_nrm, surf_col, "TrackSurface", false, troot)
+	_add_mesh(skirt_pos, skirt_nrm, skirt_col, "TrackSkirt", false, troot)
+	_add_mesh(edge_pos, edge_nrm, edge_col, "TrackEdges", true, troot)
+	_add_mesh(stilt_pos, stilt_nrm, stilt_col, "Stilts", false, troot)
+	_build_gantry(2.0, Color(0.15, 0.6, 0.2), "START", troot)
+	if not bool(d["closed"]):
+		_build_gantry(track_len - 2.0, Color(0.7, 0.15, 0.15), "FINISH", troot)
 
 
 func _add_quad(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorArray,
@@ -1095,7 +1380,7 @@ func _add_box_verts(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedCo
 			cc.append(col)
 
 
-func _add_mesh(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorArray, mname: String, unshaded: bool = false) -> void:
+func _add_mesh(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorArray, mname: String, unshaded: bool = false, parent: Node = null) -> void:
 	if pp.is_empty():
 		return
 	var arrays: Array = []
@@ -1114,17 +1399,17 @@ func _add_mesh(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorAr
 	if unshaded:
 		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mi.material_override = m
-	add_child(mi)
+	(parent if parent != null else self).add_child(mi)
 
 
-func _build_gantry(s: float, col: Color, _label: String) -> void:
+func _build_gantry(s: float, col: Color, _label: String, parent: Node = null) -> void:
 	var fr: Dictionary = _frame_at(s)
 	var p: Vector3 = fr["pos"]
 	var sd: Vector3 = fr["side"]
 	var up: Vector3 = fr["up"]
 	var g := Node3D.new()
 	g.name = "Gantry" + _label
-	add_child(g)
+	(parent if parent != null else self).add_child(g)
 	_box(g, Vector3(0.35, 4.6, 0.35), p - sd * (HALF_WIDTH + 0.4) + up * 2.3, _mat(Color(0.2, 0.2, 0.22)))
 	_box(g, Vector3(0.35, 4.6, 0.35), p + sd * (HALF_WIDTH + 0.4) + up * 2.3, _mat(Color(0.2, 0.2, 0.22)))
 	var banner := _box(g, Vector3((HALF_WIDTH + 0.4) * 2.0, 0.7, 0.3), p + up * 4.6, _mat_unshaded(col))
@@ -1133,10 +1418,23 @@ func _build_gantry(s: float, col: Color, _label: String) -> void:
 
 ## Frame (pos/side/up/tan/bank/curv/gap) at path distance s (float).
 func _frame_at(s: float) -> Dictionary:
-	var sf: float = clampf(s, 0.0, track_len)
-	var i0: int = int(floor(sf))
-	var i1: int = mini(i0 + 1, t_pts.size() - 1)
-	var fr: float = sf - float(i0)
+	# Fix Pass 10 (Item 3): on a CLOSED track s wraps and the
+	# neighbour index wraps with it - a frame straddling the
+	# start/finish seam lerps across it like any other join.
+	var sf: float
+	var i0: int
+	var i1: int
+	var fr: float
+	if track_closed:
+		sf = wrapf(s, 0.0, track_len)
+		i0 = int(floor(sf)) % t_pts.size()
+		i1 = (i0 + 1) % t_pts.size()
+		fr = sf - floor(sf)
+	else:
+		sf = clampf(s, 0.0, track_len)
+		i0 = int(floor(sf))
+		i1 = mini(i0 + 1, t_pts.size() - 1)
+		fr = sf - float(i0)
 	# Fix Pass 8 (Item 1): this interpolation stays LINEAR, on
 	# measured evidence. The run-8 steps (stage 9's BEFORE
 	# table: worst 1.57 deg pitch / 0.019 m height, all at
@@ -1224,6 +1522,35 @@ func _heading_right() -> Vector3:
 ## free-heading model - nothing integrates them anymore.
 func _project_to_spine(p: Vector3, hint: float, wide: bool = false) -> Array:
 	var n: int = t_pts.size()
+	if track_closed:
+		# Fix Pass 10 (Item 3): the window wraps the seam -
+		# segments are indexed unwrapped around the hint and
+		# mapped mod n, so a car crossing the line projects
+		# continuously; the returned s is wrapped to [0, len).
+		var rad: int = 280 if wide else 8
+		var centre: int = int(round(hint))
+		var best_iu: int = centre
+		var best_t: float = 0.0
+		var best_d2: float = 1e18
+		for di: int in range(-rad, rad + 1):
+			var iu: int = centre + di
+			var i: int = ((iu % n) + n) % n
+			var a: Vector3 = t_pts[i]
+			var ab: Vector3 = t_pts[(i + 1) % n] - a
+			var l2: float = ab.length_squared()
+			var t: float = 0.0
+			if l2 > 1e-9:
+				t = clampf((p - a).dot(ab) / l2, 0.0, 1.0)
+			var d2: float = p.distance_squared_to(a + ab * t)
+			if d2 < best_d2:
+				best_d2 = d2
+				best_iu = iu
+				best_t = t
+		if not wide and (best_iu == centre - rad or best_iu == centre + rad):
+			return _project_to_spine(p, hint, true)
+		var s_w: float = wrapf(float(best_iu) + best_t, 0.0, track_len)
+		var fr_w: Dictionary = _frame_at(s_w)
+		return [s_w, (p - fr_w["pos"]).dot(fr_w["side"])]
 	var centre: int = clampi(int(round(hint)), 0, n - 2)
 	var rad: int = 280 if wide else 8
 	var i0: int = maxi(0, centre - rad)
@@ -1406,8 +1733,13 @@ func _build_cockpit() -> void:
 		_box(piv, Vector3(0.085, 0.06, 0.085), Vector3(0, 0.19, 0), _mat_unshaded(switch_cols[i]))
 		_register_dash_ctl(piv, "switch%d" % i)
 	# Red RESTART button + green LEAN toggle button (physical dash controls)
+	# Fix Pass 10 (Item 3): restart shifts left (0.48 -> 0.40) to
+	# make room for the purple TRACK button at 0.57 - the pair
+	# sits 0.17 m apart, inside the 0.15 m activation radius of
+	# each other only at their exact midpoints; activation is
+	# nearest-control (Item 0), so the closer button wins.
 	var rst := Node3D.new()
-	rst.position = Vector3(0.48, 0.90, -0.60)
+	rst.position = Vector3(0.40, 0.90, -0.60)
 	car_body.add_child(rst)
 	var rst_mi := MeshInstance3D.new()
 	var rst_m := CylinderMesh.new()
@@ -1431,6 +1763,20 @@ func _build_cockpit() -> void:
 	ln_mi.name = "LeanBtnMesh"
 	lnt.add_child(ln_mi)
 	_register_dash_ctl(lnt, "lean")
+	# Purple TRACK button: ribbon <-> mountain circuit
+	var trk := Node3D.new()
+	trk.position = Vector3(0.57, 0.90, -0.60)
+	car_body.add_child(trk)
+	var trk_mi := MeshInstance3D.new()
+	var trk_m := CylinderMesh.new()
+	trk_m.top_radius = 0.045
+	trk_m.bottom_radius = 0.045
+	trk_m.height = 0.04
+	trk_mi.mesh = trk_m
+	trk_mi.material_override = _mat_unshaded(Color(0.55, 0.2, 0.85))
+	trk_mi.name = "TrackBtnMesh"
+	trk.add_child(trk_mi)
+	_register_dash_ctl(trk, "track")
 	# Lean indicator needle on the dash (experiment feedback)
 	# (rides up with the raised wheel so it stays clear of the rim)
 	lean_needle = _box(car_body, Vector3(0.03, 0.13, 0.02), Vector3(0, 1.155, -0.615), _mat_unshaded(Color(0.2, 0.9, 1.0)))
@@ -1519,8 +1865,12 @@ func _panel_text() -> String:
 	var mode_txt: String = "XR LIVE" if xr_ok else "DESKTOP FALLBACK"
 	var lines: Array[String] = []
 	lines.append("STUNT CAR VR - TEST 1 [%s]" % mode_txt)
-	lines.append("SPD %d  BOOST %d  DENT %d" % [int(round(speed * 3.6)), int(round(boost_meter)), dent_level])
-	lines.append("STATE %s  TD %s" % [_state_name(), last_touchdown])
+	lines.append("SPD %d  BOOST %d  DENT %d  TRK %s" % [int(round(speed * 3.6)), int(round(boost_meter)), dent_level,
+		"CIRCUIT" if active_track == "circuit" else "RIBBON"])
+	if track_closed:
+		lines.append("STATE %s  LAP %d/%d  TD %s" % [_state_name(), mini(lap_count + 1, RACE_LAPS), RACE_LAPS, last_touchdown])
+	else:
+		lines.append("STATE %s  TD %s" % [_state_name(), last_touchdown])
 	lines.append("LEAN EXP %s  GRIP x%.2f" % ["ON" if lean_on else "OFF", grip_mult])
 	lines.append("-- VR CONTROLS --")
 	lines.append("Grab wheel: GRIP near wheel, turn hand")
@@ -1531,13 +1881,13 @@ func _panel_text() -> String:
 	lines.append("Call drone: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
 	lines.append("Dash buttons (GRIP near):")
-	lines.append("red restart, green lean")
+	lines.append("red restart, green lean, purple track")
 	lines.append("Recenter: L stick click, restart: L Y")
 	lines.append("-- DESKTOP --")
 	lines.append("W/S throttle/brake, A/D steer, SHIFT boost")
 	lines.append("SPACE release, 1/2/3 flip FUEL/SPARK/BOOST")
 	lines.append("L lift, T lean, J jitter, Q/E lean body")
-	lines.append("R restart race, C recenter view")
+	lines.append("R restart race, C recenter, V track")
 	# Fix Pass 4: the DIAG block no longer appends here - it renders
 	# on its own board (diag_label) via _update_panel.
 	return "\n".join(lines)
@@ -1795,6 +2145,8 @@ func _input(event: InputEvent) -> void:
 				_call_drone()
 		KEY_T:
 			_toggle_lean()
+		KEY_V:
+			_set_track("ribbon" if active_track == "circuit" else "circuit")
 		KEY_J:
 			_toggle_jitter()
 		KEY_R:
@@ -2073,6 +2425,8 @@ func _activate_dash_ctl(kind: String) -> void:
 		start_race()
 	elif kind == "lean":
 		_toggle_lean()
+	elif kind == "track":
+		_set_track("ribbon" if active_track == "circuit" else "circuit")
 
 
 # ---------------------------------------------------------------- actions
@@ -2098,6 +2452,7 @@ func start_race() -> void:
 	last_touchdown = "-"
 	was_airborne = false
 	race_time = 0.0
+	lap_count = 0
 	finished_time = 0.0
 	race_started = true # Fix Pass 6: audio may start from here on
 	body_sink = 0.0
@@ -2548,6 +2903,7 @@ func _update_drive(delta: float) -> void:
 	# Integrate the world position; height comes from placement.
 	car.global_position += Vector3(vel2.x, 0.0, vel2.y) * delta
 	# Derive (s, lat) from where the car actually is now.
+	var prev_s: float = car_s
 	var pr: Array = _project_to_spine(car.global_position, car_s)
 	car_s = float(pr[0])
 	car_lat = float(pr[1])
@@ -2564,7 +2920,17 @@ func _update_drive(delta: float) -> void:
 	if absf(car_lat) > HALF_WIDTH + EDGE_FALL_OVERSHOOT:
 		_enter_air(false, 0.0)
 		return
-	if car_s >= track_len - 0.5:
+	if track_closed:
+		# Fix Pass 10 (Item 3): on the circuit the gantry is a
+		# LAP LINE - crossing it in DRIVE (wrapped s jumps the
+		# seam) counts a lap; RACE_LAPS laps finish the race.
+		if prev_s > track_len - 60.0 and car_s < 60.0:
+			lap_count += 1
+			if lap_count >= RACE_LAPS:
+				mode = MODE_DONE
+				finished_time = race_time
+				state_label.text = "FINISH!"
+	elif car_s >= track_len - 0.5:
 		mode = MODE_DONE
 		finished_time = race_time
 		state_label.text = "FINISH!"

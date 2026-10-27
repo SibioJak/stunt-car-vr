@@ -226,6 +226,12 @@ func _run() -> void:
 	main.test_mode = true
 	for i: int in 30:
 		await physics_frame
+	# Fix Pass 10 (Item 3): the circuit is the default track;
+	# captures 1-14 were authored on the test ribbon. Select
+	# the ribbon explicitly; the circuit gets captures 15-16.
+	main._set_track("ribbon")
+	for i: int in 10:
+		await physics_frame
 
 	# Panel completeness: every accepted command must be listed.
 	# Fix Pass 4: the text lives on two labels - commands on
@@ -235,7 +241,7 @@ func _run() -> void:
 	main._update_panel()
 	var ptxt: String = main.panel_label.text + "\n" + main.diag_label.text
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call drone",
-			"restart", "lean", "Recenter", "SPACE", "1/2/3", "W/S",
+			"restart", "lean", "track", "Recenter", "SPACE", "1/2/3", "W/S", "V track",
 			"DIAG", "ANCHOR", "CAMH", "FRC", "Jitter", "JIT"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)
 	check(main.wheel_node != null, "grab wheel exists")
@@ -401,7 +407,10 @@ func _run() -> void:
 	cam13.queue_free()
 
 	# Fix Pass 1 proofs: the ribbon must visibly exist.
-	check(main.get_node_or_null("TrackSkirt") != null, "ribbon box-section skirt mesh exists")
+	# (Fix Pass 10: the skirt is a child of the ribbon's own
+	# track root now that two tracks exist.)
+	var rib_root: Node3D = main.track_data["ribbon"]["root"]
+	check(rib_root.get_node_or_null("TrackSkirt") != null, "ribbon box-section skirt mesh exists")
 
 	# Capture 3: long sightline - offset shot from beside the climb,
 	# looking through the banked corner toward the lip: surface, edge
@@ -609,6 +618,35 @@ func _run() -> void:
 	cam14.look_at(p14 + t14v * 26.0 - u14 * 2.0, Vector3.UP)
 	await snap(cam14, "desert_wide_view.png")
 	cam14.queue_free()
+
+	# Capture 15 (Fix Pass 10, Item 3): the driver's view up
+	# the circuit's signature climb - 235 m at 17.5 deg, the
+	# road walling up ahead of the car.
+	main._set_track("circuit")
+	for i: int in 10:
+		await physics_frame
+	var cf15: Dictionary = main.track_data["circuit"]["features"]
+	main.debug_warp_to_s(float(cf15["climb_s0"]) + 25.0)
+	for i: int in 3:
+		await physics_frame
+	await snap(main.fallback_cam, "circuit_climb_view.png")
+
+	# Capture 16: the wide shot - home straight and the
+	# closing hairpin from high off the loop's south side; the
+	# circuit's scale against the same desert.
+	var fr16: Dictionary = main._frame_at(190.0)
+	var p16: Vector3 = fr16["pos"]
+	var s16v: Vector3 = fr16["side"]
+	var u16: Vector3 = fr16["up"]
+	var t16v: Vector3 = fr16["tan"]
+	var cam16 := Camera3D.new()
+	main.add_child(cam16)
+	cam16.position = p16 + s16v * 120.0 + u16 * 70.0 - t16v * 60.0
+	cam16.look_at(p16 + t16v * 40.0, Vector3.UP)
+	await snap(cam16, "circuit_wide_view.png")
+	cam16.queue_free()
+	check(main.track_len > 3000.0,
+		"capture 16: the wide shot is the circuit (%.0f m)" % main.track_len)
 
 	print("---")
 	if failures == 0:

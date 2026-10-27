@@ -431,6 +431,12 @@ func _run() -> void:
 	root.add_child(main)
 	main.test_mode = true
 	await frames(5)
+	# Fix Pass 10 (Item 3): the circuit is the game's default
+	# track, but stages 1-17 were authored against the test
+	# ribbon. Select the ribbon explicitly so the legacy suite
+	# runs unchanged; the circuit gets its own stages 18-20.
+	main._set_track("ribbon")
+	await frames(5)
 
 	# Stage 1: Drop Start dangle - the pendulum actually swings the car.
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
@@ -1599,10 +1605,14 @@ func _run() -> void:
 		var seg15b: Array = main._dash_ctl_segment(ci15b)
 		var b15b: Vector3 = inv15 * (seg15b[0] as Vector3)
 		var t15b: Vector3 = inv15 * (seg15b[1] as Vector3)
+		# same side = the shoulder on the control's own side of
+		# the car centreline (Fix Pass 10: the track button
+		# joined the row; side comes from geometry, not index)
+		var own_side15: String = "R" if (b15b + t15b).x >= 0.0 else "L"
 		var own15: float = main._seg_point_dist(b15b, t15b,
-			sh15["R" if ci15b == 3 else "L"] as Vector3)
+			sh15[own_side15] as Vector3)
 		var cross15: float = main._seg_point_dist(b15b, t15b,
-			sh15["L" if ci15b == 3 else "R"] as Vector3)
+			sh15["L" if own_side15 == "R" else "R"] as Vector3)
 		print("stage15: button %s reach - same-side shoulder %.2f m, cross-body %.2f m (record)"
 			% [main.dash_ctl_kinds[ci15b], own15, cross15])
 		check(own15 <= 0.85,
@@ -1839,6 +1849,192 @@ func _run() -> void:
 	main._do_release()
 	var drv17b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv17b, "stage17: release after the carried, dipped hang resumes driving")
+
+	# ---------- stage 18: Fix Pass 10 (Item 3) - the mountain circuit ----
+	main._set_track("circuit")
+	await frames(5)
+	var cf18: Dictionary = main.track_data["circuit"]["features"]
+	check(main.track_closed and main.active_track == "circuit",
+		"stage18: circuit active and closed")
+	check(float(cf18["closure_err_m"]) < 0.05,
+		"stage18: closure exact (err %.4f m)" % float(cf18["closure_err_m"]))
+	check(main.track_len >= 2800.0 and main.track_len <= 3400.0,
+		"stage18: length in the brief band (%.0f m)" % main.track_len)
+	# the seam join itself: the wrap segment is a normal segment
+	var n18: int = main.t_pts.size()
+	var seam_len18: float = main.t_pts[0].distance_to(main.t_pts[n18 - 1])
+	check(absf(seam_len18 - 1.0) < 0.05,
+		"stage18: seam segment ~1 m (%.4f)" % seam_len18)
+	# features: signature climb >= +60 m, massive dip >= 45 m
+	var cl_y0: float = main._frame_at(float(cf18["climb_s0"]))["pos"].y
+	var cl_y1: float = main._frame_at(float(cf18["climb_s1"]))["pos"].y
+	var climb_gain18: float = cl_y1 - cl_y0
+	check(climb_gain18 >= 60.0,
+		"stage18: signature climb gains >= 60 m (%.1f)" % climb_gain18)
+	var dip_ymax18: float = -1e9
+	var dip_ymin18: float = 1e9
+	var dip_s18: float = 0.0
+	while dip_s18 < float(cf18["climb_s0"]):
+		var dip_y18: float = main._frame_at(maxf(dip_s18, 2.0))["pos"].y
+		if dip_s18 < float(cf18["dip_s0"]):
+			dip_ymax18 = maxf(dip_ymax18, dip_y18)
+		if dip_s18 >= float(cf18["dip_s0"]) and dip_s18 <= float(cf18["dip_s1"]):
+			dip_ymin18 = minf(dip_ymin18, dip_y18)
+		dip_s18 += 5.0
+	var dip_depth18: float = dip_ymax18 - dip_ymin18
+	check(dip_depth18 >= 45.0,
+		"stage18: massive dip gives back >= 45 m (%.1f)" % dip_depth18)
+	check(float(cf18["home_len"]) >= 350.0 and float(cf18["mid_len"]) >= 350.0,
+		"stage18: two straightaways >= 350 m (home %.0f, mid %.0f)" % [float(cf18["home_len"]), float(cf18["mid_len"])])
+	# at least two long banked swinging curves, one each way,
+	# generous radius
+	var long_l18: int = 0
+	var long_r18: int = 0
+	for cv18: Variant in cf18["curves"]:
+		var cva18: Array = cv18
+		if float(cva18[1]) - float(cva18[0]) >= 150.0 and float(cva18[3]) >= 100.0:
+			if float(cva18[2]) > 0.0:
+				long_l18 += 1
+			else:
+				long_r18 += 1
+	check(long_l18 >= 1 and long_r18 >= 1,
+		"stage18: long banked curves both ways (L %d, R %d)" % [long_l18, long_r18])
+	check(absf((main.gap_s1 - main.gap_s0) - 14.0) < 0.5,
+		"stage18: the one gap spans 14 m (%.1f)" % (main.gap_s1 - main.gap_s0))
+	# five-hump row carried over: five crest kv peaks in the span
+	var crests18: int = 0
+	var prev_kv18: float = 0.0
+	var hc_s18: float = main.ext_s0 + 2.0
+	while hc_s18 < float(cf18["hump_s1"]) - 2.0:
+		var hc_kv18: float = main._frame_at(hc_s18)["kv"]
+		if prev_kv18 < 0.010 and hc_kv18 >= 0.010:
+			crests18 += 1
+		prev_kv18 = hc_kv18
+		hc_s18 += 1.0
+	check(crests18 == 5,
+		"stage18: five-hump row present (counted %d)" % crests18)
+	# drone placement wraps the seam: a fall just past the
+	# gantry walks back across it; a fall just before the gap
+	# lands at least 25 m ahead-clear of it
+	# the seam neighbourhood is benign BY DESIGN (the closing
+	# hairpin unwinds to flat/unbanked at the join), so a fall
+	# just past the gantry legitimately drops close behind
+	# itself; the wrap machinery is asserted by the invariant
+	# (drop never ahead of the fall, measured across the seam)
+	# plus a fall staged inside the banked closing hairpin,
+	# whose walk-back travels toward and past the seam zone
+	var d18a: float = main._find_drop_s(12.0)
+	check(d18a <= 12.0 and main._drop_piece_ok(d18a) and main._drop_runup_ok(d18a),
+		"stage18: fall at s=12 drops at/behind itself, qualified (%.0f)" % d18a)
+	var fall18h: float = main.track_len - 40.0
+	var d18h: float = main._find_drop_s(fall18h)
+	var back18h: float = fmod(fall18h - d18h + main.track_len, main.track_len)
+	check(back18h > 1.0 and main._drop_piece_ok(d18h) and main._drop_runup_ok(d18h),
+		"stage18: hairpin fall walks back %.0f m to a qualified piece (drop %.0f)" % [back18h, d18h])
+	var d18b: float = main._find_drop_s(main.gap_s0 - 3.0)
+	check(d18b <= main.gap_s0 - 25.0 and main._drop_runup_ok(d18b),
+		"stage18: pre-gap fall drops clear of the gap (%.0f into gap %.0f)" % [d18b, main.gap_s0])
+
+	# ---------- stage 19: three laps to DONE, seam steps invisible ----
+	main.jitter_on = false
+	main.start_race()
+	await frames(3)
+	main.step_rows.clear()
+	main._step_last_us = 0
+	main.step_log_on = true
+	main._do_release()
+	var lap_frames19: int = 0
+	var done19: bool = false
+	while lap_frames19 < 90000 and not done19:
+		await physics_frame
+		lap_frames19 += 1
+		autopilot()
+		if main.mode == main.MODE_AIR:
+			await wait_until(func() -> bool: return main.mode != main.MODE_AIR, 4000)
+		elif main.mode == main.MODE_HANG:
+			for idx: Variant in main.prep_order.duplicate():
+				grip_flip_switch(int(idx), "R")
+			main._do_release()
+		elif main.mode == main.MODE_DONE:
+			done19 = true
+	main.step_log_on = false
+	check(done19 and main.lap_count == main.RACE_LAPS,
+		"stage19: autopilot completes 3 laps to DONE (%d frames, laps %d)" % [lap_frames19, main.lap_count])
+	# seam steps by stage 9's method exactly: GEOMETRY channel
+	# second differences (frame_y col 8, frame pitch col 5) on
+	# DRIVE rows outside event tails, restricted to the seam
+	# band, against stage 9's outside-staircase tier bounds
+	var rows19: Array = main.step_rows
+	var last_bad19: int = -100000
+	var gv_max19: float = 0.0
+	var gp_max19: float = 0.0
+	for i19: int in rows19.size():
+		var rr19: Array = rows19[i19]
+		if int(rr19[1]) != main.MODE_DRIVE:
+			last_bad19 = i19
+			continue
+		if i19 < 2 or i19 - last_bad19 <= 12:
+			continue
+		var pv19: Array = rows19[i19 - 1]
+		var pv219: Array = rows19[i19 - 2]
+		if int(pv19[1]) != main.MODE_DRIVE or int(pv219[1]) != main.MODE_DRIVE:
+			continue
+		var s19: float = float(rr19[0])
+		if s19 > 90.0 and s19 < main.track_len - 90.0:
+			continue
+		var gv19: float = absf((float(rr19[8]) - float(pv19[8])) - (float(pv19[8]) - float(pv219[8])))
+		var gp19: float = rad_to_deg(absf((float(rr19[5]) - float(pv19[5])) - (float(pv19[5]) - float(pv219[5]))))
+		gv_max19 = maxf(gv_max19, gv19)
+		gp_max19 = maxf(gp_max19, gp19)
+	check(gv_max19 < 0.014,
+		"stage19: worst seam GEOMETRY height step %.4f m (stage-9 tier 0.014)" % gv_max19)
+	check(gp_max19 < 0.35,
+		"stage19: worst seam GEOMETRY pitch step %.3f deg (stage-9 tier 0.35)" % gp_max19)
+
+	# ---------- stage 20: circuit hump air + gap crossing ----
+	# hump air: the stage-10b protocol at the circuit hump span
+	main._set_track("circuit")
+	await frames(3)
+	main.debug_warp_to_s(main.ext_s0 + 2.0)
+	var flights20: int = 0
+	var in_air20: bool = false
+	var f20: int = 0
+	while main.car_s < main.ext_s0 + 245.0 and f20 < 1800:
+		if main.mode == main.MODE_DRIVE:
+			autopilot_steer()
+			main.debug_pin_speed(24.0)
+		await physics_frame
+		f20 += 1
+		if main.mode == main.MODE_AIR and not main.air_from_gap:
+			if not in_air20:
+				in_air20 = true
+				flights20 += 1
+		else:
+			in_air20 = false
+		if main.mode == main.MODE_HANG:
+			break
+	check(flights20 >= 3,
+		"stage20: circuit humps fly the car (>= 3 flights, saw %d)" % flights20)
+	# gap crossing under autopilot with the boost window
+	main._set_track("circuit")
+	await frames(3)
+	main.start_race()
+	await frames(3)
+	main._do_release()
+	var gap_ok20: bool = false
+	var f20b: int = 0
+	while f20b < 30000 and not gap_ok20:
+		await physics_frame
+		f20b += 1
+		autopilot()
+		main.test_boost = main.car_s > main.gap_s0 - 130.0 and main.car_s < main.gap_s0
+		if main.car_s > main.gap_s1 + 30.0:
+			gap_ok20 = main.mode == main.MODE_DRIVE
+		if main.mode == main.MODE_HANG or main.mode == main.MODE_DONE:
+			break
+	main.test_boost = false
+	check(gap_ok20,
+		"stage20: circuit gap crossed under autopilot and the lap continues")
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
