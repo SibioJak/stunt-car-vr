@@ -29,6 +29,10 @@ extends SceneTree
 ## sweeper from trackside (Item 1); the panel keyword sweep gains
 ## the jitter command (Item 2 - the commands board and the DIAG
 ## JIT state must both list it).
+## Fix Pass 8 adds: capture 11 = the car AIRBORNE off a crest-
+## straight hump at cruise, from trackside (Item 2 - the unload
+## is real, not a dip); capture 12 = the staircase from
+## trackside, drops and treads reading as steps (Item 1).
 
 var failures: int = 0
 var checks: int = 0
@@ -508,6 +512,59 @@ func _run() -> void:
 	cam10.look_at(psw + tsw * 8.0, Vector3.UP)
 	await snap(cam10, "sweeper_view.png")
 	cam10.queue_free()
+
+	# Capture 11 (Fix Pass 8, Item 2): the hump unload, staged
+	# exactly as the smoke's stage 10b - warped to the crest
+	# straight, speed pinned at the 24 m/s cruise - and shot
+	# from trackside the moment the car leaves the road. The
+	# camera aims ahead of the separation point because snap's
+	# frames let the car fly on ~2-3 m; the frame is the
+	# evidence the car is OFF the ribbon, not dipping with it.
+	main.debug_warp_to_s(main.ext_s0 + 2.0)
+	var air11: bool = false
+	var t11: int = 0
+	while t11 < 900:
+		main.speed = 24.0
+		await physics_frame
+		t11 += 1
+		if main.mode == main.MODE_AIR and not main.air_from_gap:
+			air11 = true
+			break
+		if main.mode == main.MODE_HANG or main.mode == main.MODE_DONE:
+			break
+	check(air11, "capture 11: car left the road over a hump at cruise (mode=%d)" % main.mode)
+	var fr11: Dictionary = main._frame_at(main.car_s)
+	var p11: Vector3 = fr11["pos"]
+	var s11v: Vector3 = fr11["side"]
+	var u11: Vector3 = fr11["up"]
+	var t11v: Vector3 = fr11["tan"]
+	var cam11 := Camera3D.new()
+	main.add_child(cam11)
+	cam11.position = p11 - t11v * 6.0 + s11v * 9.0 + u11 * 3.5
+	cam11.look_at(p11 + t11v * 7.0 + u11 * 1.0, Vector3.UP)
+	await snap(cam11, "hump_view.png")
+	cam11.queue_free()
+	main.speed = 0.0
+
+	# Capture 12 (Fix Pass 8, Item 1): the staircase from
+	# trackside, mid-flight of drops - the ribbon stepping down
+	# in distinct drops with treads between (the steps must
+	# READ as steps; stage 9 carries the numbers).
+	var st_mid: float = (main.stairs_s0 + main.stairs_s1) * 0.5
+	main.debug_warp_to_s(st_mid)
+	for i12: int in 4:
+		await physics_frame
+	var fr12: Dictionary = main._frame_at(st_mid + 10.0)
+	var p12: Vector3 = fr12["pos"]
+	var s12v: Vector3 = fr12["side"]
+	var u12: Vector3 = fr12["up"]
+	var t12v: Vector3 = fr12["tan"]
+	var cam12 := Camera3D.new()
+	main.add_child(cam12)
+	cam12.position = p12 - t12v * 14.0 + s12v * 10.0 + u12 * 5.0
+	cam12.look_at(p12 + t12v * 6.0, Vector3.UP)
+	await snap(cam12, "stairs_view.png")
+	cam12.queue_free()
 
 	print("---")
 	if failures == 0:

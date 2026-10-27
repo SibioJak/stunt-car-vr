@@ -23,9 +23,11 @@ Drop Start dangle → time the release (touchdown is scored FLAT / OK /
 ROUGH / HARD) → start straight → steep climb → banked left corner →
 launch lip → **the gap** (cross it with speed; boost helps; fall and
 the drone catches you) → descent → and since Fix Pass 7 the ribbon
-keeps going: a rolling crest straight → a banked right sweeper →
-a descending staircase → a **second gap** → a final climb → a long
-home straight → the finish gantry (1,218 m in all).
+keeps going: a crest straight of five true humps (since Fix Pass 8
+they unload the car completely at cruising speed — expect real air,
+~1 s a hump, and no steering while you're up there) → a banked
+right sweeper → a descending staircase → a **second gap** → a final
+climb → a long home straight → the finish gantry (1,163 m in all).
 
 Fall off anywhere, or call the drone yourself: it carries you back over
 the ribbon, you dangle, you may flip the 3-switch prep sequence shown
@@ -382,6 +384,162 @@ and THE jitter question: whether the tremble reads as the
 original's living road surface (tires worrying at a real
 road) or as anything else. A/B it with the right stick
 click, JIT ON vs OFF, on the climb and the crest straight.
+
+## Fix Pass 8 (after headset run 8: "it really frame jumps in
+## certain spots" — with a capture showing JIT OFF throughout, so
+## the jitter mechanism was exonerated — and "I'm not getting any
+## air on the little hills")
+
+- **Frame steps: measured first, then fixed where the data
+  pointed.** A step logger (inert in normal play) recorded a
+  full autopilot lap per physics frame: view height/pitch, the
+  geometry-only frame pitch and road height alongside, and the
+  wall frame time. A step is a SECOND difference — the change
+  of the per-frame delta — since raw deltas are just velocity
+  (0.108 m/frame up the climb is legitimate travel). BEFORE
+  (2,694 DRIVE frames, median frame 13,742 µs, **zero hitch
+  frames** — no top step sits on a long frame; every offender
+  is a place, not a hitch): worst view-height step **0.0191 m
+  at the staircase (s=798)**, then 0.0183 m at the corner exit
+  (s=178), 0.0173/0.0166 m at the sweeper exit (s=749), lip
+  entries at 0.0146/0.0116 m; worst view-pitch step **1.570°
+  at the staircase (s=801)**, with the lip entry (s=871) and
+  staircase joins filling the table. The mechanism: the road
+  is a 1 m-sampled polygon, and at every slope join the
+  frame's vertical velocity and pitch rate SWITCHED in one
+  sample instead of sweeping. A cubic-Hermite frame was tried
+  first and measured WORSE (6.3° at the staircase — the
+  generator's tangents are arriving-step directions, so the
+  cubic overshoots mid-segment on cornered data); it was
+  reverted on that evidence. The shipped fix works on the
+  data the linear frame reads: one `[0.25, 0.5, 0.25]`
+  smoothing pass over the stored points and tangents at build
+  (every join's corner rounds over ~2 samples; deviation at
+  most ~1.5 cm at the sharpest edges, millimetres elsewhere;
+  mesh, placement, suspension and the air line all read the
+  same smoothed arrays, and t_kv is smoothed the same way);
+  the corner-exit bank unwind and both lip entries are
+  rate-shaped (0.03 → 0.075 and 0.012 → 0.034 instead of flat
+  0.10 / 0.030 from the first sample); the staircase's phi
+  increments are uniform (0.077 rad/sample down and back,
+  reaching the full −22° the old cycle never did). AFTER,
+  the asserted GEOMETRY channels (frame pitch; frame_y — the
+  height the sampled road alone gives the car) hold: outside
+  the staircase **0.0127 m / 0.277° worst anywhere on the
+  lap** (the lip joins and the sweeper-exit unwind through
+  the car's lateral offset set the tier); at the staircase
+  0.0289 m / 1.185°, which is the feature's own curvature at
+  speed — six 22° drops the suspension still bottoms on
+  (stage 8 asserts it) — not a sampling snap. The full-view
+  table's top entries after the fix sit at the staircase and
+  at landing/hop ring-down tails on the descent and humps,
+  where the geometry channels at the same s are quiet: the
+  residual view motion rides the spring integrators after
+  genuine events, which is the suspension working, not the
+  road stepping. Stage 2g re-derived honestly under the
+  smoothing: its dead-flat window moved to the start
+  straight's middle (the join rounding means the metres
+  before the climb are no longer mathematically flat);
+  there quantised == smooth still holds exactly (0.0000 m),
+  and the tremble band is unchanged (14.2 / 11.8 mm per axle,
+  6.8 mm avg, 0.9 mm OFF, skid 0.799 vs 0.799).
+- **Real air on the crest straight.** The four gentle rollers
+  (±5°, measured 0.162 m peak compression — they never even
+  unloaded the springs) are replaced by five true humps:
+  13 m climbing in at +11°, 19 m over the top at −11°
+  (κ ≈ 0.021/m), 13 m flattening — ~2.2 m tall over 45 m.
+  The arithmetic: at the stated cruise of 24 m/s, v²κ =
+  576 × 0.021 ≈ **12.1 > g = 9.8**, so over each crest the
+  road falls away faster than gravity pulls the car down
+  and the wheel load clamps to zero at both axles. The lap
+  is 1,163 m now; the full-lap smoke measures 37.0 s.
+- **The rebound-air gate is reworked.** Fix Pass 5's rule —
+  no air without a prior >0.19 m spring compression — is
+  deleted; a compression prerequisite is exactly what a
+  geometry crest never produces. Air is now a LOAD decision:
+  (1) GEOMETRY route: load ≤ 0.03 at both axles sustained
+  3 frames above 8 m/s; (2) REBOUND route: springs at full
+  droop and still extending — but only from a genuinely
+  loaded state (load ≥ 0.8 at the decision). The floor
+  exists because measurement indicted its absence: at the
+  climb-top bend at 34 m/s the load sits at ~0.27 sustained
+  while both springs bleed to full droop chasing the falling
+  road, rear still extending at ~0.57 m/s — droop + velocity
+  alone read that bleed as a bounce and separated the car
+  mid-corner; the load level is what tells a bleed from a
+  bounce (at partial load the road's geometry holds the car;
+  at full load the springs hold it, and their release is a
+  throw). Stage 10 proves both sides: the NEGATIVE CONTROL
+  runs the climb-top bend pinned at 30 m/s — no airborne,
+  minimum load 0.43, partial by mechanism, not by a
+  compression alibi; and the humps at 24 m/s give **5
+  flights, 7.78 s of air total (~1.5 s per hump — separation
+  on the shoulder with upward path velocity makes long
+  arcs), minimum load 0.000**, lateral state frozen across
+  every flight against a hard-over wheel poke (no ground
+  steering authority while airborne), and all five landings
+  grade through the normal production path — ROUGH, dent
+  unchanged at 0. (Air time stated in true seconds: 5.19 s
+  total, ≈1.0 s a hump — an earlier draft of stage 10b
+  divided frames by 60 on a 90 Hz sim; the check now divides
+  by 90.) New captures: `tests/hump_view.png` (the
+  car leaving the road over a hump, trackside) and
+  `tests/stairs_view.png` (the staircase stepping down).
+  No new commands; the API guard grows to 22 (the step
+  logger's `Time.get_ticks_usec`). Frame stats: 140 nodes,
+  65 draw calls, 28,354 primitives.
+- **Item 0 — the dead levers (Chris, mid-pass: "at some
+  point, the lever stopped working").** In run 8 the prep
+  levers worked at the Drop Start and died later in the
+  session, while the wheel — same hands, same grip channels,
+  same `_poll_grab` — kept working. The flip is
+  EDGE-triggered (a fresh grip near a switch) where the
+  wheel is level-triggered, so the hunt targeted state that
+  could stop fresh edges or re-arming. Static audit: prep
+  re-arms via `_prep_new_sequence()` in BOTH `start_race()`
+  and `_begin_recovery()`; `gripping[hand]` is rewritten
+  from the live channels every poll and cannot latch in
+  code; the Fix Pass 7 jitter toggle reads the stick's
+  `primary_click` through its own `_btn_edge` key and shares
+  no state with the grip path, so it cannot eat or gate a
+  flip; this pass's sampling changes never touch the
+  interaction code. Dynamic audit: new smoke stage 11 runs
+  the prep sequence through the PRODUCTION grip path —
+  synthetic hand posed on each switch's grab segment,
+  `_poll_grab`'s edge, `_dash_ctl_near` proximity,
+  `_activate_dash_ctl` — on three successive dangles (Drop
+  Start; drone recovery after a driven fall off the edge;
+  fresh Drop Start after FINISH + restart), with a
+  held-grip probe (six polls at full grip flip exactly
+  once) and a wrong-order reset probe. **All pass: the bug
+  does not reproduce headless, and no fix has been invented
+  for it.** What stage 11 cannot reproduce is a live
+  runtime delivering stuck channel VALUES — a grip channel
+  stuck high from Virtual Desktop would kill every fresh
+  edge (levers dead) while the level-triggered wheel keeps
+  working, which matches the run-8 symptom split exactly;
+  that is a hypothesis, labelled as such. The live
+  diagnostic is already on the panel: the DIAG block prints
+  each hand's raw GRIP / CLICK / FORCE every 0.2 s — if the
+  levers die again, a FORCE or CLICK reading stuck on with
+  the hand open names the channel. Stage 11 stands as the
+  regression guard for the code side. Smoke 88/88, render
+  proofs 69/69.
+
+UNVERIFIED (only headset run 9 proves these): whether the
+"certain spots" frame jumps are gone where you felt them —
+the staircase above all, which should now hammer as
+distinct steps under the wheels without the view snapping;
+whether the hump air feels right at cruise — ~1 s flights,
+steering dead while you're up, ROUGH-grade landings on the
+clean line; whether the prep levers stay alive all session
+(the code side is now guarded by smoke stage 11; if they
+die again, the DIAG block's per-hand GRIP / CLICK / FORCE
+readings are the evidence — note which channel, if any, is
+stuck on with your hand open); and the carried opens from
+run 8: the body-sink (the Star Wars effect) per-surface
+detail, skid usefulness and levels, and the lean tilt at
+×1.25.
 
 ## Quest export — status
 

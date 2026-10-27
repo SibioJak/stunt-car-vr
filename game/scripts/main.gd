@@ -85,6 +85,27 @@ const WHEELBASE: float = 3.0
 # while grounded (DRIVE/AIR) - the hang has its own motion.
 const VIEW_PITCH_GAIN: float = 0.6
 const VIEW_HEAVE_GAIN: float = 0.35
+# Fix Pass 8 (Item 2) - airborne is a LOAD decision (see
+# _update_suspension): the geometry route fires when the crest
+# load factor sits at ~zero at BOTH axles for AIR_SUSTAIN_FRAMES
+# consecutive frames (the road is falling away faster than
+# gravity - no stored-energy history is required or consulted);
+# the rebound route fires when the springs reach full droop
+# still throwing faster than REBOUND_THROW_VEL (stored energy
+# leaving) but only at full supporting load (the load floor
+# below). The climb-top case the old >0.19 m peak-compression
+# gate protected is handled by that floor, not by history:
+# there the load is partial (~0.27) and sustained, never
+# ~zero, so the geometry route cannot fire, and the rebound
+# route is closed because at partial load the road's
+# geometry, not the springs, holds the car (measured: both
+# springs still sag to droop there, the rear extending at
+# ~0.57 m/s - droop + velocity alone cannot tell a bleed
+# from a bounce; the load level can).
+const AIR_LOAD_EPS: float = 0.03 # crest load factor that counts as unloaded
+const AIR_SUSTAIN_FRAMES: int = 3 # frames at ~zero load before separation
+const REBOUND_THROW_VEL: float = -0.6 # cv_f + cv_r (m/s) that counts as a throw
+const REBOUND_LOAD_FLOOR: float = 0.8 # rebound route needs the road fully supporting
 # Fix Pass 5 - lean view-tilt amplification (Chris, run 5: "i'm not
 # really getting a sense of leaning, the view would have to tilt
 # more"). This REVISES the experiment's original "input only, no
@@ -187,6 +208,11 @@ var sweeper_s0: float = 0.0
 var sweeper_s1: float = 0.0
 var gap2_s0: float = 0.0
 var gap2_s1: float = 0.0
+# Fix Pass 8: the staircase's span, for stage 9's two-tier step
+# bounds (the staircase's drops are designed hammerings; the
+# strict continuous bound applies outside them).
+var stairs_s0: float = 0.0
+var stairs_s1: float = 0.0
 
 # --- sim state ---
 var mode: int = MODE_HANG
@@ -246,6 +272,14 @@ var test_throttle: float = 0.0
 var test_brake: float = 0.0
 var test_boost: bool = false
 var test_release_queued: bool = false
+# Fix Pass 8 (Item 0): synthetic hand inputs for the smoke's
+# grip-path stage - an analog grip level per hand and, when
+# test_hand_set, the hand positions _hand_pos reports. Read
+# ONLY under test_mode (never set in the shipped game); the
+# production XR reads are untouched.
+var test_grip: Dictionary = {"L": 0.0, "R": 0.0}
+var test_hand_set: bool = false
+var test_hand_pos: Dictionary = {"L": Vector3.ZERO, "R": Vector3.ZERO}
 
 # Fix Pass 5 suspension state (per-axle spring model; see constants).
 # susp_x/susp_v are gone: compression lives in c_f/c_r now.
@@ -263,7 +297,7 @@ var long_accel_f: float = 0.0 # filtered longitudinal accel, m/s^2
 var prev_speed: float = 0.0
 var bounce_pending: bool = false # suspension asked to go airborne
 var bounce_vy: float = 0.0
-var susp_peak_c: float = SUSP_REST # recent peak avg compression (decays)
+var air_load_frames: int = 0 # consecutive frames at ~zero crest load, both axles
 var wheel_mis: Array[MeshInstance3D] = []
 var wheel_axle: Array[int] = [] # 0 = front, 1 = rear, parallel to wheel_mis
 var view_node: Node3D # seat-stack node carrying suspension view motion
@@ -306,6 +340,21 @@ var body_node_fb: Node3D
 # quiet): gains are cut while it holds, physics resuming clears it.
 var slip_state: float = 0.0
 var race_started: bool = false
+
+# Fix Pass 8 (Item 1) step logger: when step_log_on is set (the
+# smoke's stage 9), every physics frame appends one row AFTER all
+# updates: [s_pos, mode, view_y, view_pitch, frame_us]. view_y is
+# the camera-height proxy - the car's world height plus the seat
+# stack's vertical offsets (ViewSpring heave minus body sink), the
+# quantity the driver's eye actually rides; view_pitch is the
+# car's world pitch plus the view/body spring pitch offsets.
+# frame_us is the wall time since the previous physics frame -
+# it separates a step that correlates with a long frame (a hitch)
+# from a step that repeats at a place (a mechanism). Inert unless
+# enabled: no behaviour reads it.
+var step_log_on: bool = false
+var step_rows: Array = []
+var _step_last_us: int = 0
 var audio_latched: bool = false
 var audio_stalled: bool = false
 var audio_last_physics_ms: int = 0
@@ -594,10 +643,24 @@ func _build_track() -> void:
 	# STRAIGHT - measured 27 deg of bank at s=185, on the "flat run" -
 	# so the car presented rolled on straights with no cornering
 	# input, and the gap was crossed on a banked frame. The post-
-	# corner walks converge bank at 0.10 rad/sample instead: the
-	# track is truly flat ~6 m past the corner exit.
-	_walk(20, 0.0, 0.0, 0.0, false, 0.006, 0.10) # flat run to the lip
-	_walk(10, 0.0, deg_to_rad(10.0), 0.0, false, 0.030, 0.10) # launch lip
+	# corner walks converge bank fast instead (0.10 rad/sample in
+	# Fix Pass 3; Fix Pass 8 shapes it 0.03 -> 0.075, flat ~10
+	# samples past the corner exit - see below).
+	# Fix Pass 8 (Item 1): the bank unwind is SHAPED - 3 samples
+	# at 0.03, then 0.075 - instead of a flat 0.10 from the first
+	# sample. The flat 0.10 was the generator's fastest rate,
+	# and its start/stop rate steps were the worst view-height
+	# steps in the run-8 measurement (s~178: the car's lateral
+	# offset rides the banked frame's side vector as it swings).
+	# The unwind still completes in ~10 samples, so the frame
+	# is flat well before the s=195 check and the lip.
+	_walk(3, 0.0, 0.0, 0.0, false, 0.006, 0.03) # flat run: bank unwind, gentle first
+	_walk(17, 0.0, 0.0, 0.0, false, 0.006, 0.075) # flat run to the lip: unwind completes
+	# Fix Pass 8: the lip's phi entry is shaped the same way
+	# (2 samples at 0.012, then 0.034) - its rate step was a
+	# top-10 height step in the BEFORE table.
+	_walk(2, 0.0, deg_to_rad(10.0), 0.0, false, 0.012, 0.10) # launch lip, shaped entry
+	_walk(8, 0.0, deg_to_rad(10.0), 0.0, false, 0.034, 0.10) # launch lip
 	gap_s0 = float(t_pts.size())
 	_walk(14, 0.0, deg_to_rad(2.0), 0.0, true, 0.020) # THE GAP - no ribbon
 	gap_s1 = float(t_pts.size())
@@ -615,19 +678,54 @@ func _build_track() -> void:
 	# straight to the new finish (the gantry below derives from
 	# track_len, so it follows on its own).
 	ext_s0 = float(t_pts.size() - 1)
-	for crest: int in 4: # crest straight: up-wave, down-wave, x4
-		_walk(35, 0.0, deg_to_rad(5.0), 0.0, false)
-		_walk(35, 0.0, deg_to_rad(-5.0), 0.0, false)
-	_walk(20, 0.0, 0.0, 0.0, false) # settle flat out of the waves
+	# Fix Pass 8 (Item 2): the crest straight's gentle rollers
+	# (Fix Pass 7: 4 x +-5 deg over 70 m, kv ~0.006) compressed
+	# the springs - 0.162 m peak - but NEVER unloaded them: at
+	# 24 m/s the load factor only fell to ~0.65, and Chris got
+	# no air on the little hills. They are now TRUE HUMPS,
+	# shaped by the unload arithmetic. A hump is three walks:
+	# climb in at +11 deg (phi rate 0.016/m - the concave-up
+	# entry LOADS the springs, the valley before the crest),
+	# over the top sweeping phi +11 -> -11 deg at 0.021 rad/m,
+	# then flatten at 0.016/m. Over the top the road's vertical
+	# curvature kv ~ +0.021/m, so at the stage's stated cruise
+	# of 24 m/s: v^2 * kv = 576 * 0.021 = 12.1 > g = 9.8 -
+	# the surface falls away faster than the car's ballistic
+	# path and the crest load factor clamps to zero at both
+	# axles for ~0.5 s: geometry-driven air, Crammond's Hump
+	# Back energy. Each hump stands ~2.2 m over a 45 m
+	# wavelength; five of them, then the settle flat.
+	for hump: int in 5: # true humps: climb in, over the top, flatten
+		_walk(13, 0.0, deg_to_rad(11.0), 0.0, false, 0.016) # climb in (loads the springs)
+		_walk(19, 0.0, deg_to_rad(-11.0), 0.0, false, 0.021) # over the top (kv ~0.021: unloads)
+		_walk(13, 0.0, 0.0, 0.0, false, 0.016) # flatten out (the landing side)
+	_walk(20, 0.0, 0.0, 0.0, false) # settle flat out of the humps
 	sweeper_s0 = float(t_pts.size())
 	_walk(47, -deg_to_rad(90.0) / 47.0, 0.0, deg_to_rad(-34.0), false) # banked sweeper, mirrored
 	sweeper_s1 = float(t_pts.size())
-	_walk(20, 0.0, 0.0, 0.0, false, 0.006, 0.10) # flatten out (fast bank convergence, as post-corner)
+	_walk(3, 0.0, 0.0, 0.0, false, 0.006, 0.03) # flatten out: shaped bank unwind, as post-corner
+	_walk(17, 0.0, 0.0, 0.0, false, 0.006, 0.075) # flatten out: unwind completes
+	# Fix Pass 8 (Item 1): the staircase keeps UNIFORM phi
+	# increments - 0.077 rad/sample down and back, the same
+	# rate at every join of the cycle - instead of the original
+	# instant switch between 0 and 0.06 at the cycle edges
+	# (rate steps were part of the run-8 step family; measured
+	# in stage 9's BEFORE table). Uniform increments mean the
+	# only rate changes are the four level joins per cycle, all
+	# the same size, and the build-time profile smoothing below
+	# spreads each over ~2 samples. Phi reaches the full -22
+	# deg (the old 0.06-rate cycle only reached -17 deg in its
+	# 5 samples), each cycle drops ~1.9 m, and the suspension
+	# still bottoms on every drop (stage 8 asserts it): the
+	# staircase still reads as steps.
+	stairs_s0 = float(t_pts.size() - 1)
 	for step_i: int in 6: # descending staircase: drop, tread, drop...
-		_walk(5, 0.0, deg_to_rad(-22.0), 0.0, false, 0.060)
-		_walk(6, 0.0, 0.0, 0.0, false, 0.060)
+		_walk(5, 0.0, deg_to_rad(-22.0), 0.0, false, 0.077)
+		_walk(6, 0.0, 0.0, 0.0, false, 0.077)
+	stairs_s1 = float(t_pts.size() - 1)
 	_walk(30, 0.0, 0.0, 0.0, false, 0.020) # flat run to the second lip
-	_walk(10, 0.0, deg_to_rad(10.0), 0.0, false, 0.030, 0.10) # second launch lip
+	_walk(2, 0.0, deg_to_rad(10.0), 0.0, false, 0.012, 0.10) # second launch lip, shaped entry
+	_walk(8, 0.0, deg_to_rad(10.0), 0.0, false, 0.034, 0.10) # second launch lip
 	gap2_s0 = float(t_pts.size())
 	_walk(14, 0.0, deg_to_rad(2.0), 0.0, true, 0.020) # THE SECOND GAP - same 14 m spec
 	gap2_s1 = float(t_pts.size())
@@ -645,6 +743,45 @@ func _build_track() -> void:
 		var phi_m: float = asin(clampf(t_tan[km].y, -1.0, 1.0))
 		var phi_p: float = asin(clampf(t_tan[kp].y, -1.0, 1.0))
 		t_kv.append(-(phi_p - phi_m) / float(kp - km))
+	# Fix Pass 8 (Item 1): curvature is what a 3 m wheelbase FEELS
+	# - an average over the contact patches, not a point value -
+	# so the stored profile gets one [0.25, 0.5, 0.25] smoothing
+	# pass. The raw per-sample kv stepped the suspension's crest
+	# load factor at every sample join (part of the run-8 step
+	# family); a plateau (the humps' fall-away, the climb-top
+	# bend) is several samples long and survives the pass intact.
+	var kv_raw: Array[float] = []
+	kv_raw.assign(t_kv)
+	for ki2: int in t_kv.size():
+		var km2: int = maxi(ki2 - 1, 0)
+		var kp2: int = mini(ki2 + 1, t_kv.size() - 1)
+		t_kv[ki2] = 0.25 * kv_raw[km2] + 0.5 * kv_raw[ki2] + 0.25 * kv_raw[kp2]
+	# Fix Pass 8 (Item 1): the same [0.25, 0.5, 0.25] pass over
+	# the stored POINTS and TANGENTS. The generator's profile is
+	# a polygon - slope corners at every sample - and a frame
+	# straddling a corner concentrates the slope change into one
+	# view step (the run-8 jumps: measured worst 0.019 m /
+	# 1.57 deg, all at joins). One smoothing pass rounds every
+	# corner over ~2 samples: a join's step spreads across
+	# neighbouring frames instead of snapping in one. The
+	# deviation is small and honest - at most ~1.5 cm at the
+	# sharpest corners (the staircase edges), millimetres on
+	# the gentle profile - and everything downstream (mesh,
+	# placement, suspension, the air line) reads the same
+	# smoothed arrays through _frame_at, so the world stays
+	# self-consistent. The quantised jitter surface (_elev_smooth
+	# / _elev_quantised) reads the smoothed profile too and
+	# re-facets it at 5 m / 0.05 m, so the Crammond tremble is
+	# unchanged in kind (stage 2g re-measures its band).
+	var pts_raw: Array[Vector3] = []
+	pts_raw.assign(t_pts)
+	var tan_raw: Array[Vector3] = []
+	tan_raw.assign(t_tan)
+	for si: int in t_pts.size():
+		var sm: int = maxi(si - 1, 0)
+		var sp: int = mini(si + 1, t_pts.size() - 1)
+		t_pts[si] = 0.25 * pts_raw[sm] + 0.5 * pts_raw[si] + 0.25 * pts_raw[sp]
+		t_tan[si] = (0.25 * tan_raw[sm] + 0.5 * tan_raw[si] + 0.25 * tan_raw[sp]).normalized()
 
 	# --- ribbon mesh (box section: dark top + orange skirt sides/bottom,
 	# unshaded edge strips) and stilts, merged ---
@@ -791,6 +928,24 @@ func _frame_at(s: float) -> Dictionary:
 	var i0: int = int(floor(sf))
 	var i1: int = mini(i0 + 1, t_pts.size() - 1)
 	var fr: float = sf - float(i0)
+	# Fix Pass 8 (Item 1): this interpolation stays LINEAR, on
+	# measured evidence. The run-8 steps (stage 9's BEFORE
+	# table: worst 1.57 deg pitch / 0.019 m height, all at
+	# profile joins, none on a long frame) indicted the joins
+	# themselves, and a cubic-Hermite frame was tried first in
+	# this pass: it measured WORSE (6.3 deg at the staircase) -
+	# the generator's stored tangents are the ARRIVING step
+	# directions, so on the staircase's cornered profile the
+	# Hermite tangent overshoots past both endpoint tangents
+	# mid-segment and oscillates at the sample frequency. The
+	# fix that measured better lives in the data this lerp
+	# reads: the stored points/tangents get one [0.25, 0.5,
+	# 0.25] smoothing pass at build (see _build_track), the
+	# staircase's phi increments are uniform, the corner-exit
+	# bank unwind and the lip phi entries are rate-shaped, and
+	# t_kv is smoothed the same way - so the rates this lerp
+	# produces sweep over ~2-3 samples instead of switching
+	# in one.
 	var pos: Vector3 = t_pts[i0].lerp(t_pts[i1], fr)
 	var tanv: Vector3 = t_tan[i0].lerp(t_tan[i1], fr).normalized()
 	var bank: float = lerpf(t_bank[i0], t_bank[i1], fr)
@@ -1235,6 +1390,12 @@ func _btn_edge(key: String, now: bool) -> bool:
 
 
 func _hand_pos(hand: String) -> Vector3:
+	# Fix Pass 8 (Item 0): under test_mode the smoke may pose
+	# the hands synthetically (see test_hand_pos) so the
+	# production grip path - edge detection, segment proximity,
+	# activation - runs headless. Inert in the shipped game.
+	if test_mode and test_hand_set:
+		return test_hand_pos[hand]
 	var c: XRController3D = hand_ctrl[hand]
 	return c.global_position
 
@@ -1478,6 +1639,17 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	var grip_v: float = _input_float(ctrl, &"grip")
 	var grip_click: bool = _input_bool(ctrl, &"grip_click")
 	var grip_force: float = _input_float(ctrl, &"grip_force")
+	# Fix Pass 8 (Item 0): test_mode substitutes the synthetic
+	# grip level for the controller's channels, so the edge /
+	# proximity / activation logic below is the production code
+	# running on posed inputs. The XR reads above are what the
+	# headset path uses; they are API-guarded and were
+	# live-verified in runs 4-8 - what no headless run can
+	# reproduce is a runtime delivering stuck channel VALUES.
+	if test_mode:
+		grip_v = float(test_grip[hand])
+		grip_click = false
+		grip_force = 0.0
 	diag_grip[hand] = grip_v
 	diag_click[hand] = grip_click
 	diag_force[hand] = grip_force
@@ -1613,7 +1785,7 @@ func _reset_suspension() -> void:
 	prev_speed = 0.0
 	bounce_pending = false
 	bounce_vy = 0.0
-	susp_peak_c = SUSP_REST
+	air_load_frames = 0
 
 
 func _reset_dangle_feel() -> void:
@@ -1800,6 +1972,8 @@ func _physics_process(delta: float) -> void:
 	_refresh_car_visuals()
 	_update_audio(delta)
 	_update_drone_visual(delta)
+	if step_log_on:
+		_step_log_row()
 
 
 func _process(_delta: float) -> void:
@@ -2187,29 +2361,53 @@ func _update_suspension(delta: float) -> void:
 		var target_f: float = clampf((SUSP_REST + geom_f) * load_f - transfer, 0.0, SUSP_TRAVEL)
 		var target_r: float = clampf((SUSP_REST + geom_r) * load_r + transfer, 0.0, SUSP_TRAVEL)
 		_susp_integrate(target_f, target_r, delta)
-		susp_peak_c = maxf((c_f + c_r) * 0.5, susp_peak_c - 0.10 * delta)
-		# Rebound air, two honest routes in:
-		# (1) REBOUND: a real hit recently drove the springs deep
-		# (peak gate) and they have now thrown back to full droop
-		# still extending fast - stored spring energy leaves the
-		# road. The peak gate is what separates this from a crest
-		# the springs merely bleed down over: at the climb-top
-		# crest (load ~0.27 sustained) compressions sag to ~0 too,
-		# but from ~rest, with no stored energy - the wheels stay
-		# planted, as they should at 27% weight.
-		# (2) CREST: the unload factor is ~zero at both axles - the
-		# road is falling away faster than gravity can follow.
-		if susp_peak_c > 0.19 and (c_f + c_r) * 0.5 <= 0.010 and cv_f + cv_r < -0.6:
-			bounce_pending = true
-			bounce_vy = clampf(-(cv_f + cv_r) * 0.55, 0.5, 2.6)
-		elif load_f <= 0.03 and load_r <= 0.03 and speed > 8.0:
+		# Fix Pass 8 (Item 2): leaving the road is a LOAD decision,
+		# the same rule for both honest ways it happens - this
+		# REPLACES Fix Pass 5's peak-compression history gate,
+		# which demanded stored energy that geometry-driven
+		# unloading never has (the crest straight compressed -
+		# 0.162 m peak, stage 8 - but never unloaded, because its
+		# gentle rollers never drove the load to ~zero AND the
+		# rebound route was gated on a deep hit first).
+		# (1) GEOMETRY: the crest load factor is ~zero at BOTH
+		# axles, sustained - the surface falls away faster than
+		# gravity can pull the car after it (v^2*kv > g). No
+		# history: load level + duration are the whole rule.
+		# (2) REBOUND: the springs reach full droop still throwing
+		# fast - stored energy leaving - but ONLY while the road
+		# is fully supporting the car (load >= REBOUND_LOAD_FLOOR
+		# at both axles). That load floor is the discriminator
+		# against the climb-top bleed, and it is a mechanism, not
+		# a history: measured on the bleed (34 m/s, stage-3
+		# protocol) the load sits at 0.27 sustained while BOTH
+		# springs sag to full droop, the rear still extending at
+		# ~0.57 m/s as it chases its falling target - droop +
+		# throw velocity alone cannot tell a bleed from a bounce.
+		# What differs is who holds the car: at partial load the
+		# road's geometry holds it (and only route (1), load
+		# ~zero, can release it); at full load the springs hold
+		# it, and their release is a genuine throw. A landing
+		# rebound happens on flat/supporting road (load ~1), so
+		# it keeps its air. Smoke stage 10a is the negative
+		# control; stage 3 is the regression that found this.
+		if load_f <= AIR_LOAD_EPS and load_r <= AIR_LOAD_EPS and speed > 8.0:
+			air_load_frames += 1
+		else:
+			air_load_frames = 0
+		if air_load_frames >= AIR_SUSTAIN_FRAMES:
 			bounce_pending = true
 			bounce_vy = 0.35
+			air_load_frames = 0
+		elif (c_f + c_r) * 0.5 <= 0.005 and cv_f + cv_r < REBOUND_THROW_VEL \
+				and load_f >= REBOUND_LOAD_FLOOR and load_r >= REBOUND_LOAD_FLOOR:
+			bounce_pending = true
+			bounce_vy = clampf(-(cv_f + cv_r) * 0.55, 0.5, 2.6)
 	elif mode == MODE_DONE:
 		geom_f = 0.0
 		geom_r = 0.0
 		load_f = 1.0
 		load_r = 1.0
+		air_load_frames = 0
 		_susp_integrate(SUSP_REST, SUSP_REST, delta)
 	else:
 		# AIR / HANG: no road contact - springs extend to full droop
@@ -2218,6 +2416,7 @@ func _update_suspension(delta: float) -> void:
 		geom_r = 0.0
 		load_f = 1.0
 		load_r = 1.0
+		air_load_frames = 0
 		_susp_integrate(0.0, 0.0, delta)
 
 
@@ -2546,6 +2745,58 @@ func _update_drone_visual(_delta: float) -> void:
 
 
 # --- debug/test helpers (smoke + render scripts) ---
+
+func _view_pitch_now() -> float:
+	# The pitch the driver's eye inherits: the car's world pitch
+	# (from its forward axis) plus the seat stack's pitch offsets
+	# (ViewSpring's suspension pitch + the body spring's pitch).
+	var fwd: Vector3 = -car.global_transform.basis.z
+	var p: float = asin(clampf(fwd.y, -1.0, 1.0))
+	if view_node != null:
+		p += view_node.rotation.x
+	if body_node != null:
+		p += body_node.rotation.x
+	return p
+
+
+func _step_log_row() -> void:
+	# Fix Pass 8 (Item 1): one instrumented-lap row per physics
+	# frame (see the step_log_on declaration). s is the car's
+	# path position in whatever mode is live.
+	var now_us: int = Time.get_ticks_usec()
+	var frame_us: int = 0
+	if _step_last_us > 0:
+		frame_us = now_us - _step_last_us
+	_step_last_us = now_us
+	var s_pos: float = car_s
+	if mode == MODE_AIR:
+		s_pos = air_s_est
+	elif mode == MODE_HANG:
+		s_pos = drop_target_s
+	var vy_off: float = 0.0
+	if view_node != null:
+		vy_off = view_node.position.y
+	# Columns: s, mode, view_y, view_pitch, frame_us, then the
+	# pitch decomposition (frame pitch from the car's forward
+	# axis; the suspension's pitch_extra), the mean spring
+	# compression, and frame_y - the height the ROAD GEOMETRY
+	# alone places the car at (frame position + lateral/bank
+	# terms + clearance, without the spring heave) - so a step
+	# in the table can be attributed to the sampled geometry,
+	# the springs, or the seat stack by name. The springs and
+	# the seat stack are integrators (continuous except at the
+	# genuine events: _land's impulse, bottoming); the sampled
+	# geometry is where steps can hide.
+	var fwd2: Vector3 = -car.global_transform.basis.z
+	var fr_l: Dictionary = _frame_at(s_pos)
+	var frame_y: float = float(fr_l["pos"].y) \
+		+ float(fr_l["side"].y) * car_lat + float(fr_l["up"].y) * CLEARANCE
+	step_rows.append([s_pos, float(mode),
+		car.global_position.y + vy_off - body_sink,
+		_view_pitch_now(), float(frame_us),
+		asin(clampf(fwd2.y, -1.0, 1.0)), pitch_extra,
+		(c_f + c_r) * 0.5, frame_y])
+
 
 func debug_warp_to_s(s: float) -> void:
 	car_s = clampf(s, 0.0, track_len - 2.0)

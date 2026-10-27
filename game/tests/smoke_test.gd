@@ -19,6 +19,14 @@ extends SceneTree
 ## skid slip identical ON vs OFF, toggle + DIAG); 8 = the FULL
 ## extended lap driven end to end (crest straight, mirrored
 ## sweeper, staircase, second gap, finish) with its measured time.
+## Fix Pass 8 stages: 9 = the INSTRUMENTED lap (per-frame view
+## heave/pitch + frame time logged by main.gd; steps ranked as
+## second differences outside genuine events, JIT OFF - the
+## frame-step fix's before/after table lives here); 10 = crest
+## air on the reshaped humps at 24 m/s (load ~zero from
+## geometry, no steering authority airborne, graded landings)
+## + 10a, the climb-top negative control for the load-based
+## airborne rule that replaced the peak-compression gate.
 ## NOT covered here (XR layer, reported UNVERIFIED, never passed
 ## silently): grab-wheel hand tracking, switch flipping by hand
 ## proximity, HMD lean reading, panel legibility in the headset.
@@ -72,6 +80,7 @@ func check_api_surface() -> void:
 		["AudioStreamPlayer", "play"], # Fix Pass 6: engine_player.play() / skid_player.play()
 		["AudioStreamPlayer", "stop"], # Fix Pass 6: the teardown latch stops both players
 		["Time", "get_ticks_msec"], # Fix Pass 6: audio stall-watchdog heartbeat
+		["Time", "get_ticks_usec"], # Fix Pass 8: the step logger's frame-time column
 	]
 	for entry: Variant in methods:
 		var pair: Array = entry
@@ -124,6 +133,32 @@ func autopilot() -> void:
 	if s > main.sweeper_s0 - 3.0 and s < main.sweeper_s1 + 5.0:
 		steer_frac = clampf(0.45 - lat * 0.25, -0.85, 0.85)
 	main.wheel_angle = steer_frac * PI
+
+
+func grip_flip_switch(switch_idx: int, hand: String = "R") -> void:
+	# Fix Pass 8 (Item 0): flip a prep switch through the
+	# PRODUCTION grip path - the synthetic hand is posed on the
+	# switch's grab segment (production geometry via
+	# _dash_ctl_segment), proximity is resolved by
+	# _dash_ctl_near, and the flip must come from _poll_grab's
+	# fresh-grip edge into _activate_dash_ctl -> _flip_switch.
+	# Nothing here calls _flip_switch directly. The poll calls
+	# are synchronous (no physics frames between posing and
+	# polling), so the swinging car cannot move the segment
+	# mid-flip.
+	var ctl: int = main.dash_ctl_kinds.find("switch%d" % switch_idx)
+	var seg: Array[Vector3] = main._dash_ctl_segment(ctl)
+	main.test_hand_pos[hand] = (seg[0] + seg[1]) * 0.5
+	main.test_hand_set = true
+	# released for two polls (a clean not-gripping state), one
+	# gripped poll (the edge), released again
+	main.test_grip[hand] = 0.0
+	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
+	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
+	main.test_grip[hand] = 1.0
+	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
+	main.test_grip[hand] = 0.0
+	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
 
 
 func hf_p2p(series: Array) -> float:
@@ -479,7 +514,14 @@ func _run() -> void:
 	var q_flat: float = 0.0
 	var q_climb: float = 0.0
 	for iq: int in 201:
-		var sq1: float = float(iq) * 0.25
+		# Fix Pass 8: the flat window is the start straight's
+		# MIDDLE (s 5..40). FP8's build-time profile smoothing
+		# rounds the straight->climb join over ~2 samples, so
+		# the last metres before the climb are no longer
+		# mathematically flat (by design); the property asserted
+		# here - quantisation is silent on a flat road - is
+		# measured where the road is flat.
+		var sq1: float = 5.0 + float(iq) * 0.175
 		q_flat = maxf(q_flat, absf(main._elev_quantised(sq1) - main._elev_smooth(sq1)))
 		var sq2: float = 60.0 + float(iq) * 0.25
 		q_climb = maxf(q_climb, absf(main._elev_quantised(sq2) - main._elev_smooth(sq2)))
@@ -699,8 +741,389 @@ func _run() -> void:
 		"stage8: staircase hammers the suspension (peak avg compression %.3f m)" % stairs_work)
 	print("stage8: measured full-lap time %.1f s (game clock) over %.0f m of ribbon" % [main.finished_time, main.track_len])
 
+	# Stage 9 (Fix Pass 8, Item 1): the INSTRUMENTED lap. A full
+	# lap driven with the step logger on and JIT OFF (Chris's
+	# run-8 condition - his capture shows JIT OFF throughout, so
+	# the jitter mechanism is exonerated and the measurement runs
+	# in his condition). main.gd logs per physics frame: s, mode,
+	# the view height/pitch the eye rides, and the wall frame
+	# time. Analysis: per-frame steps on consecutive DRIVE
+	# frames, excluding genuine events (any non-DRIVE frame and
+	# the 12 frames after re-entering DRIVE - landings, the
+	# rebound hop's touchdown, the release). The full-view
+	# top-10 tables print for the record; the checks assert the
+	# GEOMETRY channels (frame pitch + frame_y, logged alongside),
+	# which isolate the sampled road from the spring integrators.
+	main.jitter_on = false
+	main.start_race()
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	main.step_rows.clear()
+	main._step_last_us = 0
+	main.step_log_on = true
+	await frames(4)
+	main._do_release()
+	var rel9: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(rel9, "stage9: Drop Start release lands into DRIVE for the instrumented lap")
+	main.test_throttle = 0.9
+	var topped9: bool = false
+	var t9: int = 0
+	var lap9_done: bool = false
+	while t9 < 20000:
+		autopilot()
+		main.test_boost = (main.car_s > 185.0 and main.car_s < main.gap_s0) \
+			or (main.car_s > main.gap2_s0 - 25.0 and main.car_s < main.gap2_s0)
+		if not topped9 and main.car_s > main.gap2_s0 - 80.0:
+			main.boost_meter = 60.0
+			topped9 = true
+		await physics_frame
+		t9 += 1
+		if main.mode == main.MODE_DONE:
+			lap9_done = true
+			break
+		if main.mode == main.MODE_HANG:
+			break
+	main.test_throttle = 0.0
+	main.test_boost = false
+	main.step_log_on = false
+	check(lap9_done, "stage9: instrumented lap completed (mode=%d)" % main.mode)
+	var rows9: Array = main.step_rows
+	# median DRIVE-frame wall time (the hitch yardstick)
+	var fus: Array = []
+	for r9: Array in rows9:
+		if int(r9[1]) == main.MODE_DRIVE and float(r9[4]) > 0.0:
+			fus.append(float(r9[4]))
+	fus.sort()
+	var med_us: float = float(fus[fus.size() / 2]) if fus.size() > 0 else 0.0
+	# A STEP is a discontinuity: the per-frame delta CHANGES
+	# abruptly. Raw deltas are just velocity (on the 16 deg climb
+	# the view legitimately rises ~0.11 m/frame), so the tables
+	# rank the SECOND differences - |d(dy)| and |d(dpitch)| -
+	# which are ~0 in smooth motion however fast, and spike
+	# exactly where the trajectory kinks.
+	var last_bad: int = -100000 # last row index that was not plain DRIVE
+	var dv_list: Array = []
+	var dp_list: Array = []
+	# The GEOMETRY channels (frame pitch, column 5; frame_y,
+	# column 8 - the height the sampled road alone places the
+	# car at). The view channels ride the spring/body
+	# integrators, which are continuous except at genuine
+	# events, so steps in the geometry channels outside events
+	# are sampling/join mechanisms by elimination - the thing
+	# item 1 exists to remove. These are the ASSERTED numbers;
+	# the full-view tables print for the record (their tops are
+	# expected to be event tails: hump-flight landing ring-down,
+	# staircase bottoming).
+	var gv_list: Array = []
+	var gp_list: Array = []
+	var raw_dy_max: float = 0.0
+	var hitch_frames: int = 0
+	for i9: int in rows9.size():
+		var rr: Array = rows9[i9]
+		if int(rr[1]) != main.MODE_DRIVE:
+			last_bad = i9
+			continue
+		if float(rr[4]) > med_us * 2.0 + 3000.0:
+			hitch_frames += 1
+		if i9 < 2 or i9 - last_bad <= 12:
+			continue
+		var pv: Array = rows9[i9 - 1]
+		var pv2: Array = rows9[i9 - 2]
+		if int(pv[1]) != main.MODE_DRIVE or int(pv2[1]) != main.MODE_DRIVE:
+			continue
+		raw_dy_max = maxf(raw_dy_max, absf(float(rr[2]) - float(pv[2])))
+		var dv9: float = absf((float(rr[2]) - float(pv[2])) - (float(pv[2]) - float(pv2[2])))
+		var dp9: float = rad_to_deg(absf((float(rr[3]) - float(pv[3])) - (float(pv[3]) - float(pv2[3]))))
+		dv_list.append([dv9, float(rr[0]), float(rr[4])])
+		dp_list.append([dp9, float(rr[0]), float(rr[4])])
+		var gv9: float = absf((float(rr[8]) - float(pv[8])) - (float(pv[8]) - float(pv2[8])))
+		var gp9: float = rad_to_deg(absf((float(rr[5]) - float(pv[5])) - (float(pv[5]) - float(pv2[5]))))
+		gv_list.append([gv9, float(rr[0]), float(rr[4])])
+		gp_list.append([gp9, float(rr[0]), float(rr[4])])
+	dv_list.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) > float(b[0]))
+	dp_list.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) > float(b[0]))
+	gv_list.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) > float(b[0]))
+	gp_list.sort_custom(func(a: Array, b: Array) -> bool: return float(a[0]) > float(b[0]))
+	print("stage9: %d DRIVE frames analysed, median frame %.0f us, %d hitch frames (>2x median + 3 ms), raw |dy| max %.3f m/frame (velocity, not steps)"
+		% [dv_list.size(), med_us, hitch_frames, raw_dy_max])
+	print("stage9: TOP-10 view-height STEPS outside events (|d(dy)| m | s | frame us):")
+	for e9: Array in dv_list.slice(0, 10):
+		print("   step %.4f m at s=%.1f (frame %.0f us)" % [float(e9[0]), float(e9[1]), float(e9[2])])
+	print("stage9: TOP-10 view-pitch STEPS outside events (|d(dpitch)| deg | s | frame us):")
+	for e9b: Array in dp_list.slice(0, 10):
+		print("   step %.3f deg at s=%.1f (frame %.0f us)" % [float(e9b[0]), float(e9b[1]), float(e9b[2])])
+	print("stage9: TOP-10 GEOMETRY height steps outside events (|d(d frame_y)| m | s | frame us):")
+	for e9c: Array in gv_list.slice(0, 10):
+		print("   step %.4f m at s=%.1f (frame %.0f us)" % [float(e9c[0]), float(e9c[1]), float(e9c[2])])
+	print("stage9: TOP-10 GEOMETRY pitch steps outside events (|d(d frame pitch)| deg | s | frame us):")
+	for e9d: Array in gp_list.slice(0, 10):
+		print("   step %.3f deg at s=%.1f (frame %.0f us)" % [float(e9d[0]), float(e9d[1]), float(e9d[2])])
+	var gv_out: Array = []
+	var gp_out: Array = []
+	for e9g: Array in gv_list:
+		if float(e9g[1]) < main.stairs_s0 - 2.0 or float(e9g[1]) > main.stairs_s1 + 2.0:
+			gv_out.append(e9g)
+	for e9h: Array in gp_list:
+		if float(e9h[1]) < main.stairs_s0 - 2.0 or float(e9h[1]) > main.stairs_s1 + 2.0:
+			gp_out.append(e9h)
+	print("stage9: TOP-5 GEOMETRY height steps EXCLUDING the staircase band:")
+	for e9i: Array in gv_out.slice(0, 5):
+		print("   step %.4f m at s=%.1f (frame %.0f us)" % [float(e9i[0]), float(e9i[1]), float(e9i[2])])
+	print("stage9: TOP-5 GEOMETRY pitch steps EXCLUDING the staircase band:")
+	for e9j: Array in gp_out.slice(0, 5):
+		print("   step %.3f deg at s=%.1f (frame %.0f us)" % [float(e9j[0]), float(e9j[1]), float(e9j[2])])
+	var max_dv9: float = float(dv_list[0][0]) if dv_list.size() > 0 else 0.0
+	var max_dp9: float = float(dp_list[0][0]) if dp_list.size() > 0 else 0.0
+	print("stage9: full-view worst outside events: height %.4f m, pitch %.3f deg (event tails on the integrators - see report)" % [max_dv9, max_dp9])
+	# Two-tier GEOMETRY bounds, stated from the achieved AFTER
+	# measurements with margin (see the Fix Pass 8 report).
+	# Outside the staircase the worst height steps sit at the
+	# lip joins and the sweeper-exit bank unwind acting through
+	# the car's lateral offset - the designed features' own
+	# curvature at speed, 0.0127 m / 0.277 deg achieved. The
+	# staircase's six drops are designed hammerings - 22 deg
+	# edges the suspension bottoms on (stage 8 asserts the
+	# bottoming) - and their geometry steps are that curvature
+	# at full size: 0.0289 m / 1.185 deg achieved. What the fix
+	# removed is the BEFORE table's spread: steps of the same
+	# size at the corner exit, both lips, the sweeper exit and
+	# the descent joins - plain road, no feature - are gone;
+	# outside the staircase band nothing exceeds the tier bound
+	# anywhere on the lap.
+	var max_gv9: float = 0.0
+	var max_gp9: float = 0.0
+	var max_sv9: float = 0.0
+	var max_sp9: float = 0.0
+	for e9e: Array in gv_list:
+		if float(e9e[1]) >= main.stairs_s0 - 2.0 and float(e9e[1]) <= main.stairs_s1 + 2.0:
+			max_sv9 = maxf(max_sv9, float(e9e[0]))
+		else:
+			max_gv9 = maxf(max_gv9, float(e9e[0]))
+	for e9f: Array in gp_list:
+		if float(e9f[1]) >= main.stairs_s0 - 2.0 and float(e9f[1]) <= main.stairs_s1 + 2.0:
+			max_sp9 = maxf(max_sp9, float(e9f[0]))
+		else:
+			max_gp9 = maxf(max_gp9, float(e9f[0]))
+	check(max_gv9 < 0.014,
+		"stage9: worst GEOMETRY height step outside the staircase is %.4f m (bound 0.014)" % max_gv9)
+	check(max_gp9 < 0.35,
+		"stage9: worst GEOMETRY pitch step outside the staircase is %.3f deg (bound 0.35)" % max_gp9)
+	check(max_sv9 < 0.032,
+		"stage9: worst GEOMETRY height step AT the staircase is %.4f m (bound 0.032)" % max_sv9)
+	check(max_sp9 < 1.30,
+		"stage9: worst GEOMETRY pitch step AT the staircase is %.3f deg (bound 1.30)" % max_sp9)
+
+	# Stage 10 (Fix Pass 8, Item 2): real air on the little
+	# hills, and the negative control the gate rework must not
+	# break. 10a: the big climb's TOP BEND at speed - the case
+	# Fix Pass 5's peak-compression gate existed for. The load
+	# there is partial (~0.3-0.45) and sustained, so the new
+	# load rule must keep the car planted BY MECHANISM: assert
+	# no AIR through the bend AND that the load bottomed in the
+	# partial band, never at ~zero. 10b: the crest straight at
+	# the stated cruise (24 m/s) over the reshaped humps -
+	# airborne episodes from GEOMETRY (load clamps to ~zero at
+	# both axles), steering with no authority while airborne
+	# (lateral state frozen across each flight), landings that
+	# grade through the production path without damage.
+	main.jitter_on = true # back to the shipped default for stage 10
+	main.debug_warp_to_s(100.0)
+	main.test_throttle = 0.0
+	var min_load10a: float = 1.0
+	var air10a: bool = false
+	var t10a: int = 0
+	while main.car_s < 195.0 and t10a < 1200:
+		autopilot()
+		main.speed = 30.0 # pinned, measure_shelf style
+		await physics_frame
+		t10a += 1
+		if main.car_s > 125.0:
+			min_load10a = minf(min_load10a, minf(main.load_f, main.load_r))
+			if main.mode == main.MODE_AIR:
+				air10a = true
+		if main.mode == main.MODE_HANG:
+			break
+	check(not air10a and main.mode == main.MODE_DRIVE,
+		"stage10a: NEGATIVE CONTROL - no airborne at the climb-top bend at 30 m/s (mode=%d)" % main.mode)
+	check(min_load10a > 0.10 and min_load10a < 0.75,
+		"stage10a: climb-top load stays partial by mechanism (min %.2f, never ~zero)" % min_load10a)
+	# 10b: the humps at cruise.
+	main.debug_warp_to_s(main.ext_s0 + 2.0)
+	var episodes10: Array = []
+	var in_air10: bool = false
+	var ep_frames10: int = 0
+	var ep_lat0: float = 0.0
+	var ep_latv0: float = 0.0
+	var grades10: Array = []
+	var dent10: int = main.dent_level
+	var min_load10b: float = 1.0
+	var air_frames10: int = 0
+	var t10b: int = 0
+	while main.car_s < main.sweeper_s0 - 5.0 and t10b < 1800:
+		autopilot()
+		main.speed = 24.0 # the stated cruise the humps were shaped for
+		await physics_frame
+		t10b += 1
+		min_load10b = minf(min_load10b, minf(main.load_f, main.load_r))
+		if main.mode == main.MODE_AIR and not main.air_from_gap:
+			if not in_air10:
+				in_air10 = true
+				ep_frames10 = 0
+				ep_lat0 = main.car_lat
+				ep_latv0 = main.lat_vel
+				# Hard-over wheel poke mid-flight: _update_air
+				# has no steering channel - the lateral state
+				# must come out of the flight untouched.
+				main.wheel_angle = PI * 0.9
+			ep_frames10 += 1
+			air_frames10 += 1
+		elif in_air10:
+			in_air10 = false
+			episodes10.append([ep_frames10, ep_lat0, ep_latv0, main.car_lat, main.lat_vel])
+			grades10.append(String(main.last_touchdown).split(" ")[0])
+		if main.mode == main.MODE_HANG:
+			break
+	if in_air10:
+		episodes10.append([ep_frames10, ep_lat0, ep_latv0, main.car_lat, main.lat_vel])
+		grades10.append(String(main.last_touchdown).split(" ")[0])
+	var lat_ok10: bool = episodes10.size() > 0
+	for ep10: Array in episodes10:
+		if absf(float(ep10[3]) - float(ep10[1])) > 0.001 or absf(float(ep10[4]) - float(ep10[2])) > 0.001:
+			lat_ok10 = false
+	var grades_ok10: bool = grades10.size() == episodes10.size()
+	for g10: String in grades10:
+		if g10 == "HARD" or g10 == "-" or g10 == "":
+			grades_ok10 = false
+	check(episodes10.size() >= 3,
+		"stage10b: the humps throw the car airborne repeatedly at 24 m/s (%d flights)" % episodes10.size())
+	check(float(air_frames10) / 90.0 >= 0.8,
+		"stage10b: total hump air time %.2f s at cruise (floor 0.8 s)" % (float(air_frames10) / 90.0))
+	check(min_load10b <= 0.031,
+		"stage10b: crest load reaches ~zero at both axles (min %.3f) - air from geometry" % min_load10b)
+	check(lat_ok10,
+		"stage10b: no ground steering authority while airborne (lateral state frozen across all %d flights)" % episodes10.size())
+	check(grades_ok10 and main.dent_level == dent10,
+		"stage10b: hump landings grade normally, no damage (grades %s, dent %d)" % [str(grades10), main.dent_level])
+	main.wheel_angle = 0.0
+
+	# Stage 11 (Fix Pass 8, Item 0): THE LEVER REGRESSION HUNT.
+	# Chris, run 8: the prep levers worked at the Drop Start
+	# (his capture shows the sequence completing) and were dead
+	# at some later point in the same session, while the wheel
+	# - same hands, same grip channels, same _poll_grab - kept
+	# working. The flip is EDGE-triggered where the wheel is
+	# level-triggered, so the suspect class is state that stops
+	# fresh edges or re-arming after the first cycle. This stage
+	# runs the prep sequence through the PRODUCTION grip path
+	# (grip_flip_switch: posed hand, _poll_grab edge, segment
+	# proximity, _activate_dash_ctl) on THREE successive
+	# dangles in one session - Drop Start, drone recovery after
+	# a forced fall, and a fresh Drop Start after FINISH +
+	# restart - plus a held-grip probe (a grip held across many
+	# polls must flip exactly once; if the edge state could
+	# stick, this is where it shows). Every switch must flip in
+	# every dangle.
+	main.test_throttle = 0.0
+	main.test_boost = false
+	# --- dangle A: fresh Drop Start (the production restart
+	# entry every restart path lands in) ---
+	main.start_race()
+	await frames(4)
+	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
+		"stage11a: fresh Drop Start dangle (mode=%d phase=%s)" % [main.mode, main.hang_phase])
+	# held-grip probe on the sequence's first switch
+	var hold_idx: int = int(main.prep_order[0])
+	var hold_ctl: int = main.dash_ctl_kinds.find("switch%d" % hold_idx)
+	var hold_seg: Array[Vector3] = main._dash_ctl_segment(hold_ctl)
+	main.test_hand_pos["R"] = (hold_seg[0] + hold_seg[1]) * 0.5
+	main.test_hand_set = true
+	check(main._dash_ctl_near(main.test_hand_pos["R"]) == hold_ctl,
+		"stage11a: posed hand resolves to the target switch's control")
+	main.test_grip["R"] = 1.0
+	for ih: int in 6:
+		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	check(main.prep_index == 1 and main.switch_on[hold_idx],
+		"stage11a: a HELD grip flips exactly once (edge, not level) - prep_index %d" % main.prep_index)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	var boost_a: float = main.boost_meter
+	for ia: int in range(1, main.prep_order.size()):
+		grip_flip_switch(int(main.prep_order[ia]))
+	check(main.prep_done, "stage11a: Drop Start prep completes through the grip path")
+	check(main.boost_meter > boost_a, "stage11a: prep credit lands (%.0f -> %.0f)" % [boost_a, main.boost_meter])
+	# --- forced fall -> drone recovery dangle ---
+	main._do_release()
+	var drv_a: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv_a, "stage11b: release lands into DRIVE")
+	# The fall must be driven, not teleported: an earlier draft
+	# shoved car_lat past the edge in one write, and the car
+	# landed back on the ribbon - the ballistic phase starts
+	# from the car's PLACED position (still on the road that
+	# frame), so a state-variable teleport falls back onto the
+	# tarmac, while a real edge crossing starts at the edge
+	# with outward velocity and cannot land. Pin the wheel hard
+	# over and let the drive code carry the car off.
+	main.test_throttle = 0.6
+	var fell_b: bool = false
+	var tf: int = 0
+	while tf < 900:
+		main.wheel_angle = PI
+		await physics_frame
+		tf += 1
+		if main.mode == main.MODE_AIR:
+			fell_b = true
+			break
+		if main.mode != main.MODE_DRIVE:
+			break
+	check(fell_b, "stage11b: steering hard over drives the car off the ribbon edge")
+	main.wheel_angle = 0.0
+	var dang_b: bool = await wait_until(
+		func() -> bool: return main.mode == main.MODE_HANG and main.hang_phase == "dangle", 2500)
+	main.test_throttle = 0.0
+	check(dang_b, "stage11b: forced fall ends in a drone-recovery dangle (mode=%d phase=%s)" % [main.mode, main.hang_phase])
+	check(not main.is_drop_start, "stage11b: this dangle is a recovery, not a Drop Start")
+	# wrong switch first: the production reset, through the grip path
+	var wrong_idx: int = int(main.prep_order[1])
+	grip_flip_switch(wrong_idx)
+	check(main.prep_index == 0 and not main.switch_on[wrong_idx],
+		"stage11b: wrong-order grip flip resets the sequence (index %d)" % main.prep_index)
+	for ib: int in main.prep_order.size():
+		grip_flip_switch(int(main.prep_order[ib]))
+	check(main.prep_done, "stage11b: recovery-dangle prep completes through the grip path")
+	# --- FINISH, restart, fresh Drop Start dangle ---
+	main._do_release()
+	var drv_b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv_b, "stage11c: recovery release lands into DRIVE")
+	main.debug_warp_to_s(main.track_len - 25.0)
+	main.test_throttle = 0.9
+	var fin_c: bool = false
+	var tc: int = 0
+	while tc < 1500:
+		autopilot()
+		await physics_frame
+		tc += 1
+		if main.mode == main.MODE_DONE:
+			fin_c = true
+			break
+		if main.mode == main.MODE_HANG:
+			break
+	main.test_throttle = 0.0
+	check(fin_c, "stage11c: lap finishes (mode=%d)" % main.mode)
+	main.start_race()
+	await frames(4)
+	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle" and main.is_drop_start,
+		"stage11c: restart re-enters a Drop Start dangle")
+	for ic: int in main.prep_order.size():
+		grip_flip_switch(int(main.prep_order[ic]))
+	check(main.prep_done, "stage11c: post-FINISH Drop Start prep completes through the grip path")
+	main.test_hand_set = false
+	main.test_grip["R"] = 0.0
+	main.test_grip["L"] = 0.0
+
 	print("---")
-	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; hand-proximity switch flips; HMD lean reading; in-headset panel legibility")
+	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
 		print("API GUARD: ALL %d CHECKS PASSED" % guard_checks)
 	else:
