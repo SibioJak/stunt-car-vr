@@ -13,6 +13,12 @@ extends SceneTree
 ## phase lag behind the car springs, ordering by impact, zero at
 ## rest); 2f = 8 m road width + the engine/skid audio state
 ## machine (pitch vs speed, skid vs slip/grip/air, teardown latch).
+## Fix Pass 7 stages: 2g = the Crammond jitter mechanism (quantised
+## physics surface: identical to smooth on the dead-flat straight,
+## tremble in the 5-15 mm band on the climb, negative control OFF,
+## skid slip identical ON vs OFF, toggle + DIAG); 8 = the FULL
+## extended lap driven end to end (crest straight, mirrored
+## sweeper, staircase, second gap, finish) with its measured time.
 ## NOT covered here (XR layer, reported UNVERIFIED, never passed
 ## silently): grab-wheel hand tracking, switch flipping by hand
 ## proximity, HMD lean reading, panel legibility in the headset.
@@ -112,7 +118,68 @@ func autopilot() -> void:
 	var steer_frac: float = clampf(-lat * 0.30, -0.6, 0.6)
 	if s > 128.0 and s < 182.0:
 		steer_frac = clampf(-0.45 - lat * 0.25, -0.85, 0.85)
+	# Fix Pass 7: the extension's mirrored sweeper needs the
+	# mirrored pre-compensation (its span is read from the built
+	# track, not hand-copied).
+	if s > main.sweeper_s0 - 3.0 and s < main.sweeper_s1 + 5.0:
+		steer_frac = clampf(0.45 - lat * 0.25, -0.85, 0.85)
 	main.wheel_angle = steer_frac * PI
+
+
+func hf_p2p(series: Array) -> float:
+	# Fix Pass 7 (stage 2g): high-frequency peak-to-peak of a
+	# sampled series - the series minus a centred 31-sample moving
+	# average, extremes over the uncontaminated middle span.
+	var n: int = series.size()
+	if n < 40:
+		return 0.0
+	var lo: float = 1e9
+	var hi: float = -1e9
+	for i: int in range(15, n - 15):
+		var acc: float = 0.0
+		for k: int in range(i - 15, i + 16):
+			acc += float(series[k])
+		var resid: float = float(series[i]) - acc / 31.0
+		lo = minf(lo, resid)
+		hi = maxf(hi, resid)
+	return hi - lo
+
+
+func measure_shelf(jit_window: bool) -> Array:
+	# Fix Pass 7 (stage 2g) fixture: cruise the steady-slope shelf
+	# of the climb (phi steady at 16 deg from s~98 to the corner at
+	# s=131, so the smooth geom is constant and detrended travel
+	# variation IS the high-frequency content) at a pinned 20 m/s;
+	# returns [front, rear, avg] HF peak-to-peak travel. The
+	# springs are poked to rest after the warp (a warp leaves them
+	# wherever the previous stage dropped them, and their
+	# ring-down would swamp a millimetre measurement) and both
+	# arms settle with jitter OFF - the window is the only
+	# difference between arms.
+	main.debug_warp_to_s(98.0)
+	main.test_throttle = 0.0
+	main.c_f = main.SUSP_REST
+	main.c_r = main.SUSP_REST
+	main.cv_f = 0.0
+	main.cv_r = 0.0
+	main.jitter_on = false
+	for i: int in 24:
+		autopilot()
+		main.speed = 20.0
+		await physics_frame
+	main.jitter_on = jit_window
+	var sf: Array = []
+	var sr: Array = []
+	for i2: int in 100:
+		autopilot()
+		main.speed = 20.0
+		await physics_frame
+		sf.append(main.c_f)
+		sr.append(main.c_r)
+	var savg: Array = []
+	for j: int in sf.size():
+		savg.append((float(sf[j]) + float(sr[j])) * 0.5)
+	return [hf_p2p(sf), hf_p2p(sr), hf_p2p(savg)]
 
 
 func frames(n: int, drive: bool = false) -> void:
@@ -394,7 +461,77 @@ func _run() -> void:
 	main.speed = 10.0
 	await frames(5)
 
+	# Stage 2g (Fix Pass 7, Item 2): the Crammond jitter mechanism.
+	# (a) Surface level: over the dead-flat start straight the
+	# quantised profile is IDENTICAL to the smooth one - on a
+	# mathematically flat road the mechanism is silent, exactly as
+	# in the original (its flattest decoded profile is 14 zeros;
+	# crammond-notes.md Q3). Over the climb the quantisation
+	# bites: the brief's cruise measurement therefore lives on the
+	# climb, and what the mechanism gives there is reported, not
+	# forced. (b) Cruise level: jitter ON puts per-axle travel
+	# tremble in the 5-15 mm target band; jitter OFF collapses to
+	# ~0 (the negative control). (c) The skid must not hear the
+	# tremble: forced-slip readings at the bank are identical ON
+	# vs OFF (the slip path reads the smooth curvature, never the
+	# quantised surface). (d) The toggle flips the state and the
+	# DIAG block reports it.
+	var q_flat: float = 0.0
+	var q_climb: float = 0.0
+	for iq: int in 201:
+		var sq1: float = float(iq) * 0.25
+		q_flat = maxf(q_flat, absf(main._elev_quantised(sq1) - main._elev_smooth(sq1)))
+		var sq2: float = 60.0 + float(iq) * 0.25
+		q_climb = maxf(q_climb, absf(main._elev_quantised(sq2) - main._elev_smooth(sq2)))
+	check(q_flat < 0.0005,
+		"stage2g: quantised surface == smooth on the dead-flat straight (max diff %.4f m)" % q_flat)
+	check(q_climb > 0.004,
+		"stage2g: quantisation bites on the climb (max diff %.4f m)" % q_climb)
+	var shelf_off: Array = await measure_shelf(false)
+	var shelf_on: Array = await measure_shelf(true)
+	check(float(shelf_on[0]) > 0.005 and float(shelf_on[0]) < 0.020
+			and float(shelf_on[1]) > 0.005 and float(shelf_on[1]) < 0.020,
+		"stage2g: per-axle tremble in the 5-15 mm band, jitter ON (front %.1f mm, rear %.1f mm p2p)"
+			% [float(shelf_on[0]) * 1000.0, float(shelf_on[1]) * 1000.0])
+	check(float(shelf_on[2]) > 0.0035 and float(shelf_on[2]) < 0.020,
+		"stage2g: avg-axle HF travel in band, jitter ON (%.1f mm p2p)" % (float(shelf_on[2]) * 1000.0))
+	check(float(shelf_off[2]) < 0.002,
+		"stage2g: NEGATIVE CONTROL - jitter OFF is ~silent on the shelf (avg HF travel %.1f mm p2p)"
+			% (float(shelf_off[2]) * 1000.0))
+	main.debug_warp_to_s(160.0)
+	main.speed = 24.0
+	main.test_throttle = 0.3
+	main.jitter_on = true
+	for isl: int in 35:
+		autopilot()
+		await physics_frame
+	var slip_jit: float = main.slip_state
+	main.debug_warp_to_s(160.0)
+	main.speed = 24.0
+	main.jitter_on = false
+	for isl2: int in 35:
+		autopilot()
+		await physics_frame
+	var slip_smooth: float = main.slip_state
+	main.test_throttle = 0.0
+	check(slip_jit > 0.15 and absf(slip_jit - slip_smooth) < 0.02,
+		"stage2g: skid slip identical ON vs OFF (%.3f vs %.3f) - the tremble is not slip" % [slip_jit, slip_smooth])
+	main.jitter_on = true
+	main._toggle_jitter()
+	check(not main.jitter_on and main._build_diag_block().contains("JIT OFF"),
+		"stage2g: toggle turns jitter OFF and the DIAG block says so")
+	main._toggle_jitter()
+	check(main.jitter_on and main._build_diag_block().contains("JIT ON"),
+		"stage2g: toggle restores jitter ON (the default) and the DIAG block says so")
+
 	# Stage 3: drive, climb, hold the bank, cross the gap airborne.
+	# (Fix Pass 7 sequencing: stage 2g now sits between 2f and here
+	# and leaves the car at the bank - restore this stage's
+	# original start premise, the s=10 warp stage 2f used to end
+	# on. No assertion changes.)
+	main.debug_warp_to_s(10.0)
+	main.speed = 10.0
+	await frames(5)
 	main.test_throttle = 0.9
 	var start_h: float = main.car.global_position.y
 	var max_h: float = start_h
@@ -500,6 +637,67 @@ func _run() -> void:
 	check(absf(main.view_node.rotation.z) < 0.01,
 		"stage7b: lean OFF leaves the view level (roll %.3f deg)" % rad_to_deg(main.view_node.rotation.z))
 	main.test_lean = -99.0
+
+	# Stage 8 (Fix Pass 7, Item 1): the FULL extended lap, driven
+	# end to end from a fresh Drop Start through the production
+	# release: the original lap, then the crest straight, the
+	# mirrored sweeper, the descending staircase, the second gap,
+	# the final climb and the home straight to the relocated
+	# finish. (Boost is topped up once before the second gap -
+	# the prep credit a driver would have banked at a drone stop;
+	# the autopilot has no hands for switches.)
+	main.start_race()
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	await frames(4)
+	main._do_release()
+	var rel8: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(rel8, "stage8: fresh Drop Start release lands into DRIVE for the full lap")
+	main.test_throttle = 0.9
+	var topped8: bool = false
+	var in_sweeper: bool = false
+	var gap2_air: bool = false
+	var crest_work: float = 0.0
+	var stairs_work: float = 0.0
+	var t8: int = 0
+	var lap_done: bool = false
+	while t8 < 20000:
+		autopilot()
+		main.test_boost = (main.car_s > 185.0 and main.car_s < main.gap_s0) \
+			or (main.car_s > main.gap2_s0 - 25.0 and main.car_s < main.gap2_s0)
+		if not topped8 and main.car_s > main.gap2_s0 - 80.0:
+			main.boost_meter = 60.0
+			topped8 = true
+		await physics_frame
+		t8 += 1
+		if main.car_s > main.sweeper_s0 and main.car_s < main.sweeper_s1:
+			in_sweeper = true
+		if main.mode == main.MODE_AIR and main.air_s_est > main.gap2_s0 - 8.0 and main.air_s_est < main.gap2_s1 + 2.0:
+			gap2_air = true
+		if main.car_s > main.ext_s0 and main.car_s < main.sweeper_s0:
+			crest_work = maxf(crest_work, (main.c_f + main.c_r) * 0.5)
+		if main.car_s > main.sweeper_s1 + 20.0 and main.car_s < main.gap2_s0 - 45.0:
+			stairs_work = maxf(stairs_work, (main.c_f + main.c_r) * 0.5)
+		if main.mode == main.MODE_DONE:
+			lap_done = true
+			break
+		if main.mode == main.MODE_HANG:
+			break # fell somewhere - fail below with diagnostics
+	main.test_throttle = 0.0
+	main.test_boost = false
+	check(lap_done,
+		"stage8: FULL extended lap driven to the finish (s=%.0f mode=%d, track %.0f m)" % [main.car_s, main.mode, main.track_len])
+	check(in_sweeper,
+		"stage8: the mirrored sweeper is on the driven line (s %.0f-%.0f)" % [main.sweeper_s0, main.sweeper_s1])
+	check(gap2_air,
+		"stage8: airborne over the second gap (s %.0f-%.0f)" % [main.gap2_s0, main.gap2_s1])
+	check(crest_work > main.SUSP_REST + 0.05,
+		"stage8: crest straight works the suspension (peak avg compression %.3f m)" % crest_work)
+	check(stairs_work > main.SUSP_REST + 0.15,
+		"stage8: staircase hammers the suspension (peak avg compression %.3f m)" % stairs_work)
+	print("stage8: measured full-lap time %.1f s (game clock) over %.0f m of ribbon" % [main.finished_time, main.track_len])
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; hand-proximity switch flips; HMD lean reading; in-headset panel legibility")

@@ -24,6 +24,11 @@ extends SceneTree
 ## must never cross - Item 4); capture 8 = the driver's view of
 ## the WIDENED road on the climb (Item 2); and a body-spring sink
 ## sample read at the staged touchdown (Item 1).
+## Fix Pass 7 adds: capture 9 = the driver's view down the new
+## crest straight (Item 1); capture 10 = the extension's mirrored
+## sweeper from trackside (Item 1); the panel keyword sweep gains
+## the jitter command (Item 2 - the commands board and the DIAG
+## JIT state must both list it).
 
 var failures: int = 0
 var checks: int = 0
@@ -219,7 +224,7 @@ func _run() -> void:
 	var ptxt: String = main.panel_label.text + "\n" + main.diag_label.text
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call drone",
 			"restart", "lean", "Recenter", "SPACE", "1/2/3", "W/S",
-			"DIAG", "ANCHOR", "CAMH", "FRC"]:
+			"DIAG", "ANCHOR", "CAMH", "FRC", "Jitter", "JIT"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)
 	check(main.wheel_node != null, "grab wheel exists")
 	check(main.switch_pivots.size() == 3, "3 prep switches on the dash")
@@ -477,6 +482,32 @@ func _run() -> void:
 	for i8: int in 10:
 		await physics_frame
 	await snap(main.fallback_cam, "wide_road_view.png")
+
+	# Capture 9 (Fix Pass 7, Item 1): the driver's view down the
+	# new crest straight - the ribbon rolling away in waves past
+	# the old finish. Numerical length is the smoke's stage 8;
+	# here the frame is the evidence the extension exists and
+	# reads as road.
+	main.debug_warp_to_s(main.ext_s0 + 8.0)
+	for i9: int in 10:
+		await physics_frame
+	await snap(main.fallback_cam, "crest_view.png")
+
+	# Capture 10 (Fix Pass 7, Item 1): the mirrored sweeper from
+	# trackside - the bank leaning the OTHER way from the first
+	# corner (capture 3's subject), so both banks are on record.
+	var sw_mid: float = (main.sweeper_s0 + main.sweeper_s1) * 0.5
+	var fr_sw: Dictionary = main._frame_at(sw_mid)
+	var psw: Vector3 = fr_sw["pos"]
+	var ssw: Vector3 = fr_sw["side"]
+	var usw: Vector3 = fr_sw["up"]
+	var tsw: Vector3 = fr_sw["tan"]
+	var cam10 := Camera3D.new()
+	main.add_child(cam10)
+	cam10.position = psw - tsw * 16.0 + ssw * 7.0 + usw * 7.5
+	cam10.look_at(psw + tsw * 8.0, Vector3.UP)
+	await snap(cam10, "sweeper_view.png")
+	cam10.queue_free()
 
 	print("---")
 	if failures == 0:

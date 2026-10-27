@@ -22,7 +22,10 @@ real carnage (dent + smoke placeholder only), audio, multiplayer.
 Drop Start dangle → time the release (touchdown is scored FLAT / OK /
 ROUGH / HARD) → start straight → steep climb → banked left corner →
 launch lip → **the gap** (cross it with speed; boost helps; fall and
-the drone catches you) → descent → finish gantry.
+the drone catches you) → descent → and since Fix Pass 7 the ribbon
+keeps going: a rolling crest straight → a banked right sweeper →
+a descending staircase → a **second gap** → a final climb → a long
+home straight → the finish gantry (1,218 m in all).
 
 Fall off anywhere, or call the drone yourself: it carries you back over
 the ribbon, you dangle, you may flip the 3-switch prep sequence shown
@@ -44,11 +47,14 @@ VR (Quest):
 - Restart race: left Y button · Lean experiment on/off: right B button
   (or the green dash button; red dash button = restart)
 - Recenter: click the left stick
+- Road-jitter experiment on/off: click the right stick (state shows
+  as JIT in the DIAG block; default ON)
 
 Desktop fallback (no headset): the mirror rig drives the same car.
 - W/S throttle/brake · A/D steer · SHIFT boost · SPACE release
 - 1/2/3 flip FUEL/SPARK/BOOST · L call drone · R restart
 - T lean experiment on/off · Q/E lean body left/right · C recenter
+- J road-jitter experiment on/off (default ON)
 - Mouse drag steers while the left button is held
 
 ## Run it
@@ -299,6 +305,83 @@ two stages (car, then you); whether the wide road's manoeuvre
 room is real at the bank; and whether the engine and skid tell
 you what the tires are doing, at the right levels. Sound quality
 is Chris's ears' verdict alone.
+
+## Fix Pass 7 (after headset run 7: "much better" — and "can I
+## get some longer track? it's awfully short"; Chris bundled the
+## Crammond jitter mechanism into the same pass)
+
+- **The lap is ~3× longer: 1,218 m.** The original lap is
+  generated exactly as before through the old finish (six runs
+  of verdicts compare against it); past it the ribbon continues:
+  a 280 m crest straight (four rolling crests), a banked RIGHT
+  sweeper mirrored from the first corner (the lap banked only
+  one way — steering is now judgeable both ways), a descending
+  staircase of six drop/tread steps, a second gap at the same
+  14 m spec, a final climb and a 200 m home straight to the
+  relocated finish gantry. Smoke stage 8 drives the FULL lap
+  from a fresh Drop Start to MODE_DONE: measured full-lap time
+  **38.1 s on the game clock** at autopilot pace (throttle 0.9,
+  boost at both gaps — the model's speeds are high; the 3× is
+  in the ribbon, 401 → 1,218 m). New captures:
+  `tests/crest_view.png` (driver's view down the crest
+  straight) and `tests/sweeper_view.png` (the mirrored bank
+  from trackside).
+- **The Crammond jitter mechanism** (crammond-notes.md Q3: the
+  original's profiles are smooth analytic ramps; its tire
+  jitter EMERGES from faceted segments, coarsely quantised
+  heights, few-point sampling and a derivative-happy wheel
+  response). Reproduced structurally: the SUSPENSION now
+  samples a quantised elevation profile — control heights
+  snapped to `JITTER_STEP_M` (0.05 m) at facet boundaries
+  `JITTER_FACET_M` (5 m) apart, linear between — while the
+  visible mesh, car placement, crest load and the slip/skid
+  path all keep the smooth profile. It looked smooth; it drove
+  rough. No camera shake, no authored noise anywhere: the
+  tremble arises through the existing springs. Measured (smoke
+  stage 2g, steady-slope shelf of the climb at a pinned
+  20 m/s): per-axle suspension travel trembles **14.2 mm
+  (front) / 12.0 mm (rear) peak-to-peak** with jitter ON —
+  inside the 5–15 mm target band — and collapses to 0.6 mm
+  with jitter OFF (the negative control). Two honest wrinkles,
+  per the brief's own escape clause: on the DEAD-FLAT start
+  straight the quantised profile is identical to the smooth
+  one (max diff 0.0000 m — on a mathematically flat road the
+  mechanism is silent, exactly as in the original, whose
+  flattest decoded profile is 14 zeros), so the cruise
+  measurement lives on the climb, where the quantisation
+  bites (max diff 0.0299 m); and the brief's 2–3 cm starting
+  step measured only ~3 mm of tremble — under the model's own
+  grid noise — so the step was tuned to 0.05 m BY MEASUREMENT
+  to land the band. The skid cannot hear the tremble: forced-
+  slip readings at the bank are identical ON vs OFF (0.799 vs
+  0.799), because slip reads the smooth curvature, never the
+  quantised surface. Landing/gap behaviour is unchanged (the
+  gap span is un-quantised air; stages 2c/2e/3/8 all pass on
+  the same numbers as Fix Pass 6).
+- **A/B in the headset:** jitter toggles with the RIGHT stick
+  click (desktop: J), default ON, state shown as JIT in the
+  DIAG block — and per the standing rule the commands board
+  lists the new command in this same pass (two panel lines
+  were merged to hold the board's line count, after a longer
+  merged line widened the label and put 2 of 63 proof
+  sightlines behind car geometry — the proof caught it).
+  API guard unchanged at 21: the toggle reuses
+  XRController3D.get_input with the pre-existing
+  `primary_click` action (the left stick's), so there is no
+  new ClassDB surface to guard.
+- Frame stats: 140 nodes (unchanged — the extension grows the
+  merged ribbon meshes, not the node count), 66 draw calls,
+  29,098 primitives (was 18,458; the longer ribbon and its
+  stilts are the growth).
+
+UNVERIFIED (only headset run 8 proves these): whether the
+longer lap fixes "awfully short" and how the new sections
+feel — the crests at speed, steering through a right-hand
+bank for the first time, the staircase under the wheels;
+and THE jitter question: whether the tremble reads as the
+original's living road surface (tires worrying at a real
+road) or as anything else. A/B it with the right stick
+click, JIT ON vs OFF, on the climb and the crest straight.
 
 ## Quest export — status
 

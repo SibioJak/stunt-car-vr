@@ -147,6 +147,26 @@ const AUDIO_SKID_FLOOR_DB: float = -34.0 # skid level at the onset of slip
 const AUDIO_SLIP_ONSET: float = 1.2 # |drift| (m/s) where tires start to sing
 const AUDIO_SLIP_SPAN: float = 3.8 # |drift| range from onset to full slip
 const AUDIO_STALL_MS: int = 600 # physics-tick gap that counts as a stall
+# Fix Pass 7 (Item 2) - the Crammond jitter mechanism, reproduced
+# structurally (crammond-notes.md Q3): the original's road profiles
+# are smooth analytic ramps - its tire jitter EMERGES from faceted
+# segments, heights quantised to coarse steps, few-point wheel
+# sampling, and a wheel response whose derivative term amplifies
+# the steps. Our version of the same structure: the SUSPENSION
+# samples a quantised elevation profile - control heights snapped
+# to JITTER_STEP_M at facet boundaries JITTER_FACET_M apart along
+# the track, linear between boundaries. The visible ribbon mesh,
+# the car placement and the slip/skid path all keep reading the
+# SMOOTH profile: it looked smooth; it drove rough. No camera
+# shake, no noise anywhere - the tremble arises through the
+# existing springs' response to the stepped surface. Constants
+# tuned BY MEASUREMENT (smoke stage 2g's shelf protocol): at
+# FACET 5 m / STEP 0.05 m the steady climb's per-axle suspension
+# travel trembles 12-14 mm peak-to-peak (the brief's 5-15 mm
+# band); the 0.025 m starting step measured only ~3 mm - the
+# mechanism was real but under the model's own grid noise.
+const JITTER_FACET_M: float = 5.0 # along-track facet length, m
+const JITTER_STEP_M: float = 0.05 # height snap at facet boundaries, m
 
 # --- track samples ---
 var t_pts: Array[Vector3] = []
@@ -158,6 +178,15 @@ var t_kv: Array[float] = [] # vertical curvature per sample (crest +)
 var track_len: float = 0.0
 var gap_s0: float = 0.0
 var gap_s1: float = 0.0
+# Fix Pass 7 (Item 1): extension anchors, recorded by the generator
+# (s of the extension's first sample, the mirrored sweeper's span,
+# and the second gap's span) so tests/proofs reference the built
+# track instead of hand-copied numbers.
+var ext_s0: float = 0.0
+var sweeper_s0: float = 0.0
+var sweeper_s1: float = 0.0
+var gap2_s0: float = 0.0
+var gap2_s1: float = 0.0
 
 # --- sim state ---
 var mode: int = MODE_HANG
@@ -202,6 +231,7 @@ var switch_on: Array[bool] = [false, false, false]
 
 # lean experiment
 var lean_on: bool = false
+var jitter_on: bool = true # Fix Pass 7 (Item 2): jitter experiment toggle, default ON
 var lean_neutral_x: float = 0.0
 var lean_value: float = 0.0
 var grip_mult: float = 1.0
@@ -573,7 +603,37 @@ func _build_track() -> void:
 	gap_s1 = float(t_pts.size())
 	_walk(40, 0.0, deg_to_rad(-3.4), 0.0, false, 0.020) # landing straight
 	_walk(90, 0.0, deg_to_rad(-13.7), 0.0, false) # descent
-	_walk(50, 0.0, 0.0, 0.0, false) # finish straight
+	_walk(50, 0.0, 0.0, 0.0, false) # finish straight (the old lap's end)
+	# Fix Pass 7 (Item 1): THE EXTENSION. Everything above this line
+	# is the Fix Pass 6 lap, generated exactly as before (six runs of
+	# verdicts compare against it); the ribbon now CONTINUES past
+	# the old finish instead of ending there, roughly tripling the
+	# lap: rolling crests -> a banked sweeper mirrored from the
+	# first corner (the lap banked only one way; steering must be
+	# judgeable both ways) -> a descending staircase -> a second
+	# gap at the same 14 m spec -> a final climb and a long home
+	# straight to the new finish (the gantry below derives from
+	# track_len, so it follows on its own).
+	ext_s0 = float(t_pts.size() - 1)
+	for crest: int in 4: # crest straight: up-wave, down-wave, x4
+		_walk(35, 0.0, deg_to_rad(5.0), 0.0, false)
+		_walk(35, 0.0, deg_to_rad(-5.0), 0.0, false)
+	_walk(20, 0.0, 0.0, 0.0, false) # settle flat out of the waves
+	sweeper_s0 = float(t_pts.size())
+	_walk(47, -deg_to_rad(90.0) / 47.0, 0.0, deg_to_rad(-34.0), false) # banked sweeper, mirrored
+	sweeper_s1 = float(t_pts.size())
+	_walk(20, 0.0, 0.0, 0.0, false, 0.006, 0.10) # flatten out (fast bank convergence, as post-corner)
+	for step_i: int in 6: # descending staircase: drop, tread, drop...
+		_walk(5, 0.0, deg_to_rad(-22.0), 0.0, false, 0.060)
+		_walk(6, 0.0, 0.0, 0.0, false, 0.060)
+	_walk(30, 0.0, 0.0, 0.0, false, 0.020) # flat run to the second lip
+	_walk(10, 0.0, deg_to_rad(10.0), 0.0, false, 0.030, 0.10) # second launch lip
+	gap2_s0 = float(t_pts.size())
+	_walk(14, 0.0, deg_to_rad(2.0), 0.0, true, 0.020) # THE SECOND GAP - same 14 m spec
+	gap2_s1 = float(t_pts.size())
+	_walk(40, 0.0, deg_to_rad(-3.4), 0.0, false, 0.020) # second landing straight
+	_walk(90, 0.0, deg_to_rad(13.0), 0.0, false) # final climb
+	_walk(200, 0.0, 0.0, 0.0, false) # long home straight to the new finish
 	track_len = float(t_pts.size() - 1)
 	# Fix Pass 5: per-sample vertical curvature of the road profile,
 	# kv = -d(elevation angle)/ds. Positive over a crest (the road
@@ -746,6 +806,30 @@ func _frame_at(s: float) -> Dictionary:
 		"gap": t_gap[i0] or t_gap[i1],
 		"kv": lerpf(t_kv[i0], t_kv[i1], fr),
 	}
+
+
+# Fix Pass 7 (Item 2): the quantised physics surface. The smooth
+# elevation profile resampled the Crammond way: control heights at
+# facet boundaries JITTER_FACET_M apart, each snapped to the
+# JITTER_STEP_M grid, linear interpolation between boundaries - the
+# profile the SUSPENSION feels is faceted and stepped while
+# remaining recognisably the same road. Read ONLY by the
+# suspension's geom targets (see _update_suspension); over a gap
+# span it returns the profile's air line, exactly as the smooth
+# surface does - the gap itself stays un-quantised air.
+func _elev_smooth(s: float) -> float:
+	var p: Vector3 = _frame_at(s)["pos"]
+	return p.y
+
+
+func _elev_quantised(s: float) -> float:
+	var s_clamped: float = clampf(s, 0.0, track_len)
+	var facet: float = floor(s_clamped / JITTER_FACET_M)
+	var s0: float = facet * JITTER_FACET_M
+	var frac: float = (s_clamped - s0) / JITTER_FACET_M
+	var h0: float = snappedf(_elev_smooth(s0), JITTER_STEP_M)
+	var h1: float = snappedf(_elev_smooth(s0 + JITTER_FACET_M), JITTER_STEP_M)
+	return lerpf(h0, h1, frac)
 
 
 # ---------------------------------------------------------------- car
@@ -992,14 +1076,14 @@ func _panel_text() -> String:
 	lines.append("Release: R trigger (when dangling)")
 	lines.append("Flip switch: GRIP near a dash switch")
 	lines.append("Call drone: L X button (while driving)")
+	lines.append("Jitter exp: R stick click")
 	lines.append("Dash buttons (GRIP near):")
-	lines.append("red = restart, green = lean on/off")
-	lines.append("Recenter view: L stick click")
-	lines.append("Restart race: L Y button")
+	lines.append("red restart, green lean")
+	lines.append("Recenter: L stick click, restart: L Y")
 	lines.append("-- DESKTOP --")
 	lines.append("W/S throttle/brake, A/D steer, SHIFT boost")
 	lines.append("SPACE release, 1/2/3 flip FUEL/SPARK/BOOST")
-	lines.append("L call lift, T lean on/off, Q/E lean body")
+	lines.append("L lift, T lean, J jitter, Q/E lean body")
 	lines.append("R restart race, C recenter view")
 	# Fix Pass 4: the DIAG block no longer appends here - it renders
 	# on its own board (diag_label) via _update_panel.
@@ -1032,7 +1116,7 @@ func _build_diag_block() -> String:
 		lines.append("ANCHOR DESKTOP (cam on anchor) CAMH %.2f" % EYE_ANCHOR.y)
 	lines.append(_diag_hand_line("L"))
 	lines.append(_diag_hand_line("R"))
-	lines.append("WHEEL %+d DEG" % int(round(rad_to_deg(wheel_angle))))
+	lines.append("WHEEL %+d DEG JIT %s" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF"])
 	return "\n".join(lines)
 
 
@@ -1200,6 +1284,8 @@ func _poll_inputs(delta: float) -> void:
 			start_race()
 		if _btn_edge("l_stick_click", _input_bool(lc, &"primary_click")):
 			_recenter()
+		if _btn_edge("r_stick_click", _input_bool(rc, &"primary_click")):
+			_toggle_jitter()
 	# test overrides win last
 	if test_mode:
 		in_throttle = test_throttle
@@ -1223,6 +1309,8 @@ func _input(event: InputEvent) -> void:
 				_call_drone()
 		KEY_T:
 			_toggle_lean()
+		KEY_J:
+			_toggle_jitter()
 		KEY_R:
 			start_race()
 		KEY_C:
@@ -1340,6 +1428,10 @@ func _toggle_lean() -> void:
 	lean_on = not lean_on
 	if lean_on:
 		_capture_lean_neutral()
+
+
+func _toggle_jitter() -> void:
+	jitter_on = not jitter_on
 
 
 func _capture_lean_neutral() -> void:
@@ -2062,6 +2154,22 @@ func _update_suspension(delta: float) -> void:
 		var fr_r: Dictionary = _frame_at(car_s - AXLE_R)
 		geom_f = (fr_f["pos"] - fr["pos"]).dot(fr["up"])
 		geom_r = (fr_r["pos"] - fr["pos"]).dot(fr["up"])
+		# Fix Pass 7 (Item 2): the suspension samples the QUANTISED
+		# surface (see _elev_quantised). Swap only the ELEVATION
+		# component of each axle's road rise - subtract the smooth
+		# world-Y rise, add the quantised one - so the frame
+		# projection (bank/pitch geometry) and every other reader
+		# keep the smooth model, and the springs' own load/derivative
+		# response turns the steps into tremble. The slip/skid path
+		# never comes through here: it reads curvature drift in
+		# _update_drive, untouched by the quantisation.
+		if jitter_on:
+			var p_c: Vector3 = fr["pos"]
+			var p_f: Vector3 = fr_f["pos"]
+			var p_r: Vector3 = fr_r["pos"]
+			var e_c: float = _elev_quantised(car_s)
+			geom_f += (_elev_quantised(car_s + AXLE_F) - e_c) - (p_f.y - p_c.y)
+			geom_r += (_elev_quantised(car_s - AXLE_R) - e_c) - (p_r.y - p_c.y)
 		# Crest load: following the road over a crest needs downward
 		# acceleration v^2 * kv; what gravity cannot supply unloads
 		# the springs. Computed per axle from the road's own profile.
