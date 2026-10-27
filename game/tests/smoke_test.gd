@@ -78,6 +78,19 @@ func guard_check(cond: bool, api: String) -> void:
 		print("GUARD FAIL  ", api)
 
 
+func swap_hand_path(p: String) -> String:
+	# Fix Pass 10 (Item 0): the path a LEFT binding must mirror on
+	# the RIGHT hand: the user path swaps, and the face-button
+	# NAMES swap with it - the left controller's buttons are
+	# physically labelled X/Y where the right's are A/B (that is
+	# why the actions are named ax_button / by_button). Every
+	# other component the game binds (squeeze, trigger,
+	# thumbstick, aim...) is spelled identically on both hands.
+	var s: String = p.replace("/user/hand/left", "/user/hand/right")
+	s = s.replace("/input/x/", "/input/a/").replace("/input/y/", "/input/b/")
+	return s
+
+
 func check_api_surface() -> void:
 	# Each entry: the class that defines the API in Godot 4.7 and the
 	# method the game code calls by name (receiver expressions noted).
@@ -131,6 +144,69 @@ func check_api_surface() -> void:
 			"NOTIFICATION_WM_CLOSE_REQUEST", "NOTIFICATION_EXIT_TREE"]:
 		guard_check(node_consts.has(cname),
 			"Node.%s constant exists in this engine" % cname)
+	# Fix Pass 10 (Item 0): ACTION-MAP BINDING SYMMETRY. Run 10's
+	# video forensics: the LEFT grip channel read 0.00 on every
+	# channel in every frame while the right cycled to 1.00 -
+	# one hand's signal simply never arrived. The shipped map
+	# itself parses SYMMETRIC (see the Fix Pass 10 report), so
+	# this guard is the tripwire that keeps it that way: parse
+	# the loaded OpenXRActionMap and ASSERT, for every action
+	# the game reads, that in every interaction profile the set
+	# of LEFT binding paths equals the set of RIGHT paths with
+	# the hand swapped (see swap_hand_path: the swap includes
+	# the face-button letters, X<->A and Y<->B - the one place
+	# the two controllers' paths legitimately differ in
+	# spelling while binding the same control role). A
+	# one-sided binding edit - the class of
+	# failure that ships silently because headless runs never
+	# touch a live channel - now fails HERE. Presence is also
+	# asserted where it matters: in the profiles a Quest/Virtual
+	# Desktop session negotiates (oculus touch, khr generic),
+	# grip / trigger / primary_click must be bound for BOTH
+	# hands, so a hand can never lose its core channels whole.
+	var game_actions: Array[String] = ["grip", "grip_click", "grip_force",
+		"trigger", "trigger_click", "ax_button", "by_button",
+		"primary_click", "primary", "default_pose"]
+	var map_res: Resource = load(ProjectSettings.get_setting("xr/openxr/default_action_map"))
+	guard_check(map_res is OpenXRActionMap, "action map loads as OpenXRActionMap")
+	if map_res is OpenXRActionMap:
+		var amap: OpenXRActionMap = map_res as OpenXRActionMap
+		for prof: OpenXRInteractionProfile in amap.get_interaction_profiles():
+			var per: Dictionary = {} # action -> {"L": [...], "R": [...]}
+			for b: OpenXRIPBinding in prof.get_bindings():
+				var aname: String = b.action.resource_name
+				if not game_actions.has(aname):
+					continue
+				var bp: String = b.binding_path
+				var side: String = ""
+				if bp.begins_with("/user/hand/left"):
+					side = "L"
+				elif bp.begins_with("/user/hand/right"):
+					side = "R"
+				else:
+					continue
+				if not per.has(aname):
+					per[aname] = {"L": [], "R": []}
+				(per[aname] as Dictionary)[side].append(bp)
+			for aname2: String in game_actions:
+				var d: Dictionary = per.get(aname2, {"L": [], "R": []})
+				var lset: Array = (d["L"] as Array).duplicate()
+				var rset: Array = (d["R"] as Array).duplicate()
+				var lswap: Array = []
+				for p: Variant in lset:
+					lswap.append(swap_hand_path(String(p)))
+				lswap.sort()
+				rset.sort()
+				guard_check(lswap == rset,
+					"map symmetry: %s '%s' L paths == R paths swapped (L=%s R=%s)"
+						% [prof.interaction_profile_path, aname2, str(lset), str(rset)])
+			if prof.interaction_profile_path in [
+					"/interaction_profiles/oculus/touch_controller",
+					"/interaction_profiles/khr/generic_controller"]:
+				for core: String in ["grip", "trigger", "primary_click"]:
+					var dc: Dictionary = per.get(core, {"L": [], "R": []})
+					guard_check((dc["L"] as Array).size() > 0 and (dc["R"] as Array).size() > 0,
+						"map presence: %s binds '%s' for BOTH hands" % [prof.interaction_profile_path, core])
 
 
 func autopilot() -> void:
@@ -250,6 +326,23 @@ func grip_flip_switch(switch_idx: int, hand: String = "R") -> void:
 	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
 	main.test_grip[hand] = 0.0
 	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
+
+
+func prep_one_hand(hand: String) -> bool:
+	# Fix Pass 10 (Item 0, stage 15): complete a full prep
+	# sequence on a fresh Drop Start dangle using ONE hand,
+	# with the other hand's grip held at 0.0 the whole time (a
+	# simulated DEAD channel) and its hand parked far away, so
+	# no zone entry can be credited to it. Returns prep_done.
+	var other: String = "L" if hand == "R" else "R"
+	main.start_race()
+	await frames(4)
+	main.test_grip[other] = 0.0
+	main.test_hand_pos[other] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_hand_set = true
+	for idx: Variant in main.prep_order.duplicate():
+		grip_flip_switch(int(idx), hand)
+	return main.prep_done and float(main.test_grip[other]) == 0.0
 
 
 func hf_p2p(series: Array) -> float:
@@ -1439,6 +1532,67 @@ func _run() -> void:
 		main._do_release()
 		var drv13: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 		check(drv13, "stage13: %s - release resumes driving for the mirror run" % side_name)
+
+	# Stage 15 (Fix Pass 10, Item 0): the levers against a DEAD
+	# CHANNEL, and one-hand reach. Run 10: the left grip channel
+	# delivered nothing live, ever - so activation must provably
+	# not depend on a specific hand. (a) A full prep completed
+	# RIGHT-hand-only with the left grip held at 0.0 throughout
+	# (the run-10 world), and LEFT-hand-only with the right
+	# dead - both through the production grip path on fresh
+	# dangles. (b) Reach, measured from the anchored seat: the
+	# three prep switches must sit within cross-body reach of
+	# BOTH shoulders (an arm plus the torso allowance a seated
+	# player actually has) and within a one-hand sweep of both
+	# wheel-rest positions, so the surviving hand can always
+	# work the whole prep row. The two dash BUTTONS are also
+	# measured: same-side reach is asserted, cross-body is
+	# printed for the record (each also has a controller twin -
+	# lean = R B button, restart = L Y button - and they sit
+	# at the dash's far corners by design).
+	var ok15a: bool = await prep_one_hand("R")
+	check(ok15a, "stage15: full prep with a DEAD LEFT channel (right hand works all three switches)")
+	var ok15b: bool = await prep_one_hand("L")
+	check(ok15b, "stage15: full prep with a DEAD RIGHT channel (left hand works all three switches)")
+	main.test_hand_set = false
+	main.test_grip["L"] = 0.0
+	main.test_grip["R"] = 0.0
+	var inv15: Transform3D = main.car.global_transform.affine_inverse()
+	var sh15: Dictionary = {"L": Vector3(-0.21, 1.02, 0.12), "R": Vector3(0.21, 1.02, 0.12)}
+	var rest15: Dictionary = {"L": Vector3(-0.23, 0.88, -0.40), "R": Vector3(0.23, 0.88, -0.40)}
+	var worst_sw_sh: float = 0.0
+	var worst_sw_rest: float = 0.0
+	for ci15: int in 3:
+		var seg15: Array = main._dash_ctl_segment(ci15)
+		var b15: Vector3 = inv15 * (seg15[0] as Vector3)
+		var t15: Vector3 = inv15 * (seg15[1] as Vector3)
+		for h15: String in ["L", "R"]:
+			worst_sw_sh = maxf(worst_sw_sh, main._seg_point_dist(b15, t15, sh15[h15] as Vector3))
+			worst_sw_rest = maxf(worst_sw_rest, main._seg_point_dist(b15, t15, rest15[h15] as Vector3))
+	check(worst_sw_sh <= 0.90,
+		"stage15: every prep switch within cross-body reach of both shoulders (worst %.2f m, bound 0.90)" % worst_sw_sh)
+	check(worst_sw_rest <= 0.60,
+		"stage15: every prep switch within a one-hand sweep of both wheel-rest positions (worst %.2f m, bound 0.60)" % worst_sw_rest)
+	for ci15b: int in range(3, main.dash_ctl_nodes.size()):
+		var seg15b: Array = main._dash_ctl_segment(ci15b)
+		var b15b: Vector3 = inv15 * (seg15b[0] as Vector3)
+		var t15b: Vector3 = inv15 * (seg15b[1] as Vector3)
+		var own15: float = main._seg_point_dist(b15b, t15b,
+			sh15["R" if ci15b == 3 else "L"] as Vector3)
+		var cross15: float = main._seg_point_dist(b15b, t15b,
+			sh15["L" if ci15b == 3 else "R"] as Vector3)
+		print("stage15: button %s reach - same-side shoulder %.2f m, cross-body %.2f m (record)"
+			% [main.dash_ctl_kinds[ci15b], own15, cross15])
+		check(own15 <= 0.85,
+			"stage15: button %s within same-side shoulder reach (%.2f m)" % [main.dash_ctl_kinds[ci15b], own15])
+	# DIAG zone line names the hand in the zone.
+	main.test_hand_set = true
+	var segz: Array = main._dash_ctl_segment(0)
+	main.test_hand_pos["R"] = ((segz[0] as Vector3) + (segz[1] as Vector3)) * 0.5
+	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	check(main._build_diag_block().contains("FUEL:R"),
+		"stage15: DIAG zone line names the hand in the zone (%s)" % main._diag_zone_line())
+	main.test_hand_set = false
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")

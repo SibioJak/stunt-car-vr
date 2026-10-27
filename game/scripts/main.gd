@@ -1435,7 +1435,11 @@ func _build_cockpit() -> void:
 	panel_root.add_child(panel_label)
 	diag_root = Node3D.new()
 	diag_root.name = "DiagRoot"
-	diag_root.position = Vector3(-0.53, 1.17, -0.85)
+	# Fix Pass 10 (Item 0): raised 3.5 cm - the DIAG block grew a
+	# sixth line (the per-control ZONE readout) and the new
+	# bottom row's sightline clipped the wheel rim's left arc in
+	# the render proof's occlusion sweep.
+	diag_root.position = Vector3(-0.53, 1.205, -0.85)
 	diag_root.rotation_degrees = Vector3(-10, 28, 0)
 	car_body.add_child(diag_root)
 	_box(diag_root, Vector3(0.68, 0.34, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)), "DiagBoard")
@@ -1512,8 +1516,35 @@ func _build_diag_block() -> String:
 		lines.append("ANCHOR DESKTOP (cam on anchor) CAMH %.2f" % EYE_ANCHOR.y)
 	lines.append(_diag_hand_line("L"))
 	lines.append(_diag_hand_line("R"))
+	lines.append(_diag_zone_line())
 	lines.append("WHEEL %+d DEG JIT %s" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF"])
 	return "\n".join(lines)
+
+
+func _diag_zone_line() -> String:
+	# Fix Pass 10 (Item 0): per-control IN-ZONE readout - for
+	# each dash control, which hand (L / R / B = both / - =
+	# neither) currently sits inside its activation zone, by
+	# the production _dash_ctl_near. Run 10's forensics had to
+	# be reconstructed from a whole video; with this line the
+	# owner's next capture states outright whether a dead
+	# lever is a dead CHANNEL (grip reads 0.00 above) or a
+	# hand that never entered the zone.
+	var short: Dictionary = {"switch0": "FUEL", "switch1": "SPARK",
+		"switch2": "BOOST", "restart": "RST", "lean": "LEAN", "track": "TRK"}
+	var near_l: int = _dash_ctl_near(_hand_pos("L"))
+	var near_r: int = _dash_ctl_near(_hand_pos("R"))
+	var tags: Array[String] = []
+	for i: int in dash_ctl_nodes.size():
+		var who: String = "-"
+		if near_l == i and near_r == i:
+			who = "B"
+		elif near_l == i:
+			who = "L"
+		elif near_r == i:
+			who = "R"
+		tags.append("%s:%s" % [String(short.get(dash_ctl_kinds[i], "?")), who])
+	return "ZONE " + " ".join(tags)
 
 
 func _diag_hand_line(hand: String) -> String:
@@ -1963,11 +1994,23 @@ func _seg_point_dist(a: Vector3, b: Vector3, p: Vector3) -> float:
 
 
 func _dash_ctl_near(world_pos: Vector3) -> int:
+	# Fix Pass 10 (Item 0): the NEAREST control inside the radius
+	# wins, not the first listed. The zones just touch at the
+	# switch row's midpoints (controls 0.30 m apart, radius
+	# 0.15 m), and first-match made the winner there an accident
+	# of list order - with buttons in the row (restart sits
+	# 0.17 m from the Fix Pass 10 track button), an in-between
+	# hand must fire the control it is actually closest to,
+	# never a neighbour it merely also grazes.
+	var best: int = -1
+	var best_d: float = DASH_CTL_RADIUS
 	for i: int in dash_ctl_nodes.size():
 		var seg: Array[Vector3] = _dash_ctl_segment(i)
-		if _seg_point_dist(seg[0], seg[1], world_pos) < DASH_CTL_RADIUS:
-			return i
-	return -1
+		var d: float = _seg_point_dist(seg[0], seg[1], world_pos)
+		if d < best_d:
+			best_d = d
+			best = i
+	return best
 
 
 func _activate_dash_ctl(kind: String) -> void:
