@@ -2559,41 +2559,42 @@ func _build_cockpit() -> void:
 		_box(spiv, Vector3(0.055, 0.20, 0.055), Vector3(0, 0.08, 0), _mat(Color(0.65, 0.65, 0.68)))
 		_box(spiv, Vector3(0.085, 0.06, 0.085), Vector3(0, 0.19, 0), _mat_unshaded(seat_cols[si]))
 		_register_dash_ctl(spiv, seat_kinds[si])
-	# Fix Pass 11 (Item 4): the DROP LEVER on the RIGHT pod -
-	# the recovery release, worked like the real thing: a big
-	# lever (0.50 m shaft, red knob) on the pod top at
-	# (0.72, 0.69, -0.10), 0.80 m from the wheel hub - well
-	# outside the 0.40 m wheel-grab radius, so the two grabs
-	# can never fight. Rest angle leans it forward; the pull
-	# sweeps it back toward the driver through the detent.
-	# Grab/pull/spring/haptic live in _poll_grab /
-	# _update_drop_lever; Item 2's audit covers its zone.
-	# Fix Pass 12 (Item 1): the lever becomes a GEAR SHIFTER.
-	# Run 12's verdict on the FP11 placement: "too far back of
-	# player seating, should be moved forward, shortened by
-	# 1/3, more like a gear shift." The pivot moves to the
-	# right pod's FORWARD end (0.72, 0.71, -0.60) - beside the
-	# wheel, at hanging-hand height - and the shaft shortens
-	# 0.50 -> 0.33 m (knob centre 0.35). The MECHANISM is
-	# untouched: same rest/detent/max angles, same per-hand
-	# latch, same hand-arc follow (the pull reads the hand's
-	# angle about the pivot, so shaft length never entered
-	# it), same spring-home, same haptic pulse. Clearances at
-	# the new spot, computed: rest knob (0.72, 1.04, -0.70) is
-	# 0.78 m from the wheel hub (grab radius 0.40) and 0.21 m
-	# from the TRK dash button (zone radius 0.15); the shaft
-	# at x = 0.72 never crosses the dash slab (x +-0.62).
-	_box(car_body, Vector3(0.18, 0.03, 0.30), Vector3(0.72, 0.70, -0.60), _mat(Color(0.10, 0.10, 0.12)))
+		# Fix Pass 13 (Item 5): the pivots are kept so the
+		# held lever can DEFLECT (see _update_ctl_articulation).
+		seat_pivots.append(spiv)
+	# Fix Pass 13 (Item 2): the DROP LEVER at the CENTRE of
+	# the dash - the FP11 pod lever and FP12's forward
+	# gear-shifter placement are both superseded (the lever
+	# leaves the right pod entirely). The owner, run 13: "I
+	# want the drop lever where right controller is pointing,
+	# middle of dash, it should go up and down." A bracket
+	# on the dash's front-top edge carries the pivot at
+	# (0, 0.88, -0.70); the shaft (0.34 m, red knob at 0.36)
+	# stands straight UP at rest and the pull arcs it DOWN
+	# toward the driver through the detent (see the
+	# DROP_LEVER constants). The MECHANISM is untouched from
+	# FP11/12: per-hand latch, hand-arc follow (the pull
+	# reads the hand's angle about the pivot), spring-home,
+	# haptic pulse - only the pivot's home and the throw's
+	# angles moved. Either hand may work it (centre dash).
+	# Clearances, computed: the rest knob (0, 1.24, -0.70)
+	# is 0.44 m from the wheel hub (grab radius 0.40 - a hand
+	# on the knob does not also read as a wheel grab); the
+	# knob's arc stays >= ~6 cm off the wheel rim's plane;
+	# the lean needle moved left (below) out of the arc.
+	_box(car_body, Vector3(0.16, 0.06, 0.18), Vector3(0, 0.90, -0.70), _mat(Color(0.10, 0.10, 0.12)))
 	drop_lever_pivot = Node3D.new()
 	drop_lever_pivot.name = "DropLever"
-	drop_lever_pivot.position = Vector3(0.72, 0.71, -0.60)
+	drop_lever_pivot.position = Vector3(0, 0.88, -0.70)
 	drop_lever_pivot.rotation.x = DROP_LEVER_REST_RAD
 	car_body.add_child(drop_lever_pivot)
-	_box(drop_lever_pivot, Vector3(0.06, 0.33, 0.06), Vector3(0, 0.165, 0), _mat(Color(0.55, 0.55, 0.58)))
-	_box(drop_lever_pivot, Vector3(0.11, 0.11, 0.11), Vector3(0, 0.35, 0), _mat_unshaded(Color(0.90, 0.12, 0.10)))
+	_box(drop_lever_pivot, Vector3(0.05, 0.34, 0.05), Vector3(0, 0.17, 0), _mat(Color(0.55, 0.55, 0.58)))
+	_box(drop_lever_pivot, Vector3(0.10, 0.10, 0.10), Vector3(0, 0.36, 0), _mat_unshaded(Color(0.90, 0.12, 0.10)))
 	# Lean indicator needle on the dash (experiment feedback)
 	# (rides up with the raised wheel so it stays clear of the rim)
-	lean_needle = _box(car_body, Vector3(0.03, 0.13, 0.02), Vector3(0, 1.155, -0.615), _mat_unshaded(Color(0.2, 0.9, 1.0)))
+	# Fix Pass 13 (Item 2): shifted left off the centreline -
+	# the centre drop lever's arc sweeps the space it sat in.
+	lean_needle = _box(car_body, Vector3(0.03, 0.13, 0.02), Vector3(-0.18, 1.155, -0.615), _mat_unshaded(Color(0.2, 0.9, 1.0)))
 	# Big state label above the dash
 	state_label = Label3D.new()
 	state_label.position = Vector3(0, 1.52, -0.85)
@@ -2697,6 +2698,50 @@ func _build_cockpit() -> void:
 func _register_dash_ctl(node: Node3D, kind: String) -> void:
 	dash_ctl_nodes.append(node)
 	dash_ctl_kinds.append(kind)
+	dash_ctl_base_y.append(node.position.y) # FP13: button-dip rest height
+
+
+# --- Fix Pass 13 (Item 5): articulation ---
+# Run 13: "the seat levers actuate and work, but I notice the
+# lever doesn't actually move." The rule this item enforces:
+# every cockpit control that ACTUATES also ARTICULATES. The
+# drop lever already swings with the hand (and springs home);
+# the wheel spins and, since Item 3, the front road wheels
+# show the steer. The seat levers now DEFLECT while held -
+# SEAT+ tips up (toward upright), SEAT- presses forward-down,
+# matching the seat's motion - and every dash BUTTON dips
+# 8 mm while a gripping hand holds it fired. Momentary
+# buttons' other feedback stays their visible effect (needle,
+# panel, world), stated in the pass report's audit.
+const SEAT_LEVER_REST_DEG: float = -20.0
+const SEAT_TRIM_DEFLECT_DEG: float = 18.0
+const BTN_DIP_M: float = 0.008
+var seat_pivots: Array[Node3D] = [] # [seatup, seatdn] pivots
+var dash_ctl_base_y: Array[float] = []
+var seat_key_dir: float = 0.0 # desktop PgUp/PgDn direction, per frame
+
+
+func _update_ctl_articulation(delta: float) -> void:
+	# Seat levers: deflect toward held, spring back to rest.
+	var held_kind: String = _seat_trim_held()
+	for si: int in seat_pivots.size():
+		var kind: String = "seatup" if si == 0 else "seatdn"
+		var target: float = SEAT_LEVER_REST_DEG
+		if held_kind == kind or (seat_key_dir > 0.0 and kind == "seatup") \
+				or (seat_key_dir < 0.0 and kind == "seatdn"):
+			target += SEAT_TRIM_DEFLECT_DEG if kind == "seatup" else -SEAT_TRIM_DEFLECT_DEG
+		var rd: Vector3 = seat_pivots[si].rotation_degrees
+		rd.x = move_toward(rd.x, target, 240.0 * delta)
+		seat_pivots[si].rotation_degrees = rd
+	# Dash buttons: dip while any gripping hand holds them.
+	for ci: int in dash_ctl_nodes.size():
+		if dash_ctl_kinds[ci].begins_with("seat"):
+			continue
+		var dipped: bool = (bool(gripping["L"]) and int(dash_ctl_fired["L"]) == ci) \
+			or (bool(gripping["R"]) and int(dash_ctl_fired["R"]) == ci)
+		var node: Node3D = dash_ctl_nodes[ci]
+		var ty: float = dash_ctl_base_y[ci] - (BTN_DIP_M if dipped else 0.0)
+		node.position.y = move_toward(node.position.y, ty, 0.08 * delta)
 
 
 func _panel_text() -> String:
@@ -2968,10 +3013,13 @@ func _poll_inputs(delta: float) -> void:
 		in_boost = true
 	# Fix Pass 11 (Item 1): desktop seat trim (the cockpit levers'
 	# keyboard twin; hold to move).
+	seat_key_dir = 0.0 # Fix Pass 13 (Item 5): feeds the lever deflection
 	if Input.is_key_pressed(KEY_PAGEUP):
 		_apply_seat_trim(seat_trim + SEAT_TRIM_RATE * delta)
+		seat_key_dir = 1.0
 	if Input.is_key_pressed(KEY_PAGEDOWN):
 		_apply_seat_trim(seat_trim - SEAT_TRIM_RATE * delta)
+		seat_key_dir = -1.0
 	# desktop steering drives the wheel toward a target
 	var steer_key: float = 0.0
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
@@ -4071,6 +4119,7 @@ func _physics_process(delta: float) -> void:
 	if mode != MODE_DRIVE:
 		slip_state = 0.0 # tires unloaded: no slip, no skid
 	_update_drop_lever(delta) # Fix Pass 11 (Item 4): spring + pose
+	_update_ctl_articulation(delta) # Fix Pass 13 (Item 5): seat levers + button dips
 	_update_lean_reading()
 	_update_suspension(delta)
 	_update_body_spring(delta)
