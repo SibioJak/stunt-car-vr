@@ -448,6 +448,13 @@ func _run() -> void:
 	main._set_track("ribbon")
 	await frames(5)
 
+	# Fix Pass 12 (Item 2): the info boards spawn HIDDEN (the
+	# toggle round-trip itself is stage 27, at the end - the
+	# spawn state has to be asserted here, before anything
+	# could have toggled them).
+	check(not main.panels_visible and not main.panel_root.visible and not main.diag_root.visible,
+		"boot: both info boards start hidden (FP12 item 2)")
+
 	# Stage 1: Drop Start dangle - the pendulum actually swings the car.
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
 		"stage1: race opens dangling at Drop Start")
@@ -2552,6 +2559,30 @@ func _run() -> void:
 	var pitch48_26: float = main.engine_player.pitch_scale
 	check(absf(pitch34_26 - 2.11) < 0.12 and absf(pitch48_26 - 2.65) < 0.12 and pitch48_26 > pitch34_26 + 0.4,
 		"stage26: engine pitch rescaled (34 m/s: %.2f, 48 m/s: %.2f)" % [pitch34_26, pitch48_26])
+
+	# ---------- stage 27: Fix Pass 12 (Item 2) - panel toggle ----
+	# The boards spawn hidden (asserted at boot). One switch -
+	# production _toggle_panels(), driven here through the real
+	# desktop input path (a Tab key event into _input) and back
+	# - flips BOTH boards together, and the prep/DIAG content
+	# keeps refreshing while hidden (visibility is display
+	# state, not a data gate).
+	var tab_ev := InputEventKey.new()
+	tab_ev.keycode = KEY_TAB
+	tab_ev.pressed = true
+	main._input(tab_ev)
+	check(main.panels_visible and main.panel_root.visible and main.diag_root.visible,
+		"stage27: Tab calls both boards up")
+	main._input(tab_ev)
+	check(not main.panels_visible and not main.panel_root.visible and not main.diag_root.visible,
+		"stage27: Tab makes both boards go away")
+	main.diag_block = "FP12 STAGE27 MARKER"
+	main._update_panel()
+	check(main.diag_label.text == "FP12 STAGE27 MARKER" and main.panel_label.text.contains("Panels: R B button"),
+		"stage27: DIAG/panel content refreshes while hidden; panel lists the toggle")
+	main._toggle_panels()
+	check(main.panels_visible and main.panel_root.visible and main.diag_root.visible,
+		"stage27: production toggle shows both boards (the R B path calls this)")
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")

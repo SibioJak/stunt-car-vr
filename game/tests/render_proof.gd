@@ -278,7 +278,7 @@ func _run() -> void:
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call drone",
 			"restart", "lean", "track", "Recenter", "SPACE", "1/2/3", "W/S", "V track",
 			"DIAG", "ANCHOR", "CAMH", "FRC", "Jitter", "JIT",
-			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT"]:
+			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP SHIFTER", "Panels", "TAB"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)
 	check(main.wheel_node != null, "grab wheel exists")
 	check(main.switch_pivots.size() == 3, "3 prep switches on the dash")
@@ -312,8 +312,20 @@ func _run() -> void:
 	check(nvr_new < nvr_old - 0.5,
 		"seat raise buys visible road (%.1f m now, %.1f m at the old height)" % [nvr_new, nvr_old])
 
+	# Fix Pass 12 (Item 2): capture 1 is now shot the way the
+	# owner drives - boards HIDDEN (their spawn state). Assert
+	# that state, take the shot, then call the boards up
+	# through the production toggle for the label checks and
+	# close-ups below.
+	check(not main.panels_visible and not main.panel_root.visible and not main.diag_root.visible,
+		"boards are hidden at spawn (FP12 item 2 - capture 1 shows the driving view)")
+
 	# Capture 1: cockpit from the eye anchor itself, at the Drop Start.
 	await snap(main.fallback_cam, "cockpit_view.png")
+
+	main._toggle_panels()
+	check(main.panels_visible and main.panel_root.visible and main.diag_root.visible,
+		"production toggle calls both boards up for the label checks")
 
 	# Fix Pass 4: both boards fully in frame and unobstructed from the
 	# anchored eye (the fallback camera sits exactly on the anchor).

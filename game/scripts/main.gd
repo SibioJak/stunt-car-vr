@@ -624,6 +624,13 @@ var prep_label: Label3D
 var diag_label: Label3D
 var panel_root: Node3D
 var diag_root: Node3D
+# Fix Pass 12 (Item 2): the two info BOARDS are hidden by
+# default and toggled as a pair (right-controller B button /
+# desktop Tab). Run 12: "Need to do something about the big
+# panels, hard to see. Button calls them up, makes em go
+# away." Session state only, never persisted. The mid-view
+# state/prep banners are NOT panels and stay always-on.
+var panels_visible: bool = false
 
 var seat_offset: Node3D
 var anchor_pending: bool = false
@@ -2422,7 +2429,7 @@ func _build_cockpit() -> void:
 	panel_label = Label3D.new()
 	panel_label.position = Vector3(-0.368, 0.555, 0.02)
 	panel_label.font_size = 30
-	panel_label.pixel_size = 0.00115
+	panel_label.pixel_size = 0.00105 # FP12: the controls list grew (shifter/panels lines); ~9% smaller type keeps it on its board
 	panel_label.width = 640.0
 	panel_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel_label.modulate = Color(0.92, 0.95, 1.0)
@@ -2462,6 +2469,10 @@ func _build_cockpit() -> void:
 	diag_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	diag_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	diag_root.add_child(diag_label)
+	# Fix Pass 12 (Item 2): boards start hidden (see
+	# panels_visible) - _toggle_panels() is the one switch.
+	panel_root.visible = false
+	diag_root.visible = false
 	_update_panel()
 
 
@@ -2485,19 +2496,19 @@ func _panel_text() -> String:
 	lines.append("Grab wheel: GRIP near wheel, turn hand")
 	lines.append("Throttle R trigger / Brake L trigger")
 	lines.append("Boost: R A button (while driving)")
-	lines.append("Release: pull the DROP LEVER (right pod)")
+	lines.append("Release: pull the DROP SHIFTER (right pod, fwd)")
 	lines.append("Flip switch: GRIP near a dash switch")
 	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
 	lines.append("Call drone: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
-	lines.append("Dash buttons (GRIP near):")
-	lines.append("red restart, green lean, purple track")
+	lines.append("Dash buttons (GRIP): red restart, green lean, purple track")
 	lines.append("Recenter: L stick click / BOTH grips")
 	lines.append("restart race: L Y button")
+	lines.append("Panels: R B button (show/hide)")
 	lines.append("-- DESKTOP --")
 	lines.append("W/S throttle/brake, A/D steer, SHIFT boost")
 	lines.append("SPACE release, 1/2/3 flip FUEL/SPARK/BOOST")
-	lines.append("L lift, T lean, J jitter, Q/E lean body")
+	lines.append("TAB panels, L lift, T lean, J jitter, Q/E lean body")
 	lines.append("PgUp/PgDn seat trim, R restart race")
 	lines.append("C recenter, V track")
 	# Fix Pass 4: the DIAG block no longer appends here - it renders
@@ -2510,6 +2521,18 @@ func _update_panel() -> void:
 		panel_label.text = _panel_text()
 	if diag_label != null:
 		diag_label.text = diag_block
+
+
+## Fix Pass 12 (Item 2): the one panel switch - both boards
+## together, hidden by default. Label text keeps refreshing
+## while hidden (prep and DIAG flows are unaffected); only
+## the boards' visibility flips.
+func _toggle_panels() -> void:
+	panels_visible = not panels_visible
+	if panel_root != null:
+		panel_root.visible = panels_visible
+	if diag_root != null:
+		diag_root.visible = panels_visible
 
 
 # Fix Pass 3 (Item 1): the DIAG block. Refreshed at ~5 Hz from
@@ -2756,8 +2779,14 @@ func _poll_inputs(delta: float) -> void:
 		if _btn_edge("l_ax", _input_bool(lc, &"ax_button")):
 			if mode == MODE_DRIVE:
 				_call_drone()
+		# Fix Pass 12 (Item 2): the right B button is the PANEL
+		# toggle now (the owner's run-12 ask: "Button calls
+		# them up, makes em go away"). It used to toggle the
+		# lean experiment; lean still toggles from the green
+		# dash button (GRIP) and desktop T - the panel never
+		# listed R B for lean, and now lists it for panels.
 		if _btn_edge("r_by", _input_bool(rc, &"by_button")):
-			_toggle_lean()
+			_toggle_panels()
 		if _btn_edge("l_by", _input_bool(lc, &"by_button")):
 			start_race()
 		if _btn_edge("l_stick_click", _input_bool(lc, &"primary_click")):
@@ -2793,6 +2822,8 @@ func _input(event: InputEvent) -> void:
 			_toggle_jitter()
 		KEY_R:
 			start_race()
+		KEY_TAB:
+			_toggle_panels()
 		KEY_C:
 			_recenter()
 		KEY_1:
