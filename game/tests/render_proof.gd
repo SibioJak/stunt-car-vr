@@ -394,21 +394,38 @@ func _run() -> void:
 		main.car_body.remove_child(mk2)
 		mk2.free()
 
+	# Fix Pass 13 (Item 1): the dash top AFTER the prep
+	# removal - a dedicated look down at the console: bare
+	# where the three switches stood, the three buttons and
+	# the centre drop lever (at rest, standing up) in frame.
+	var cam_dt := Camera3D.new()
+	main.car_body.add_child(cam_dt)
+	cam_dt.position = Vector3(0.0, 1.80, 0.55)
+	await physics_frame
+	await physics_frame
+	cam_dt.look_at(main.car_body.global_transform * Vector3(0, 0.90, -0.62), Vector3.UP)
+	await snap(cam_dt, "dash_top_view.png")
+	cam_dt.queue_free()
+
 	# Fix Pass 11 (Item 4): the drop lever's own portrait - it
 	# sits beside the driver, outside the eye camera's frame,
 	# so it gets a dedicated camera: lever posed mid-pull
 	# (0.45 rad, past the detent) on the right pod.
 	# Fix Pass 12 (Item 1): the portrait reframes on the
 	# SHIFTER - forward on the right pod, beside the wheel.
-	check(main.drop_lever_pivot != null, "the drop shifter is built on the right pod")
+	# Fix Pass 13 (Item 2): the portrait reframes again on
+	# the CENTRE lever - pivot at the middle of the dash,
+	# posed mid-pull (0.45 rad; the detent is 0.50 now, so
+	# this is the loaded moment just before it lets go).
+	check(main.drop_lever_pivot != null, "the drop lever is built at the centre dash")
 	main.drop_lever_angle = 0.45
 	main.drop_lever_pivot.rotation.x = 0.45
 	var cam_dl := Camera3D.new()
 	main.car_body.add_child(cam_dl)
-	cam_dl.position = Vector3(1.50, 1.32, 0.10)
+	cam_dl.position = Vector3(0.95, 1.40, 0.15)
 	await physics_frame
 	await physics_frame
-	cam_dl.look_at(main.car_body.global_transform * Vector3(0.72, 0.93, -0.55), Vector3.UP)
+	cam_dl.look_at(main.car_body.global_transform * Vector3(0, 1.02, -0.68), Vector3.UP)
 	await snap(cam_dl, "drop_lever_view.png")
 	cam_dl.queue_free()
 	main.drop_lever_angle = main.DROP_LEVER_REST_RAD

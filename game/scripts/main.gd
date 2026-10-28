@@ -708,16 +708,24 @@ var anchor_bake_yaw: bool = false
 # now. Reported as a brief/code mismatch in the pass report.
 var seat_trim: float = 0.0
 # --- Fix Pass 11 (Item 4): the drop lever ---
-# The recovery release is a big physical lever on the RIGHT
-# pod, in the cockpit's lever-forward language: grab the
-# upper shaft, pull it toward you through a real throw; past
-# the DETENT the car lets go. Let go of the grip earlier and
-# it springs back and nothing drops. Angles are the pivot's
-# rotation.x (lever-local +Y is the shaft): rest leans
-# forward, the pull sweeps it back toward the driver.
-const DROP_LEVER_REST_RAD: float = -0.30
-const DROP_LEVER_DETENT_RAD: float = 0.40
-const DROP_LEVER_MAX_RAD: float = 0.65
+# The recovery release is a big physical lever, in the
+# cockpit's lever-forward language: grab the upper shaft,
+# pull it through a real throw; past the DETENT the car lets
+# go. Let go of the grip earlier and it springs back and
+# nothing drops. Angles are the pivot's rotation.x
+# (lever-local +Y is the shaft).
+# Fix Pass 12 (Item 1) moved FP11's pod lever forward into a
+# gear shifter; Fix Pass 13 (Item 2) supersedes both
+# placements at the owner's run-13 direction: the lever now
+# stands at the CENTRE of the dash, where the right hand
+# naturally points, and the throw is VERTICAL - the knob
+# starts UP (rest = straight up off the dash face) and the
+# driver pulls it DOWN toward himself through the detent.
+# DOWN is the direction that reads as "release the load":
+# the crane-release pull. Rest 0.0, detent +0.50, max +0.70.
+const DROP_LEVER_REST_RAD: float = 0.0
+const DROP_LEVER_DETENT_RAD: float = 0.50
+const DROP_LEVER_MAX_RAD: float = 0.70
 const DROP_LEVER_GRAB_RADIUS: float = 0.16
 const DROP_LEVER_SPRING_RATE: float = 3.5 # rad/s back to rest
 var drop_lever_pivot: Node3D
@@ -2769,6 +2777,20 @@ func _build_diag_block() -> String:
 	# already (the proof's cockpit capture showed both wrapping
 	# when SEAT and the two new zone tags first landed).
 	lines.append("WHEEL %+d DEG JIT %s SEAT %+.2f" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF", seat_trim])
+	# Fix Pass 13 (Item 1): the last touchdown's connection,
+	# same numbers the readout showed - so a capture carries
+	# the ruling with it.
+	if contact_grade == "-":
+		lines.append("CONTACT -")
+	else:
+		lines.append("CONTACT %s LAT %.1f HDG %+.1f" % [contact_grade, contact_lat_speed, contact_head_err])
+	# Fix Pass 13 (Item 4): the hang input log - the last six
+	# face-button edges during MODE_HANG, oldest first, each
+	# "racetime:TAG" (RA/RB/LX/LY).
+	if hang_btn_log.is_empty():
+		lines.append("BTN -")
+	else:
+		lines.append("BTN " + " ".join(hang_btn_log))
 	return "\n".join(lines)
 
 
@@ -2972,40 +2994,17 @@ func _poll_inputs(delta: float) -> void:
 		var lc: XRController3D = hand_ctrl["L"]
 		in_throttle = maxf(in_throttle, _input_float(rc, &"trigger"))
 		in_brake = maxf(in_brake, _input_float(lc, &"trigger"))
-		if _input_bool(rc, &"ax_button"):
-			in_boost = true
 		_poll_grab("L", lc, delta)
 		_poll_grab("R", rc, delta)
-		# Fix Pass 11 (Item 1): squeeze BOTH grips = recenter,
-		# ported with the Look Test patch-2 anchor cure (there it
-		# was the owner's chosen recenter; the L stick click
-		# below remains as the other input). gripping[] was just
-		# refreshed by the _poll_grab calls above.
-		if _btn_edge("both_grips", bool(gripping["L"]) and bool(gripping["R"])):
-			_recenter()
-		# edges
+		# Fix Pass 13 (Item 4): the face/stick buttons live in
+		# _poll_xr_buttons now (hang gates + the hang input
+		# log); gripping[] was just refreshed by the grabs.
 		# Fix Pass 11 (Item 4): the XR right-trigger release is
 		# RETIRED - the drop lever is THE release now (the panel
 		# says so). What remains as a non-lever path is desktop /
 		# test only: SPACE and the stage hook (test_release_queued
 		# below).
-		if _btn_edge("l_ax", _input_bool(lc, &"ax_button")):
-			if mode == MODE_DRIVE:
-				_call_drone()
-		# Fix Pass 12 (Item 2): the right B button is the PANEL
-		# toggle now (the owner's run-12 ask: "Button calls
-		# them up, makes em go away"). It used to toggle the
-		# lean experiment; lean still toggles from the green
-		# dash button (GRIP) and desktop T - the panel never
-		# listed R B for lean, and now lists it for panels.
-		if _btn_edge("r_by", _input_bool(rc, &"by_button")):
-			_toggle_panels()
-		if _btn_edge("l_by", _input_bool(lc, &"by_button")):
-			start_race()
-		if _btn_edge("l_stick_click", _input_bool(lc, &"primary_click")):
-			_recenter()
-		if _btn_edge("r_stick_click", _input_bool(rc, &"primary_click")):
-			_toggle_jitter()
+		_poll_xr_buttons(delta)
 	# test overrides win last
 	if test_mode:
 		in_throttle = test_throttle
@@ -3014,6 +3013,129 @@ func _poll_inputs(delta: float) -> void:
 		if test_release_queued:
 			test_release_queued = false
 			_do_release()
+
+
+# --- Fix Pass 13 (Item 4): the hang button gate + input log ---
+# Run 13: while droned, mashing around the left stick for X
+# (drone call) kept hitting Y (restart) - "weird influence on
+# the chains or view" - and a wandering grip pair fired the
+# both-grips recenter mid-sway. The pendulum reads NO player
+# input; both mysteries were this block. The gates:
+#   - Left Y (restart) in MODE_HANG needs a LONG PRESS
+#     (>= HANG_RESTART_HOLD_S); everywhere else the edge
+#     fires at once, as before.
+#   - Right A (boost) is inert in the hang, and a press HELD
+#     through the hang cannot arm boost at touchdown: the
+#     first boost after a drop is always a fresh press.
+#   - The both-grips recenter is suppressed in MODE_HANG and
+#     while a cockpit control (drop lever, wheel, seat trim)
+#     is latched/held. The stick-click recenter is the
+#     deliberate route and is never gated.
+#   - Left X stays exactly as gated as it was (DRIVE only) -
+#     asserted in stage 32.
+# And every face-button edge during MODE_HANG is logged to
+# the DIAG board (BTN line) with its race time, so the next
+# mystery names itself.
+const HANG_RESTART_HOLD_S: float = 0.8
+var boost_arm_blocked: bool = false
+var y_hold_t: float = 0.0
+var y_hold_fired: bool = false
+var hang_btn_log: Array[String] = []
+var test_btn: Dictionary = {"L": {}, "R": {}} # posed button states (test_mode)
+
+
+func _btn_state(hand: String, ctrl: XRController3D, action: StringName) -> bool:
+	# test_mode substitutes posed button states (same pattern
+	# as test_grip in _poll_grab) so the smoke drives the
+	# production button logic headless.
+	if test_mode and (test_btn[hand] as Dictionary).has(action):
+		return bool((test_btn[hand] as Dictionary)[action])
+	return _input_bool(ctrl, action)
+
+
+func _hang_btn_note(tag: String) -> void:
+	hang_btn_log.append("%d:%s" % [int(race_time), tag])
+	while hang_btn_log.size() > 6:
+		hang_btn_log.pop_front()
+
+
+func _seat_trim_held() -> String:
+	# "" or the seat ctl kind a gripping hand is holding in
+	# its zone right now (dash_ctl_fired is the level latch).
+	for h: String in ["L", "R"]:
+		var fi: int = int(dash_ctl_fired[h])
+		if bool(gripping[h]) and fi >= 0 and fi < dash_ctl_kinds.size():
+			var k: String = dash_ctl_kinds[fi]
+			if k == "seatup" or k == "seatdn":
+				return k
+	return ""
+
+
+func _recenter_allowed() -> bool:
+	# The both-grips recenter's gate (see the item header).
+	# The stick-click recenter never consults this.
+	if mode == MODE_HANG:
+		return false
+	if drop_lever_hand != "" or grab_hand != "":
+		return false
+	return _seat_trim_held() == ""
+
+
+func _poll_xr_buttons(delta: float) -> void:
+	var rc: XRController3D = hand_ctrl["R"]
+	var lc: XRController3D = hand_ctrl["L"]
+	var a_now: bool = _btn_state("R", rc, &"ax_button")
+	var b_now: bool = _btn_state("R", rc, &"by_button")
+	var x_now: bool = _btn_state("L", lc, &"ax_button")
+	var y_now: bool = _btn_state("L", lc, &"by_button")
+	var a_edge: bool = _btn_edge("r_ax", a_now)
+	var b_edge: bool = _btn_edge("r_by", b_now)
+	var x_edge: bool = _btn_edge("l_ax", x_now)
+	var y_edge: bool = _btn_edge("l_by", y_now)
+	if mode == MODE_HANG:
+		if a_edge:
+			_hang_btn_note("RA")
+		if b_edge:
+			_hang_btn_note("RB")
+		if x_edge:
+			_hang_btn_note("LX")
+		if y_edge:
+			_hang_btn_note("LY")
+	# Fix Pass 11 (Item 1): squeeze BOTH grips = recenter.
+	# Fix Pass 13 (Item 4): gated by _recenter_allowed().
+	if _btn_edge("both_grips", bool(gripping["L"]) and bool(gripping["R"])) and _recenter_allowed():
+		_recenter()
+	# Right A: boost (hang rules in the item header).
+	if mode == MODE_HANG and a_now:
+		boost_arm_blocked = true
+	if not a_now:
+		boost_arm_blocked = false
+	if a_now and not boost_arm_blocked:
+		in_boost = true
+	# Left X: the drone call - DRIVE only, unchanged.
+	if x_edge and mode == MODE_DRIVE:
+		_call_drone()
+	# Fix Pass 12 (Item 2): the right B button is the PANEL
+	# toggle (the owner's run-12 ask). Deliberate in every
+	# mode, hang included - and logged there like the rest.
+	if b_edge:
+		_toggle_panels()
+	# Left Y: restart (hang long-press in the item header).
+	if y_now:
+		y_hold_t += delta
+		if mode == MODE_HANG:
+			if y_hold_t >= HANG_RESTART_HOLD_S and not y_hold_fired:
+				y_hold_fired = true
+				start_race()
+		elif y_edge:
+			start_race()
+	else:
+		y_hold_t = 0.0
+		y_hold_fired = false
+	if _btn_edge("l_stick_click", _btn_state("L", lc, &"primary_click")):
+		_recenter()
+	if _btn_edge("r_stick_click", _btn_state("R", rc, &"primary_click")):
+		_toggle_jitter()
 
 
 func _input(event: InputEvent) -> void:
