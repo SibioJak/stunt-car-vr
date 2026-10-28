@@ -97,6 +97,12 @@ const WHEEL_WID_R: float = 0.36 # rear slick width, m (visibly wider)
 # (debug_body_width_m: the body measures 1.80 m, so the road
 # is 6.67 bodies wide - Crammond's own ratio was ~4.74).
 const HALF_WIDTH: float = 6.0
+# Fix Pass 12 (Item 4): the amber edge strips widened
+# 0.36 -> 0.55 m. They are the road's far read: at 300-600 m
+# a 0.36 m strip is ~1 px and the dash gaps erase it between
+# samples; 0.55 m survives ~1.5x farther. Same colour, same
+# dash rhythm, same 0.02 raise - only the width changed.
+const EDGE_STRIP_W: float = 0.55
 # Fix Pass 9 (Item 2) - free-heading steering model constants.
 # The grabbed wheel (+-180 deg) maps to a front-wheel angle of
 # +-MAX_LOCK_RAD, scaled down with speed (a full lock at 30 m/s
@@ -880,7 +886,22 @@ func _build_environment() -> void:
 	# to fade - the desert hills at 600-900 m soften into haze so a
 	# horizon reads, while the ribbon at driving distances (tens of
 	# metres) is untouched.
-	env.fog_density = 0.0003
+	# Fix Pass 12 (Item 4): cut to 0.00012. The run-12 "part of
+	# the road is invisible till you're in it" was DIAGNOSED,
+	# not guessed (ID-pass renders at staged stations): not
+	# pop-in (the ribbon is one merged mesh per track part,
+	# visibility ranges all zero), not the far plane (4000 m).
+	# The ribbon IS on screen - washed out: at the dip/valley
+	# sightlines 8.7-14.1% of ribbon pixels sat within 0.10 RGB
+	# of their background band (vs 1.9-4.8% on straights),
+	# because from there the visible ribbon is 0.6-2.5 km away
+	# and the fog mixes the near-black surface most of the way
+	# to the horizon colour, while the thin dashed edges alias
+	# away. The density cut is sized to roughly halve the fog
+	# factor at 1 km; the hills keep some haze, and at driving
+	# distances (< 150 m) the change is negligible either way.
+	# The edge strips widened with it (EDGE_STRIP_W).
+	env.fog_density = 0.00012
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
@@ -1871,10 +1892,10 @@ func _build_track_meshes(d: Dictionary) -> void:
 		# to measure speed against.
 		if i % 5 < 3:
 			_add_quad(edge_pos, edge_nrm, edge_col,
-				l0 + u0 * 0.02, l0 + s0 * 0.36 + u0 * 0.02, l1 + s1 * 0.36 + u1 * 0.02, l1 + u1 * 0.02,
+				l0 + u0 * 0.02, l0 + s0 * EDGE_STRIP_W + u0 * 0.02, l1 + s1 * EDGE_STRIP_W + u1 * 0.02, l1 + u1 * 0.02,
 				up_avg, edge_c)
 			_add_quad(edge_pos, edge_nrm, edge_col,
-				r0 - s0 * 0.36 + u0 * 0.02, r0 + u0 * 0.02, r1 + u1 * 0.02, r1 - s1 * 0.36 + u1 * 0.02,
+				r0 - s0 * EDGE_STRIP_W + u0 * 0.02, r0 + u0 * 0.02, r1 + u1 * 0.02, r1 - s1 * EDGE_STRIP_W + u1 * 0.02,
 				up_avg, edge_c)
 		# stilts every 10 m down to the ground (Fix Pass 9: the
 		# desert floor, ~60 m below the datum - the stilts now

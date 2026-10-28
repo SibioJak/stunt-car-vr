@@ -903,6 +903,17 @@ func _run() -> void:
 			break
 	check(snapped19, "capture 19: cockpit snapped mid-ring (spur_s %.0f)" % main.spur_s)
 
+	# Capture 24 (Item 4): the dip-valley sightline - the far
+	# read the fog cut and wider edge strips serve. Driver's
+	# view from the valley floor, the road running on across
+	# the desert toward the climb.
+	var cf24: Dictionary = main.track_data["circuit"]["features"]
+	main.debug_warp_to_s(float(cf24["dip_s0"]) + 80.0)
+	for i: int in 30:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+	await snap(main.fallback_cam, "dip_valley_view.png")
+
 	print("---")
 	if failures == 0:
 		print("RENDER PROOF: ALL %d CHECKS PASSED" % checks)
