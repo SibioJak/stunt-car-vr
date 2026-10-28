@@ -1180,6 +1180,237 @@ speed (the original complaint was presentational —
 garnishes built, the owner's eye decides); and the
 loop's feel/stomach verdict, still owed from run 10.
 
+## Fix Pass 13 (after headset run 13: the prep levers
+## are broken live and their meshes never move, the
+## drop lever's pod spot is rejected, the drop control
+## cross-talks into view resets, the wheel can't be
+## grabbed before the drop, A/X exert "weird influence"
+## in the dangle, and "the drone remains a nightmare" —
+## six items, one commit each, plus this README + the
+## pass's proof captures)
+
+Run 13's decisions, taken before the build: PREP IS
+DELETED (the owner: "how fast you can get going should
+be dependent on how well your wheels connect on impact,
+which is judged from the drone sway" — the 2026-10-26
+"good prep = boost" reward is superseded; the rationed
+on-track boost is untouched), and the drone is SPLIT —
+travel and hang become separate modes with separate
+rules. Every number below is from the suites on the
+final tree unless a stage is named.
+
+**Item 1 — prep deleted; touchdown connection is the
+drop reward (364eeb3).** The whole prep machine is out:
+the FUEL/SPARK/BOOST switches, their state, meshes,
+desktop 1/2/3 keys, panel lines, the DIAG prep line and
+the release-time boost gate. The dash control set is
+now exactly [restart, lean, track, seatup, seatdn]. The
+brief's code-verification questions, answered from
+_do_release/_land: (a) lateral velocity at contact is
+inherited IN FULL (pendulum tip velocity → air velocity
+→ the velocity the ground model decomposes at
+touchdown); (b) heading error at a settled dangle is
+~0° — the swing hands over a VELOCITY error, not a
+heading error; (c) per-wheel contact timing DOES NOT
+EXIST — landing is a single event at the car centre,
+and attitude enters only through the misalign term in
+the landing grade. So the connection is graded and
+priced where the model actually keeps it: _land now
+records the contact lateral speed and heading error and
+grades CLEAN (≤1.0 m/s, ≤3°) / SCRUBBED (≤3.0, ≤8°) /
+CROSSED-UP, shown on the drop readout for 2.5 s
+("TOUCHDOWN CLEAN — LAT 0.0 M/S, HDG −0.1 DEG") and on
+the DIAG board's CONTACT line. Tuning, contact path
+only (steering ≤24 m/s is bit-identical — stage 26):
+the 4 m/s landing floor now tops up only FORWARD
+contacts (a backward-crossed touchdown at −1.4 m/s is
+no longer gifted forward pace); during the contact
+transient the engine force is capped by a combined-slip
+ellipse against the lateral budget the bleed is
+spending; and a load ramp (floor 0.10 → 1.0 over
+0.65 s) scales both the bleed and the cap while the
+suspension "loads" — with _bleed_time now integrating
+the same load factor it predicts. Getaway, Drop Start,
+touchdown → 20 m/s, staged releases (stage 30): before
+this tuning the spread was ~0.01 s (the floor and the
+uncapped engine erased the connection entirely); after:
+CLEAN release (no swing) **1.82 s**; the Drop-Start
+seed swing (lat 2.25 m/s at contact, SCRUBBED)
+**2.61 s**; sway-peak release (lat 5.21, CROSSED-UP)
+**3.42 s** — spread **1.60 s** against the brief's 1.5
+target. Two honest notes: the spur driver does NOT get
+the ellipse cap (it is a separate tuned system; the cap
+lives on the ribbon/circuit drive path), and stage 30's
+staging had to learn to wait for the car's facing to
+settle and re-pose at the plumb point before release —
+zeroing the swing state alone left the car falling from
+its last mid-swing pose, an artifact worth up to 5.6 m
+of landing offset that briefly masqueraded as tuning
+signal.
+
+**Item 2 — the drop lever moves to the centre dash,
+vertical throw (653e36f).** The owner rejected the pod
+spot outright: centre of dash, straight up/down. The
+FP11 pod lever and the FP12 shifter are gone; one lever
+now stands on a bracket at car_body (0, 0.88, −0.70),
+shaft straight up at rest (0.0 rad), detent +0.50, max
++0.70. Direction (the brief specified the throw, not
+the sense): pull DOWN toward the driver, through the
+detent — the crane-release pull; up is home, spring
+3.5 rad/s. Grab radius 0.16, staged grab segment
+0.19 m. The lean needle moved left to x −0.18 to clear
+the lever's arc. Stage 23's zone audit re-ran at the
+new geometry: 0 violations, worst handle deviation
+0.000 m; stage 25 re-proves latch/arc/spring on the new
+pivot. New capture: dash_top_view (the post-prep dash
+from above); drop_lever_view reframed on the centre
+lever.
+
+**Item 3 — the wheel is grabbable in the dangle
+(6930894).** Run 13: the steering had to be settable
+before the drop, not discovered after it. In the
+dangle the wheel now latches like the lever does (the
+transport does NOT arm it — Item 6's nothing-arms
+rule), with strict hand mutual exclusion against the
+drop lever. The wheel has NO yaw authority while
+hanging (nothing reads it there); the dialled lock
+simply persists into the release, and the front road
+wheels now SHOW the steer angle (they take the drive
+model's own fa_vis; the rears never yaw) so the setting
+is visible from the seat. Stage 31: 0.60 rad dialled in
+the dangle, wheels at −6.1°, lock intact after the grip
+opens, and the first DRIVE frames steer by it. The
+stage also convicted a real production bug: the
+desktop return-to-centre ran in every mode and silently
+erased a dangle-dialled lock during the fall — centring
+is DRIVE-only now.
+
+**Item 4 — hang button gate + live input logging
+(1fe3473).** Button handling now lives in one handler
+(_poll_xr_buttons, states resolved through _btn_state
+so the suite can drive the production path). In
+MODE_HANG: left Y restart needs a 0.8 s long-press (a
+tap does nothing; in DRIVE/DONE the edge fires as
+before); right A is inert and latches boost_arm_blocked
+until A is seen released, so a button mashed through
+the drop can never become a boost on the ground; left X
+unchanged (DRIVE-only drone call, inert in the hang);
+right B panel toggle stays live in every mode —
+deliberate, it is the owner's window control. The
+both-grips recenter is gated by _recenter_allowed():
+never in the hang, never while the drop lever, wheel or
+a seat trim is latched or held (stick-click recenter is
+never gated). Every face-button edge in the hang is
+logged to the DIAG board's BTN line (last 6, racetime
+tags). Root cause for the run-13 "weird influence on
+the chains": the pendulum reads NO player input at
+all — what the owner felt was the ungated Y restarting
+the run mid-sway and the both-grips recenter sweeping
+the view; both are gated now, and stage 32 proves the
+whole set headless, the X-in-hang and long-press cases
+included.
+
+**Item 5 — every control that actuates also articulates
+(5f9b166).** Run 13: the trim lever meshes never moved.
+The audit, control by control: drop lever swings and
+springs (and Item 2 re-sited it); the wheel spins and
+the front wheels show the steer (Item 3); the seat
+trim levers now deflect ±18° from their −20° rest at
+240°/s while the trim is held — by a gripping hand or
+by PgUp/PgDn — and spring home on release; every other
+dash button dips 8 mm while a gripping hand holds it
+fired (a momentary button's remaining feedback is its
+visible effect: needle, boards, world). Stage 33 drives
+it through the production grab path: SEAT+ held → lever
+at −2.0° and the trim moving; released → back at −20°;
+LEAN dipped exactly 0.0080 m and returned flush.
+
+**Item 6 — drone split: fast direct transport, slow
+hang (75739df).** Travel and hang are separate modes
+now. TRANSPORT flies a DIRECT route — climb-out above
+the catch if needed, then a straight cruise to above
+the station — at a route altitude computed from the
+track itself (highest spine surface within 45 m in
+plan of the chord + HANG_LEN 5.5 + HANG_CLEAR 1.2 +
+1.0 m margin); the FP10/FP12 retrace-the-circuit
+routing is deleted. Cruise 15 → 26 m/s, accel 9 → 10.
+One fix mattered more than the speed: FP12's braking
+curve (decel 5, kept per the brief) previously guarded
+only the final approach leg, so the carrier crossed
+the last route point at 11+ m/s and overshot the
+station by ~5 m with the car swinging into the road
+beside it (stage 28 measured 4 hits, −4.21 m worst
+clearance, ~1700–1830 frames a recovery); the curve now
+guards the whole approach and the measured overshoot
+is 0.00 m. The Drop Start is now a PICKUP, not a
+summon: the car starts on the ground beside the start
+line and the carrier collects it — race start and
+recovery are one machinery, and nothing (lever, wheel)
+arms during transport (stage 34 asserts it). Numbers,
+catch → dangle, end to end: Drop Start pickup **4.6 s**;
+fall A (circuit s900 → drop s742) **16.0 s** — against
+FP11's 1911 frames (21.2 s) for the same recovery and
+FP12's 1482–1559 frames for its carry portion ALONE;
+fall B (hairpin s3279 → s2975) **13.9 s**; the hump-span
+case runs 1711 frames with 0 hits, 0 station brush and
++1.07 m worst car-floor clearance (fall A: +0.85 m).
+The pendulum state is continuous across the
+carry→dangle handover (measured jump 0.035 rad), and in
+the hang the carrier keeps FP12's station-keeping and
+sway exactly — slow was never the hang's problem. Where
+the remaining seconds live, plainly: the arrival flare
+and gate the brief told this pass to keep (braking
+decel ~5, the ≤0.08 rad yaw gate) — long recoveries are
+still ~14–16 s, and neither the speed nor the flare was
+pushed past the brief to hide that.
+
+Suites on the final tree: SMOKE 285/285, API guard
+70/70, render proof 127/127. Frame stats (boot frame):
+134 nodes / 41 draw calls / 49,682 primitives (FP12
+closed at 137 / 57 on its circuit frame).
+
+Brief/code mismatches and findings this pass (4): (1)
+Item 1's question (c) — per-wheel contact timing does
+not exist in this model; the connection is priced at
+the single centre event instead (above). (2) The spur
+driver does not carry the contact ellipse cap — the
+brief scoped tuning to the contact path and the spur
+is a separate tuned system; recorded, not hidden.
+(3) The render proof's FP12 approach series was
+mis-staged: its "20 m" frame was snapped with the car
+still in the Drop Start dangle (the frame's own state
+label reads PREP), and from a genuinely parked s 150
+the guide strip — which starts at s 160, past the
+gantry and over the entry crest — does not read
+(2 sampled px). The proof now stations that frame at
+s 168, where the strip reads clearly (~70 sampled px);
+whether the entrance reads at DRIVING speed is the
+owner's headset call, and the strip itself is unchanged
+since FP12. (4) Hunk entanglement in the per-item
+commits: _poll_grab and the button handler carry
+neighbouring items' lines where the code interleaves
+(each commit names its item; the six commits together
+reproduce the suite-green tree exactly, verified by an
+empty final diff).
+
+UNVERIFIED (only the headset proves these): the centre
+lever's ergonomics — reach, throw direction feel, the
+detent at +0.50 — and whether pull-down reads as
+"release" in the hand; the touchdown grades as FELT
+(whether a SCRUBBED getaway is information or noise,
+and whether 1.6 s of sway-priced spread is the right
+price); the wheel dial in the dangle with live hand
+tracking (headless stages prove the latch logic on
+synthetic grips only); whether the hang gates end the
+cross-talk the owner felt, and whether the BTN log
+catches the next weird input live; seat lever deflection
+and button dip as seen in the headset; transport at
+26 m/s watched from the ground and the dangle — the
+split's whole point is that travel should feel like a
+machine fetching the car, and the hang like hanging;
+and whether 14–16 s is now short enough, or the kept
+flare has to go back on the table.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
