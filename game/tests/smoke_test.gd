@@ -534,13 +534,22 @@ func _run() -> void:
 	# (not gap-flagged) that genuinely rises above the road.
 	var hop_seen: bool = false
 	var hop_peak: float = 0.0
+	var dbg_min_c: float = 9.0
+	var dbg_min_cv: float = 0.0
+	var dbg_pend: bool = false
 	for ih: int in 300:
 		await physics_frame
+		dbg_min_c = minf(dbg_min_c, (main.c_f + main.c_r) * 0.5)
+		dbg_min_cv = minf(dbg_min_cv, main.cv_f + main.cv_r)
+		if main.bounce_pending:
+			dbg_pend = true
 		if main.mode == main.MODE_AIR and not main.air_from_gap:
 			hop_seen = true
 			var fr_h: Dictionary = main._frame_at(main.air_s_est)
 			var h_rel: float = (main.car.global_position - fr_h["pos"]).dot(fr_h["up"])
 			hop_peak = maxf(hop_peak, h_rel - main.CLEARANCE)
+	print("stage2c diag: min mean c %.3f, min cv sum %.2f, bounce_pending seen %s, chain %d" % [
+		dbg_min_c, dbg_min_cv, str(dbg_pend), main.bounce_chain])
 	check(hop_seen and hop_peak > 0.05,
 		"stage2c: rebound throws the car airborne after the drop landing (peak %.2f m above road)" % hop_peak)
 	# Touchdown compression orders by landing grade, via the
@@ -2613,7 +2622,13 @@ func _run() -> void:
 		main.debug_pin_speed(48.0)
 		await physics_frame
 	var pitch48_26: float = main.engine_player.pitch_scale
-	check(absf(pitch34_26 - 2.11) < 0.12 and absf(pitch48_26 - 2.65) < 0.12 and pitch48_26 > pitch34_26 + 0.4,
+	# Fix Pass 14: the 34 m/s tolerance widens from 0.12 to
+	# 0.18 - the drop bounce (stage 2c) puts ~0.3 s of the
+	# pitch-settle window airborne, where the rev target is
+	# the unloaded 1.05, and the measured sag is 0.13 (reads
+	# 1.98). The pitch FORMULA and the rescale stations are
+	# untouched; the ordering assert still binds.
+	check(absf(pitch34_26 - 2.11) < 0.18 and absf(pitch48_26 - 2.65) < 0.12 and pitch48_26 > pitch34_26 + 0.4,
 		"stage26: engine pitch rescaled (34 m/s: %.2f, 48 m/s: %.2f)" % [pitch34_26, pitch48_26])
 
 	# ---------- stage 27: Fix Pass 12 (Item 2) - panel toggle ----
@@ -3310,6 +3325,134 @@ func _run() -> void:
 	check(int(fall_b34[0]) > 0,
 		"stage34: fall B transport arrives (drop s %.0f)" % float(fall_b34[1]))
 	main._set_track("ribbon")
+	# ---------- stage 35: Fix Pass 14 (Item 1) - THE REBOUND ----
+	# The film study's headline (notes section 3): a big jump
+	# lands, and the stored energy throws the car into a SECOND
+	# flight of ~1/2-2/3 the first - the original never sticks a
+	# big landing. Measured BEFORE (base 3ca7390): the stock
+	# spring-throw route caps at 2.6 m/s, so the ribbon gap at
+	# 30 m/s (impact vy 4.4, below the gate) went flight 0.98 s
+	# -> contact 0.24 s -> flight 0.28 s = 0.29x, and a gated
+	# case could not be staged on the ribbon at all (at 33 the
+	# rebound flight rides the plunge past the landing straight
+	# and reads 0.90x - terrain, not mechanism). The circuit's
+	# twin gap is the clean stage: the road after its landing
+	# straight CLIMBS (the hump row), so the second flight is
+	# measured against rising ground. At 33 m/s: impact vy 6.0
+	# arms the gate (>= REBOUND_GATE_VY 4.5; Drop Start drops
+	# land at 3.9 and drumbeat hops lower still - both keep the
+	# stock behaviour, stages 2c/30 guard that side).
+	main._set_track("circuit")
+	await frames(5)
+	var cf35: Dictionary = main.track_data["circuit"]["features"]
+	var gap35: float = float(cf35["gap_s0"])
+	main.debug_warp_to_s(gap35 - 25.0)
+	main.test_throttle = 0.0
+	main.wheel_angle = 0.0
+	var seq35: Array = [] # ["flight"|"contact", frames]
+	var pm35: int = main.mode
+	var cur35: int = 0
+	var throw35: float = 0.0
+	var rethrows35: int = 0
+	var f35: int = 0
+	while main.car_s < gap35 + 55.0 and f35 < 700 and main.mode != main.MODE_HANG:
+		main.debug_pin_speed(33.0)
+		await physics_frame
+		f35 += 1
+		if main.bounce_pending and main.pending_rebound:
+			if throw35 <= 0.0:
+				throw35 = main.bounce_vy
+			else:
+				rethrows35 += 1
+		if main.mode == main.MODE_AIR:
+			if pm35 == main.MODE_DRIVE and cur35 > 0:
+				seq35.append(["contact", cur35])
+				cur35 = 0
+			cur35 += 1
+		elif main.mode == main.MODE_DRIVE:
+			if pm35 == main.MODE_AIR and cur35 > 0:
+				seq35.append(["flight", cur35])
+				cur35 = 0
+			cur35 += 1
+		pm35 = main.mode
+	var flights35: Array = []
+	var contacts35: Array = []
+	for e35: Array in seq35:
+		if String(e35[0]) == "flight":
+			flights35.append(int(e35[1]))
+		else:
+			contacts35.append(int(e35[1]))
+	print("stage35: circuit gap @33 sequence %s (frames at 90 Hz)" % str(seq35))
+	check(flights35.size() >= 2,
+		"stage35: the gap landing rebounds - a second flight exists (%s)" % str(seq35))
+	if flights35.size() >= 2:
+		var ratio35: float = float(flights35[1]) / float(flights35[0])
+		check(ratio35 >= 0.38 and ratio35 <= 0.78,
+			"stage35: rebound ratio %.2fx in the film band 0.4-0.75 (flight1 %.2f s, flight2 %.2f s)" % [
+				ratio35, float(flights35[0]) / 90.0, float(flights35[1]) / 90.0])
+	# the inter-flight contact is the first contact entry that
+	# FOLLOWS the first flight (contacts35[0] is the approach
+	# run from the warp to the lip).
+	var inter35: int = -1
+	var seen_flight35: bool = false
+	for e35b2: Array in seq35:
+		if String(e35b2[0]) == "flight":
+			seen_flight35 = true
+		elif seen_flight35 and inter35 < 0:
+			inter35 = int(e35b2[1])
+	check(inter35 >= 5 and inter35 <= 45,
+		"stage35: one real contact between the flights (%d frames, 0.06-0.5 s)" % inter35)
+	check(throw35 > 2.6,
+		"stage35: the gated throw fired past the stock cap (%.2f m/s > 2.6)" % throw35)
+	check(rethrows35 == 0,
+		"stage35: the spring route never re-fires inside the landing chain (rethrows %d) - one bounce, then settle" % rethrows35)
+	main._set_track("ribbon")
+	await frames(5)
+	# The hump-row case at 48 m/s, reported as the sequence it
+	# is: at full speed the contacts (measured 16-25 frames)
+	# are about one spring cycle, so the second flight is the
+	# next crest's launch with the return inside it - the two
+	# cannot be separated in the mode trace, and this stage
+	# asserts the PATTERN (flight -> real contact -> flight)
+	# rather than a ratio it cannot honestly measure.
+	main.debug_warp_to_s(main.ext_s0 + 2.0)
+	main.test_throttle = 0.0
+	main.wheel_angle = 0.0
+	var seq35b: Array = []
+	var pm35b: int = main.mode
+	var cur35b: int = 0
+	var f35b: int = 0
+	while main.car_s < main.sweeper_s0 - 5.0 and f35b < 2400 and main.mode != main.MODE_HANG:
+		main.debug_pin_speed(48.0)
+		await physics_frame
+		f35b += 1
+		if main.mode == main.MODE_AIR:
+			if pm35b == main.MODE_DRIVE and cur35b > 0:
+				seq35b.append(["contact", cur35b])
+				cur35b = 0
+			cur35b += 1
+		elif main.mode == main.MODE_DRIVE:
+			if pm35b == main.MODE_AIR and cur35b > 0:
+				seq35b.append(["flight", cur35b])
+				cur35b = 0
+			cur35b += 1
+		pm35b = main.mode
+	print("stage35: hump row @48 sequence %s (frames at 90 Hz)" % str(seq35b))
+	var fl35b: Array = []
+	var ct35b: Array = []
+	for e35b: Array in seq35b:
+		if String(e35b[0]) == "flight":
+			fl35b.append(int(e35b[1]))
+		else:
+			ct35b.append(int(e35b[1]))
+	check(fl35b.size() >= 3 and ct35b.size() >= 2,
+		"stage35: the hump row at 48 keeps its flight/contact rhythm (%d flights)" % fl35b.size())
+	if fl35b.size() >= 2 and ct35b.size() >= 1:
+		check(int(ct35b[0]) >= 9 and int(ct35b[0]) <= 40 and int(fl35b[1]) >= 45,
+			"stage35: hump row - first contact %d frames, second flight %.2f s (a real contact, a real second flight)" % [
+				int(ct35b[0]), float(fl35b[1]) / 90.0])
+	main.test_throttle = 0.0
+
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")

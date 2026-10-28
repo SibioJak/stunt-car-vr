@@ -264,6 +264,46 @@ const AIR_LOAD_EPS: float = 0.03 # crest load factor that counts as unloaded
 const AIR_SUSTAIN_FRAMES: int = 3 # frames at ~zero load before separation
 const REBOUND_THROW_VEL: float = -0.6 # cv_f + cv_r (m/s) that counts as a throw
 const REBOUND_LOAD_FLOOR: float = 0.8 # rebound route needs the road fully supporting
+# Fix Pass 14 (Item 1) - THE REBOUND, energy-gated. The film
+# study's headline: every big jump in the original lands and
+# REBOUNDS into a second flight of ~1/2-2/3 the first (High
+# Jump 1.93 s -> ~0.6 s contact -> 1.16 s); it NEVER sticks a
+# big landing. Ours stuck: the FP5/8 spring-throw route above
+# caps its throw at 2.6 m/s, so a gap landing at 30 m/s
+# measured flight 0.98 s -> contact -> flight 0.28 s (0.29x)
+# and the hump row at 48 m/s landed at vy 7.2-8.8 with the
+# same low cap. The gate is the landing's own impact speed,
+# staged from the measured distribution: Drop Start drops
+# land at vy 3.9 and drumbeat hops at ~3 or less - both keep
+# the stock throw untouched (FP13's stage-30 getaways depend
+# on it); gap and hump-launch landings land at 4.4 and up.
+# Above the gate the throw cap scales with the impact
+# (flight time is proportional to throw speed, so a throw of
+# 0.62x the impact speed yields ~0.62x the flight on the same
+# slope), and the return may fire only ONCE per landing
+# chain: the rebound's own landing is absorbed, not returned
+# again - the film settles after ONE bounce (notes section 4).
+# Drone DROPS are excluded outright (air_from_release): a
+# sway-carrying release can land above the gate, and its
+# landing is FP13 touchdown behaviour, not a jump.
+const REBOUND_GATE_VY: float = 4.5 # impact vy (m/s) that arms the energy return
+const REBOUND_THROW_FRAC: float = 0.62 # gated throw cap = this x impact vy
+const REBOUND_THROW_CAP: float = 6.2 # absolute ceiling on the gated throw, m/s
+const REBOUND_CHAIN_RESET_S: float = 0.5 # grounded seconds that re-arm the return
+# The return stroke itself (measured, see _susp_integrate):
+# with the stock rate the gated throw reached only 1.33 m/s
+# of its 3.66 cap on the staged gap landing - the impact's
+# kinetic share is damped away against the travel clamp
+# before the stroke can return it. Crammond's wheel force
+# clamp is asymmetric for the same reason ([-0x300, +0x1400]:
+# the push-back may be far stronger than the resistance).
+# While a gated return is live and a spring is deep, its
+# rate multiplies and its extension damping cuts - the
+# bump-stop shove that throws the car back into the air.
+const REBOUND_RETURN_DEPTH: float = 0.24 # compression (m) past which the return stiffens
+const REBOUND_RETURN_K_MULT: float = 3.0 # spring-rate multiplier on the gated return
+const REBOUND_RETURN_DAMP_MULT: float = 0.5 # extension-damping multiplier on the gated return
+const REBOUND_GATE_EXPIRY_S: float = 1.2 # an unfired gate lapses (a later crest strike is not a landing return)
 # Fix Pass 5 - lean view-tilt amplification (Chris, run 5: "i'm not
 # really getting a sense of leaning, the view would have to tilt
 # more"). This REVISES the experiment's original "input only, no
@@ -555,6 +595,12 @@ var long_accel_f: float = 0.0 # filtered longitudinal accel, m/s^2
 var prev_speed: float = 0.0
 var bounce_pending: bool = false # suspension asked to go airborne
 var bounce_vy: float = 0.0
+var pending_rebound: bool = false # FP14 (Item 1): the pending bounce is the spring-throw route
+var air_from_rebound: bool = false # FP14 (Item 1): this flight began as a spring rebound
+var air_from_release: bool = false # FP14 (Item 1): this flight began as a drone release (a drop, not a jump)
+var rebound_gate_vy: float = 0.0 # FP14 (Item 1): impact vy of an armed energy return (0 = unarmed)
+var bounce_chain: int = 0 # FP14 (Item 1): spring throws since the last settled ground run
+var grounded_t: float = 0.0 # FP14 (Item 1): continuous grounded seconds (chain re-arm clock)
 var air_load_frames: int = 0 # consecutive frames at ~zero crest load, both axles
 var wheel_mis: Array[MeshInstance3D] = []
 var wheel_axle: Array[int] = [] # 0 = front, 1 = rear, parallel to wheel_mis
@@ -1754,6 +1800,7 @@ func _update_drive_spur(delta: float) -> void:
 	# is the lateral offset, corrected by projection.
 	if bounce_pending:
 		bounce_pending = false
+		pending_rebound = false # FP14 (Item 1): the spur's only route is geometry
 		_spur_leave_air()
 		return
 	var fr: Dictionary = _spur_frame_at(spur_s)
@@ -2357,6 +2404,9 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 	lost_lat_t = 0.0
 	air_exit_y = float(fr["pos"].y)
 	air_from_gap = from_gap
+	air_from_rebound = false # FP14 (Item 1): callers that throw the car set this after entry
+	air_from_release = false # FP14 (Item 1): a road-born flight; _do_release marks its own
+	grounded_t = 0.0
 	was_airborne = true
 	mode = MODE_AIR
 
@@ -3802,6 +3852,12 @@ func _reset_suspension() -> void:
 	prev_speed = 0.0
 	bounce_pending = false
 	bounce_vy = 0.0
+	pending_rebound = false
+	air_from_rebound = false
+	air_from_release = false
+	rebound_gate_vy = 0.0
+	bounce_chain = 0
+	grounded_t = 0.0
 	air_load_frames = 0
 	# Fix Pass 9: per-wheel support back to fully held.
 	sup_rise = [0.0, 0.0, 0.0, 0.0]
@@ -4042,6 +4098,7 @@ func _do_release() -> void:
 	lost_lat_t = 0.0
 	air_exit_y = float(_frame_at(drop_target_s)["pos"].y)
 	air_from_gap = false
+	air_from_release = true # FP14 (Item 1): a drop is not a jump - its landing never arms the rebound gate
 	# Fix Pass 9: the released car flies and lands under the
 	# heading it HUNG with (see _orient_car_hang - Fix Pass 10:
 	# that heading is the spring-settled orient_yaw, which at a
@@ -4156,6 +4213,9 @@ func _update_drive(delta: float) -> void:
 	if on_spur:
 		_update_drive_spur(delta)
 		return
+	# Fix Pass 14 (Item 1): the chain re-arm clock (see the
+	# rebound route in _update_suspension).
+	grounded_t += delta
 	# Fix Pass 13 (Item 1): the contact transient's clock runs
 	# on drive frames (a bounce back into the air pauses it;
 	# the next landing re-arms it from its own contact).
@@ -4168,6 +4228,12 @@ func _update_drive(delta: float) -> void:
 		bounce_pending = false
 		_sync_vel2_from_speed_lat()
 		_enter_air(false, bounce_vy)
+		# Fix Pass 14 (Item 1): remember HOW this flight began -
+		# a rebound's own landing must not arm a second energy
+		# return (the film settles after one bounce).
+		air_from_rebound = pending_rebound
+		pending_rebound = false
+		rebound_gate_vy = 0.0
 		return
 	var fr: Dictionary = _frame_at(car_s)
 	var tanv: Vector3 = fr["tan"]
@@ -4415,6 +4481,17 @@ func _update_air(delta: float) -> void:
 func _land(fr: Dictionary, lat: float, h: float) -> void:
 	# coming in below the ribbon edge costs extra impact (edge-catch rule)
 	var vy: float = absf(minf(air_vel.y, 0.0)) + maxf(0.0, CLEARANCE - h) * 1.5
+	# Fix Pass 14 (Item 1): arm the energy return for THIS
+	# landing (consumed by the spring-throw route in
+	# _update_suspension). A landing that itself began as a
+	# rebound never re-arms - one bounce, then settle. And a
+	# DRONE DROP never arms at any sway: stage 26 caught a
+	# sway-carrying release landing hard enough to arm, and
+	# its oversized hop sagged the engine-rev staging - but
+	# the real point is FP13's: drops are the drone's
+	# behaviour, with ONE soft stock bounce (film section 4),
+	# however the swing was moving at release.
+	rebound_gate_vy = vy if (vy >= REBOUND_GATE_VY and not air_from_rebound and not air_from_release) else 0.0
 	var up_now: Vector3 = car.global_transform.basis.y.normalized()
 	var misalign: float = rad_to_deg(up_now.angle_to(fr["up"]))
 	var quality: String = "FLAT"
@@ -4903,8 +4980,28 @@ func _lean_effective() -> float:
 
 
 func _susp_integrate(target_f: float, target_r: float, delta: float) -> void:
-	cv_f += ((target_f - c_f) * SUSP_K - SUSP_DAMP * cv_f) * delta
-	cv_r += ((target_r - c_r) * SUSP_K - SUSP_DAMP * cv_r) * delta
+	# Fix Pass 14 (Item 1): the gated return stroke. While an
+	# energy return is armed (a landing at/above
+	# REBOUND_GATE_VY that has not thrown yet) and the car is
+	# on the main track, a spring compressed past
+	# REBOUND_RETURN_DEPTH works at the multiplied rate, and
+	# its EXTENSION damping is cut - the asymmetric shove
+	# (Crammond's force clamp is asymmetric the same way).
+	# Ungated driving never sees either change.
+	var gated: bool = rebound_gate_vy > 0.0 and mode == MODE_DRIVE and not on_spur
+	var kf: float = SUSP_K * REBOUND_RETURN_K_MULT if (gated and c_f > REBOUND_RETURN_DEPTH) else SUSP_K
+	var kr: float = SUSP_K * REBOUND_RETURN_K_MULT if (gated and c_r > REBOUND_RETURN_DEPTH) else SUSP_K
+	# While the gate is live the whole landing cycle is the
+	# return event, so its damping is cut on BOTH strokes (the
+	# compression loss is what capped the throw at ~2.73 m/s
+	# against a 3.7 cap in staging); the settle discipline of
+	# Item 2 applies to the UNGATED landings - drops, soft
+	# landings, and this landing's own rebound coming back
+	# down - which all keep the full rate.
+	var df: float = SUSP_DAMP * REBOUND_RETURN_DAMP_MULT if gated else SUSP_DAMP
+	var dr: float = SUSP_DAMP * REBOUND_RETURN_DAMP_MULT if gated else SUSP_DAMP
+	cv_f += ((target_f - c_f) * kf - df * cv_f) * delta
+	cv_r += ((target_r - c_r) * kr - dr * cv_r) * delta
 	c_f = clampf(c_f + cv_f * delta, 0.0, SUSP_TRAVEL)
 	c_r = clampf(c_r + cv_r * delta, 0.0, SUSP_TRAVEL)
 	# Body pose derives from the spring ATTACH heights (road rise
@@ -5066,14 +5163,40 @@ func _update_suspension(delta: float) -> void:
 			air_load_frames += 1
 		else:
 			air_load_frames = 0
+		if grounded_t > REBOUND_CHAIN_RESET_S:
+			bounce_chain = 0
+		# Fix Pass 14 (Item 1): an armed return that has not
+		# thrown inside its window lapses - the gate belongs
+		# to the landing that armed it, not to whatever deep
+		# compression happens along later.
+		if rebound_gate_vy > 0.0 and grounded_t > REBOUND_GATE_EXPIRY_S:
+			rebound_gate_vy = 0.0
 		if air_load_frames >= AIR_SUSTAIN_FRAMES:
 			bounce_pending = true
 			bounce_vy = 0.35
+			pending_rebound = false
 			air_load_frames = 0
 		elif (c_f + c_r) * 0.5 <= 0.005 and cv_f + cv_r < REBOUND_THROW_VEL \
-				and load_f >= REBOUND_LOAD_FLOOR and load_r >= REBOUND_LOAD_FLOOR:
+				and load_f >= REBOUND_LOAD_FLOOR and load_r >= REBOUND_LOAD_FLOOR \
+				and bounce_chain == 0:
+			# Fix Pass 14 (Item 1): the throw. Ungated landings
+			# (drops, drumbeat hops) keep the FP5/8 cap exactly;
+			# an armed energy return raises the cap with the
+			# impact that stored the energy. The chain guard
+			# (one throw per landing chain) is what makes the
+			# sequence flight -> contact -> flight -> SETTLE
+			# instead of a pogo: the rebound's own landing
+			# finds bounce_chain == 1 and the route stays shut
+			# until the car has driven settled for
+			# REBOUND_CHAIN_RESET_S.
 			bounce_pending = true
-			bounce_vy = clampf(-(cv_f + cv_r) * 0.55, 0.5, 2.6)
+			pending_rebound = true
+			bounce_chain += 1
+			if rebound_gate_vy > 0.0:
+				bounce_vy = clampf(-(cv_f + cv_r) * 0.55, 0.5,
+					clampf(REBOUND_THROW_FRAC * rebound_gate_vy, 2.6, REBOUND_THROW_CAP))
+			else:
+				bounce_vy = clampf(-(cv_f + cv_r) * 0.55, 0.5, 2.6)
 	elif mode == MODE_DONE:
 		geom_f = 0.0
 		geom_r = 0.0
