@@ -56,14 +56,19 @@ VR (Quest):
   hand to grab drives; the other hand takes over when it lets go.
 - Throttle: right trigger · Brake: left trigger · Boost: right A
   button (while driving)
-- **Release from the drone:** right trigger (while dangling)
+- **Release from the drone:** pull the DROP SHIFTER on the right
+  pod, forward beside the wheel (while dangling) — Fix Pass 11
+  retired the trigger release for the lever, Fix Pass 12 moved
+  it forward and shortened it into a gear shifter
 - Flip a prep switch / press a dash button: GRIP near it (while
   dangling) — since Fix Pass 9 either order works: squeeze-then-touch
   or touch-then-squeeze; the flip fires when grip and proximity
   meet, once per entry
 - Call the drone (while driving): left X button
-- Restart race: left Y button · Lean experiment on/off: right B button
-  (or the green dash button; red dash button = restart)
+- Restart race: left Y button · Info panels show/hide: right B
+  button (Fix Pass 12 — the boards are hidden by default; B
+  calls them up and puts them away. Lean experiment on/off
+  lives on the green dash button now; red dash button = restart)
 - Switch track (while dangling): GRIP near the purple dash button —
   the mountain circuit (default) and the original test ribbon;
   a circuit race is 3 laps to the finish, the ribbon is
@@ -923,6 +928,257 @@ itself is the owner's verdict); the hump row at 48 in the
 stomach, not the log; and everything still carried from
 run 11 (his FP10 circuit and loop verdicts were still
 open when this pass was briefed).
+
+## Fix Pass 12 (after headset run 12: the drop lever works
+## but sits too far back, the boards block the road, the
+## drone is "still nuts and slow", road goes invisible in
+## the dips, a jump snatches the car into the drone, and
+## the loop entrance reads wrong — six items, one commit
+## each, plus this README + the pass's proof captures)
+
+Run 12 also said the feel is starting to happen ("i
+barely saved tires on edge and it felt like i was
+fighting a bit") while the car still reads light overall
+— the mass/tune pass stays queued behind this one.
+Every number below is from the suites on the final tree
+unless a stage is named.
+
+**Item 1 — the drop lever becomes a gear shifter
+(a13b240).** Chris: "too far back of player seating,
+should be moved forward, shortened by 1/3, more like a
+gear shift." Pivot (0.72, 0.71, −0.10) → (0.72, 0.71,
+−0.60), right pod forward beside the wheel; shaft
+0.50 → 0.33 m; knob at the new top. The mechanism is
+untouched — rest −0.30 / detent +0.40 / max +0.65 rad,
+per-hand latch, hand-arc follow (shaft-length
+independent), spring home 3.5 rad/s, haptic. Clearances:
+rest knob 0.78 m from the wheel hub (grab radius 0.40),
+0.21 m from the TRK button (zone 0.15). Stage 23's
+geometric zone audit re-ran clean with the shifter in
+place (0 violations, worst deviation 0.000 m); stage 25
+re-proves the mechanics; the stage-25 grab segment is now
+asserted at its new length (0.19 m).
+
+**Item 2 — info boards hidden by default (06052e1).**
+Chris: "Need to do something about the big panels, hard
+to see. Button calls them up, makes em go away." New
+panels_visible (default false, session-only) and the one
+switch _toggle_panels(); both board roots build hidden.
+Right-controller B is remapped from lean to the panel
+toggle (desktop Tab does the same) — lean keeps its
+green dash button and the desktop T key, and the panel's
+own controls list never listed B for lean, so nothing
+the panel promises was taken away. Content keeps
+refreshing while hidden (stage 27 drives the real Tab
+input path both ways and asserts it); state/prep mid-view
+banners are not panels and are untouched. Growth
+control: the panel text gained lines (Item 1's shifter
+line, the Panels line) and was trimmed by two elsewhere,
+and the type drops ~9% (pixel_size 0.00115 → 0.00105) —
+the grown list measured 1.30 m tall against a 1.24 m
+board with 3 of 63 sightlines blocked by cockpit
+geometry; it fits now, 0 blocked. Proof capture 1 is
+shot boards-hidden, the spawn state.
+
+**Item 3 — drone clearance profile + speed (885255a).**
+Chris: "Drone still nuts and slow. Flies through road
+and pylon a lot" (and he quit mid-carry, run 10's
+frustration signature). CARRIER_SPEED 9 → 15 m/s,
+CARRIER_ACCEL 6 → 9. The path flies a collision-free
+altitude profile: route sampled every 5 m, each waypoint
+at the highest road surface within ±45 m of route travel
++ hang stack (HANG_LEN 5.5 + HANG_CLEAR 1.2) + 1.0 m —
+the window and margin grew from a first form of ±30 m /
+0.8 m after a staged carry measured a 0.17 m graze (the
+swinging car reaches metres past the anchor's column,
+where the road stands higher than the window max). A
+climb-out waypoint takes deep catches straight up to
+profile altitude first; a penultimate waypoint flies the
+last 15 m at profile altitude; anchor_target itself is
+untouched. Two defects found by tracing the carry, not
+by staring at constants: (1) waypoint samples now stop
+20 m short of the drop — at back_dist 158 the last 30 m
+sample landed PAST the penultimate and the path doubled
+back on itself twice at the station; waypoint advance
+also fires on passing abeam now. (2) The arrival flare
+ships as a braking-curve speed cap, |v| ≤ sqrt(2·5·d) —
+an instrumented run convicted the plain full-limit
+braking first (release at pendulum om_l −2.65 rad/s,
+≈14 m/s tip velocity, car missed the road: the stage 11c
+regression), and the flare's first form (an accel cap)
+then rang ~18 s against the P-law at the station;
+the braking curve cannot overshoot it. Timings, staged:
+s900 walk-back FP11 1911 → FP12 1482–1559 frames
+end-to-end; climb-top walk-back 2901 → 1990. Stage 28
+asserts the carried car intersects neither ribbon nor
+stilt on three staged carries (walk-back, hump-span
+crossing, gap-fall return): route hits 0, case H minimum
+clearance +0.74 m. Two bounded brushes are counted and
+printed, NOT asserted away: the station settle (within
+10 m plan of the drop, the still-swinging car's low AABB
+corner brushes the road plane, worst depth ~0.17 m for
+~0.4 s) and the gap fall-site cell (the catch wedges the
+car ~4.7 m BELOW the far lip's surface at its plan
+position, where the lip's own stilt stands — any
+extraction crosses that one cell; a lateral-dodge
+experiment did not clear it, 36 stilt + 175 ribbon hits.
+Documented wart, not claimed fixed; a lateral stilt-
+dodge manoeuvre is the named future fix). Stage 24's
+FP11 approach proof still passes at the new rates
+(arrives aligned, 0.0° yaw error). Item 5's trigger
+constants ride in this commit's const block (one hunk);
+Item 5's logic is its own commit.
+
+**Item 4 — road visibility: diagnosed, then fixed
+(e3a524f).** Chris: "Part of road is invisible till
+you're in it." Diagnosis first, per the brief: NOT
+pop-in — the track is 4 merged meshes per track, no
+chunking, visibility ranges open; ID-pass renders
+(magenta swap) prove the ribbon is on screen at every
+station (27k–36k px). NOT the far plane (4000). The
+cause is a low-contrast wash at the dip/valley
+sightlines: fog mixing the near-black surface toward the
+horizon colour over 0.6–2.5 km sight distances, plus
+thin-geometry aliasing (0.36 m dashed edges ≈1 px at
+300–600 m). Measured as the ribbon fraction within
+0.10 RGB of local background: dip_floor 14.1%,
+before_dip 8.7%, against 1.9–4.8% at healthy stations.
+Fix: fog_density 0.0003 → 0.00012, and the edge strips —
+the far read — widen 0.36 → 0.55 m (EDGE_STRIP_W).
+After, same frozen protocol: dip_floor 4.3%,
+before_dip 3.3%, loop_approach 1.6%, home_straight 0.0%,
+climb_top 4.6%, climb_mid 4.3%. mid_straight is UNMOVED
+(12.8% → 12.5%) — its wash is not fog; it reads as
+thin-geometry/raster blending and is stated here, not
+claimed fixed. MSAA was considered and deferred
+(project-wide rendering change, Quest-perf implications
+— out of this pass's scope). The proof gains a standing
+dip-valley capture (dip_valley_view.png).
+
+**Item 5 — the jump snatch: trigger convicted, rebuilt
+positional (b278505).** Chris: "A jump seems to find you
+suddenly being carried by drone." Convicted: the old
+trigger's bare air_time > 2.4 term in _update_air.
+Staged at 48 m/s with production _enter_air: a climb-top
+launch (s 2125, rebound 2.0) was SNATCHED at 2.41 s
+while its counterfactual ballistic LANDS 1.23 s later at
+s 2303, lat 0.0 — honest flight 3.64 s total. The
+dip-lip flight (s 735) lands at 2.32 s, 0.08 s from the
+same fate; the gap crosses cleanly at 1.66 s; the
+h < −13 term produced no false positives. The new rule
+(landing test unchanged) fires recovery only on: (a)
+h < −13 (unchanged); (b) h < −2.2 AND descending, held
+continuously AIR_LOST_BELOW_T = 0.3 s (below_band_t,
+reset whenever the car is back in band or ascending —
+a lower piece ahead re-opens the landing); (d) the
+lateral exit — |lat| > HALF_WIDTH + 2.5 AND below the
+EXIT plane captured at launch (air_exit_y), same 0.3 s
+dwell — added on measurement: a staged lateral lip exit
+took 2.90 s to declare on rule (b) alone, because
+spine-relative h is masked by the plunging road's own
+descent; a car 8.5 m off the centreline below its exit
+plane has no air control and cannot return, so with (d)
+it declares at 0.87 s; (c) AIR_FAILSAFE_T = 8.0 s
+absolute ceiling. Stage 29 stages all three: climb-top
+LANDS after 3.68 s, dip-lip LANDS after 2.32 s, lateral
+exit drones at 0.87 s. The brief's alternative — if the
+trigger proves honest, add the minimal missing
+presentational beat — does NOT apply: the trigger was
+not honest, no beat was added; the trigger itself was
+the dishonesty.
+
+**Item 6 — loop entrance presentation + merge (a11d601).**
+Chris: "It SEEMS the entrance is wrong, I'd have to do a
+U-Turn. But I havent completed a circuit yet so I dont
+know for sure." The audit (research/loop-entry-audit/)
+found no U-turn — entry joint clean (heading step
+0.47°) — and three presentation defects plus one real
+geometry defect; Chris approved all four garnishes.
+MERGE (the real defect): the exit leg's last 40 m of
+points is blended onto the surveyed merge line,
+smoothstep weight reaching full at 15 m out, applied
+after the smoothing passes and before tangents.
+Residual −2.54° → 0.00°; last-12 m unwind peak
+3.45°/m → 0.00°/m (stage 29; entry side ≤ 1.00°/m). A
+first, weaker blend (30 m, full weight only at the join)
+zeroed the residual but left 3.79°/m of unwind in-suite
+— strengthened to the shipped form. GUIDE STRIP: amber
+unshaded 0.55 m strip on the main road, s 160–212,
+centred until s 170 then easing to −3.4 m down the
+capture corridor — the mouth the audit found missing.
+As first built it was culled from every view (corner
+order faced DOWN; convicted by render experiment —
+12,568 px with culling off, 0 with it on); the mirrored
+order ships and reads in the 20 m approach frame as an
+amber thread curving left to the ring's mouth (61
+sampled px in the road band; the spur's own dashed edge
+strips, a similar amber, were the false lead chased
+first). GANTRY at s 158, beam + "LOOP" — the beam reads
+clearly in the 20 m approach frame; the text itself is
+not legible at that distance in llvmpipe stills. RING
+RIM BAND: the ring's underside segments painted bright
+amber (1.0, 0.58, 0.06; 414 verts, stage 29) with
+continuous amber underside edge strips 2 cm proud — the
+ring now presents a lit face instead of its black back.
+DESCENT CHEVRONS: unshaded arrow pairs at spur_s
+44–84 — the entry leg's dive from y 60 to the ring base
+at 52.5 (that dive IS the brief's descent leg) — wings
+±2.4 m, stroke half-width 0.45 m. They had the guide
+strip's winding bug: the pixel count sat at a constant
+117 px through three size increases (only the far pair,
+where the chute's roll tips the culled side toward the
+camera) before the census convicted it; mirrored, they
+read at 722 px with a proper Λ in spur_descent_view.png.
+The size stayed motorway-scale — it suits 48 m/s. The
+capture-rule comment is corrected 1.3 m → 1.2 m (comment
+only; the rule was always 1.2). Proof: driver-POV
+approach series at 100/50/20 m, boards hidden — its
+staging parks the car at each station after start_race()
+(earlier captures left it rolling driverless, or sitting
+on the spur from a prior capture, and photographed a
+recovery dangle instead of the approach). Stage 21's
+loop proofs re-pass (ring turns the car ~365°).
+
+Suites on the final tree: SMOKE 246/246, API guard
+70/70, render proof 125/125.
+
+Brief/code mismatches and Hal's own errors found this
+pass (4): the capture-rule comment said 1.3 m where the
+code (and the audit) said 1.2 (Item 6, comment fixed);
+stage 28's first version forgot to reselect the circuit
+after stage 26 leaves the test ribbon active and
+measured ribbon recoveries — Hal's staging bug, caught
+by the numbers not matching the diag harness, fixed in
+both the staged case and case G; Item 3's const block
+carries Item 5's two trigger constants (one hunk, noted
+in both commit messages); and git apply in this sandbox
+proved unable to match patch context against a shifted
+index (it applied Item 1 to the pristine tree, then
+rejected byte-identical context for Item 2, as did GNU
+patch) — Items 2–6 were therefore staged by blob
+reconstruction from the item-split diffs, and every
+commit's blobs were verified equal to the computed
+per-item tree states before committing (state 1
+reproduces Item 1's commit exactly; state 6 equals the
+suite-green working tree).
+
+UNVERIFIED (only the headset proves these): the
+shifter's ergonomics and feel at the new forward spot;
+the R B edge in the live XR input path (code-reviewed
+and stage-tested through _toggle_panels()/Tab — the live
+by_button value path is XR-only); drone feel at 15 m/s
+cruise and the arrival swing in the headset; whether the
+station-settle brush and the gap fall-site brush are
+even visible as events from the cockpit; the far read of
+the road in the headset against llvmpipe captures
+(Item 4 was measured by pixel statistics, not by eye —
+and mid_straight's residual wash is unfixed); guide
+strip / gantry / rim / chevron legibility at headset
+resolution and in motion, including the "LOOP" gantry
+text; whether the loop entrance now READS right at
+speed (the original complaint was presentational —
+garnishes built, the owner's eye decides); and the
+loop's feel/stomach verdict, still owed from run 10.
 
 ## Quest export — status
 
