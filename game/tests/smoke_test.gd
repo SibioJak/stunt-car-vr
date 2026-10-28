@@ -2821,6 +2821,61 @@ func _run() -> void:
 		"stage28: case G carry beyond the fall-site cell is collision-free (hits %d)" % hits_g)
 	print("stage28: case G fall->dangle %d frames from the drone call; fall-site brush %d frame-samples (exempt cell, see comment)" % [fg2, brush_g])
 
+	# ---------- stage 29: Fix Pass 12 (Items 5+6) ----------------
+	# Item 5: the air trigger. The convicted case first: a
+	# 48 m/s launch off the climb top (s 2125, rebound 2.0)
+	# flies 3.64 s and LANDS (the old bare 2.4 s timer snatched
+	# it at 2.41 s). The dip-lip flight (2.32 s) lands too.
+	# Genuine losses still get the drone, and sooner: the
+	# below-band dwell fires in well under the old 2.4 s.
+	main._set_track("circuit")
+	await frames(3)
+	main.dip_timer = 1000.0
+	var fly_case = func(s: float, rebound: float, kick: float) -> Array:
+		main.debug_warp_to_s(s)
+		# Fixture hygiene: a warp does not reset the suspension
+		# or the body spring, and staged cold off the previous
+		# case's HARD landing the car sat 0.27 m low (measured)
+		# and the flight fizzled into a frame-1 "landing".
+		# Zero the spring state so every case stages from the
+		# same settled car a real driver would have.
+		main.c_f = main.SUSP_REST
+		main.c_r = main.SUSP_REST
+		main.cv_f = 0.0
+		main.cv_r = 0.0
+		main.heave_off = 0.0
+		main.body_sink = 0.0
+		main.body_sink_v = 0.0
+		await frames(3)
+		main.debug_pin_speed(48.0)
+		if kick != 0.0:
+			var r0: Vector3 = main._heading_right()
+			main.vel2 += Vector2(r0.x, r0.z) * kick
+		main._enter_air(false, rebound)
+		var fa: int = 0
+		while fa < 700:
+			await physics_frame
+			fa += 1
+			if main.mode == main.MODE_DRIVE:
+				return [true, fa]
+			if main.mode == main.MODE_HANG:
+				return [false, fa]
+		return [false, fa]
+	var climb29: Array = await fly_case.call(2125.0, 2.0, 0.0)
+	check(bool(climb29[0]) and int(climb29[1]) > 270 and int(climb29[1]) < 450,
+		"stage29: climb-top launch LANDS after %.2f s of flight (no snatch)" % (float(climb29[1]) / 90.0))
+	var lip29: Array = await fly_case.call(735.0, 2.0, 0.0)
+	check(bool(lip29[0]) and int(lip29[1]) > 150 and int(lip29[1]) < 300,
+		"stage29: dip-lip flight LANDS after %.2f s" % (float(lip29[1]) / 90.0))
+	# The lost case keeps the lip's pop (rebound 2.0, like the
+	# lip case): entering air at road height with rebound 0 on
+	# the lip's downslope lands on frame 1 - the landing test
+	# quite rightly sees a car still on the road. A real
+	# lateral exit leaves WITH the lip's unload; the kick is
+	# what makes it lost.
+	var lost29: Array = await fly_case.call(735.0, 2.0, 30.0)
+	check(not bool(lost29[0]) and int(lost29[1]) < 200,
+		"stage29: a lateral exit off the dip lip is genuinely lost - drone in %.2f s (lateral-exit rule)" % (float(lost29[1]) / 90.0))
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:

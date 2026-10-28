@@ -458,6 +458,9 @@ var race_time: float = 0.0
 # ballistic state
 var air_vel: Vector3 = Vector3.ZERO
 var air_time: float = 0.0
+var below_band_t: float = 0.0 # FP12 item 5: dwell below the landing band
+var lost_lat_t: float = 0.0 # FP12 item 5: dwell out past the ribbon, below the exit plane
+var air_exit_y: float = 0.0 # FP12 item 5: road height where this flight left the ground
 var air_s_est: float = 0.0
 var air_from_gap: bool = false
 # Fix Pass 10 (Item 1): the s at which the car LEFT the road,
@@ -1554,6 +1557,9 @@ func _spur_leave_air() -> void:
 	air_s_est = _project_wide_s(car.global_position)
 	air_start_s = air_s_est
 	air_time = 0.0
+	below_band_t = 0.0
+	lost_lat_t = 0.0
+	air_exit_y = float(fr["pos"].y)
 	air_from_gap = false
 	was_airborne = true
 	mode = MODE_AIR
@@ -2168,6 +2174,9 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 	air_s_est = car_s
 	air_start_s = car_s # Fix Pass 10 (Item 1): the fall starts HERE
 	air_time = 0.0
+	below_band_t = 0.0
+	lost_lat_t = 0.0
+	air_exit_y = float(fr["pos"].y)
 	air_from_gap = from_gap
 	was_airborne = true
 	mode = MODE_AIR
@@ -3734,6 +3743,9 @@ func _do_release() -> void:
 	air_s_est = drop_target_s
 	air_start_s = drop_target_s # a botched release falls from HERE
 	air_time = 0.0
+	below_band_t = 0.0 # FP12: a release is a new air episode
+	lost_lat_t = 0.0
+	air_exit_y = float(_frame_at(drop_target_s)["pos"].y)
 	air_from_gap = false
 	# Fix Pass 9: the released car flies and lands under the
 	# heading it HUNG with (see _orient_car_hang - Fix Pass 10:
@@ -4026,12 +4038,47 @@ func _update_air(delta: float) -> void:
 	if not bool(fr["gap"]) and h <= CLEARANCE + 0.05 and h > -2.2 and absf(lat) <= HALF_WIDTH + EDGE_FALL_OVERSHOOT and air_vel.y < 2.5:
 		_land(fr, lat, h)
 		return
-	# missed it: the drone catches you. Fix Pass 10 (Item 1): the
-	# recovery is charged from air_start_s - where the car LEFT
-	# the road - not from air_s_est, which by now includes the
+	# missed it so far - but the drone is called only when the
+	# car is GENUINELY LOST. Fix Pass 10 (Item 1): the recovery
+	# is charged from air_start_s - where the car LEFT the
+	# road - not from air_s_est, which by now includes the
 	# whole flight (and would drop the car ahead of its fall,
 	# past obstacles it failed: the run-10 cheat).
-	if air_time > 2.4 or h < -13.0:
+	# Fix Pass 12 (Item 5): the old trigger's bare
+	# `air_time > 2.4` term is DELETED - convicted by staging:
+	# a 48 m/s launch off the climb top (s 2125, rebound 2.0)
+	# was snatched at 2.41 s while its counterfactual
+	# ballistic landed cleanly 1.23 s later at s 2303, lat
+	# 0.0 - the run-12 video's "a jump seems to find you
+	# suddenly being carried by drone", reproduced. The
+	# dip-lip flight lands at 2.32 s, 0.08 s from the same
+	# fate. The landing test above is honest and stays; the
+	# trigger is positional now: (a) h < -13 - fallen far
+	# below the road (unchanged); (b) below the landing band
+	# (h < -2.2), descending, and STAYING below for
+	# AIR_LOST_BELOW_T - if a lower piece ahead brings h back
+	# into the band the dwell resets and the landing reopens;
+	# (c) the AIR_FAILSAFE_T ceiling for states no ballistic
+	# can reach (longest honest flight measured: 3.64 s);
+	# (d) the LATERAL exit: |lat| beyond the landing window's
+	# reach (HALF_WIDTH + 2.5) with the car below its EXIT
+	# plane, held for the same dwell. Added on measurement:
+	# the staged lateral lip exit took 2.90 s to declare on
+	# rule (b) alone, because over the plunging dip road the
+	# spine-relative h is masked by the road's own descent.
+	# The exit plane is not masked, and a car that far off
+	# the ribbon, below where it left, cannot come back -
+	# there is no lateral control in the air. It is lost by
+	# construction, so the drone stops waiting politely.
+	if h < -2.2 and air_vel.y < 0.0:
+		below_band_t += delta
+	else:
+		below_band_t = 0.0
+	if absf(lat) > HALF_WIDTH + 2.5 and pos.y < air_exit_y - 1.0:
+		lost_lat_t += delta
+	else:
+		lost_lat_t = 0.0
+	if h < -13.0 or below_band_t > AIR_LOST_BELOW_T or lost_lat_t > AIR_LOST_BELOW_T or air_time > AIR_FAILSAFE_T:
 		_begin_recovery(pos, air_start_s)
 
 
