@@ -381,15 +381,17 @@ func _run() -> void:
 	# sits beside the driver, outside the eye camera's frame,
 	# so it gets a dedicated camera: lever posed mid-pull
 	# (0.45 rad, past the detent) on the right pod.
-	check(main.drop_lever_pivot != null, "the drop lever is built on the right pod")
+	# Fix Pass 12 (Item 1): the portrait reframes on the
+	# SHIFTER - forward on the right pod, beside the wheel.
+	check(main.drop_lever_pivot != null, "the drop shifter is built on the right pod")
 	main.drop_lever_angle = 0.45
 	main.drop_lever_pivot.rotation.x = 0.45
 	var cam_dl := Camera3D.new()
 	main.car_body.add_child(cam_dl)
-	cam_dl.position = Vector3(1.55, 1.35, 0.75)
+	cam_dl.position = Vector3(1.50, 1.32, 0.10)
 	await physics_frame
 	await physics_frame
-	cam_dl.look_at(main.car_body.global_transform * Vector3(0.72, 0.95, -0.10), Vector3.UP)
+	cam_dl.look_at(main.car_body.global_transform * Vector3(0.72, 0.93, -0.55), Vector3.UP)
 	await snap(cam_dl, "drop_lever_view.png")
 	cam_dl.queue_free()
 	main.drop_lever_angle = main.DROP_LEVER_REST_RAD

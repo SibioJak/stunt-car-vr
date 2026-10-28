@@ -2345,14 +2345,29 @@ func _build_cockpit() -> void:
 	# sweeps it back toward the driver through the detent.
 	# Grab/pull/spring/haptic live in _poll_grab /
 	# _update_drop_lever; Item 2's audit covers its zone.
-	_box(car_body, Vector3(0.18, 0.03, 0.34), Vector3(0.72, 0.70, -0.10), _mat(Color(0.10, 0.10, 0.12)))
+	# Fix Pass 12 (Item 1): the lever becomes a GEAR SHIFTER.
+	# Run 12's verdict on the FP11 placement: "too far back of
+	# player seating, should be moved forward, shortened by
+	# 1/3, more like a gear shift." The pivot moves to the
+	# right pod's FORWARD end (0.72, 0.71, -0.60) - beside the
+	# wheel, at hanging-hand height - and the shaft shortens
+	# 0.50 -> 0.33 m (knob centre 0.35). The MECHANISM is
+	# untouched: same rest/detent/max angles, same per-hand
+	# latch, same hand-arc follow (the pull reads the hand's
+	# angle about the pivot, so shaft length never entered
+	# it), same spring-home, same haptic pulse. Clearances at
+	# the new spot, computed: rest knob (0.72, 1.04, -0.70) is
+	# 0.78 m from the wheel hub (grab radius 0.40) and 0.21 m
+	# from the TRK dash button (zone radius 0.15); the shaft
+	# at x = 0.72 never crosses the dash slab (x +-0.62).
+	_box(car_body, Vector3(0.18, 0.03, 0.30), Vector3(0.72, 0.70, -0.60), _mat(Color(0.10, 0.10, 0.12)))
 	drop_lever_pivot = Node3D.new()
 	drop_lever_pivot.name = "DropLever"
-	drop_lever_pivot.position = Vector3(0.72, 0.71, -0.10)
+	drop_lever_pivot.position = Vector3(0.72, 0.71, -0.60)
 	drop_lever_pivot.rotation.x = DROP_LEVER_REST_RAD
 	car_body.add_child(drop_lever_pivot)
-	_box(drop_lever_pivot, Vector3(0.06, 0.50, 0.06), Vector3(0, 0.25, 0), _mat(Color(0.55, 0.55, 0.58)))
-	_box(drop_lever_pivot, Vector3(0.11, 0.11, 0.11), Vector3(0, 0.52, 0), _mat_unshaded(Color(0.90, 0.12, 0.10)))
+	_box(drop_lever_pivot, Vector3(0.06, 0.33, 0.06), Vector3(0, 0.165, 0), _mat(Color(0.55, 0.55, 0.58)))
+	_box(drop_lever_pivot, Vector3(0.11, 0.11, 0.11), Vector3(0, 0.35, 0), _mat_unshaded(Color(0.90, 0.12, 0.10)))
 	# Lean indicator needle on the dash (experiment feedback)
 	# (rides up with the raised wheel so it stays clear of the rim)
 	lean_needle = _box(car_body, Vector3(0.03, 0.13, 0.02), Vector3(0, 1.155, -0.615), _mat_unshaded(Color(0.2, 0.9, 1.0)))
@@ -3040,14 +3055,17 @@ func _hand_wheel_angle(hand: String) -> float:
 
 
 ## Fix Pass 11 (Item 4): the drop lever's grab segment in
-## world space - pivot-local (0, 0.30, 0) to (0, 0.52, 0),
-## the upper shaft and knob. Shared by the grab test, Item
-## 2's audit and the render proof's overlay.
+## world space - the upper shaft and knob. Shared by the
+## grab test, Item 2's audit and the render proof's
+## overlay. Fix Pass 12 (Item 1): the shifter's shaft is
+## 0.33 m, so the segment is pivot-local (0, 0.17, 0) to
+## (0, 0.36, 0) - still the upper shaft plus the knob
+## (knob centre 0.35, span 0.295..0.405).
 func debug_drop_lever_segment() -> Array:
 	if drop_lever_pivot == null:
 		return []
 	var xf: Transform3D = drop_lever_pivot.global_transform
-	return [xf * Vector3(0, 0.30, 0), xf * Vector3(0, 0.52, 0)]
+	return [xf * Vector3(0, 0.17, 0), xf * Vector3(0, 0.36, 0)]
 
 
 func _hand_near_drop_lever(hand: String) -> bool:

@@ -2374,11 +2374,25 @@ func _run() -> void:
 	main.dip_timer = 1000.0
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
 		"stage25: dangling for the lever test")
-	check(main._panel_text().contains("DROP LEVER"),
-		"stage25: the panel names the DROP LEVER as the release")
+	# Fix Pass 12 (Item 1): the shifter's placement, measured:
+	# pivot forward beside the wheel on the right pod, and the
+	# grab segment spans the SHORT shaft (0.19 m of segment on
+	# a 0.33 m shaft, vs FP11's 0.22 on 0.50 - the segment was
+	# re-based to the same upper-shaft-plus-knob span).
+	check(main.drop_lever_pivot.position == Vector3(0.72, 0.71, -0.60),
+		"stage25: shifter pivot forward beside the wheel (0.72, 0.71, -0.60)")
+	var seg25: Array = main.debug_drop_lever_segment()
+	check(seg25.size() == 2 and absf((seg25[0] as Vector3).distance_to(seg25[1]) - 0.19) < 0.01,
+		"stage25: grab segment spans the shortened shaft (%.2f m)" % (
+			(seg25[0] as Vector3).distance_to(seg25[1]) if seg25.size() == 2 else -1.0))
+	check(main._panel_text().contains("DROP SHIFTER"),
+		"stage25: the panel names the DROP SHIFTER as the release")
+	# Fix Pass 12 (Item 1): the hand poses on the SHIFTER's
+	# shaft - 0.27 m out the pivot (the 0.33 m shaft's working
+	# reach; FP11's 0.50 m shaft used 0.45).
 	var lever_at = func(th: float) -> Vector3:
 		return main.car_body.global_transform * (main.drop_lever_pivot.position \
-			+ Basis(Vector3.RIGHT, th) * Vector3(0, 0.45, 0))
+			+ Basis(Vector3.RIGHT, th) * Vector3(0, 0.27, 0))
 	main.test_hand_set = true
 	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
 	main.test_hand_pos["R"] = lever_at.call(main.drop_lever_angle)
