@@ -988,9 +988,7 @@ func _run() -> void:
 	# the strip starts, and the first FP12 proof run scanned
 	# exactly there and found the strip "missing" while a
 	# winding bug hid it - both fixed, the band is the honest
-	# one). Measured 61 sampled px on the final frame; the
-	# strip is a 0.55 m thread 10-60 m out, so the count is
-	# small by geometry, not by absence.
+	# one).
 	var img20: Image = Image.load_from_file(ProjectSettings.globalize_path("res://tests/loop_approach_20m.png"))
 	var guide_px: int = 0
 	if img20 != null:

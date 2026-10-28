@@ -292,8 +292,8 @@ const PEND_DAMP: float = 0.10
 # survive as FLOWN manoeuvres: the carrier descends on a smooth
 # profile and climbs back, so line tension, slack and the catch
 # all follow from the carrier's real vertical acceleration.
-const CARRIER_SPEED: float = 15.0 # m/s cruise (FP12 item 3: was 9.0)
-const CARRIER_ACCEL: float = 9.0 # m/s^2 - flight accel/brake limit (FP12 item 3: was 6.0)
+const CARRIER_SPEED: float = 26.0 # m/s transport cruise (FP13 item 6: was 15.0 FP12, 9.0 before)
+const CARRIER_ACCEL: float = 10.0 # m/s^2 - flight accel/brake limit (FP13 item 6: was 9.0)
 const CARRIER_YAW_RATE: float = 0.9 # rad/s the carrier turns at speed
 # Fix Pass 12 (Item 3): extra clearance the carry's altitude
 # profile holds over the highest intervening road surface -
@@ -3570,7 +3570,15 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 			drop_lever_hand = ""
 		else:
 			_update_drop_lever_pull(hand)
-	elif now and drop_lever_hand == "" and _hand_near_drop_lever(hand):
+	# Fix Pass 13 (Item 6): the latch arms only in the DANGLE
+	# - during carrier transport (and every other mode) a hand
+	# on the lever is inert; nothing is hanging by it yet.
+	# Fix Pass 13 (Item 2): a hand holding the WHEEL cannot
+	# also latch the lever - at full throw the centre lever's
+	# knob enters the wheel's grab radius, and the two grabs
+	# never fight over one hand.
+	elif now and drop_lever_hand == "" and _hand_near_drop_lever(hand) \
+			and mode == MODE_HANG and hang_phase == "dangle" and grab_hand != hand:
 		drop_lever_hand = hand
 		drop_lever_fired = false
 		_update_drop_lever_pull(hand)
@@ -3600,11 +3608,21 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	elif ctl_now < 0:
 		dash_ctl_fired[hand] = -1
 	gripping[hand] = now
-	if mode != MODE_DRIVE and mode != MODE_AIR:
+	# Fix Pass 13 (Item 3): the wheel is also live in the
+	# DANGLE - the driver dials in the landing lock while the
+	# car hangs, and _do_release/_land never reset
+	# wheel_angle, so the lock carries into the drive. In the
+	# hang the wheel has NO yaw authority (nothing reads
+	# wheel_angle there - the pendulum owns the car); it only
+	# spins in the hands. Transport does not arm it: the gate
+	# is the dangle phase, not MODE_HANG alone.
+	var wheel_live: bool = mode == MODE_DRIVE or mode == MODE_AIR \
+		or (mode == MODE_HANG and hang_phase == "dangle")
+	if not wheel_live:
 		if grab_hand == hand:
 			grab_hand = ""
 		return
-	if now and near_wheel:
+	if now and near_wheel and drop_lever_hand != hand:
 		if grab_hand == "":
 			grab_hand = hand
 			grab_prev_ang = _hand_wheel_angle(hand)
@@ -3689,7 +3707,7 @@ func _activate_dash_ctl(kind: String) -> void:
 
 func start_race() -> void:
 	mode = MODE_HANG
-	hang_phase = "dangle"
+	hang_phase = "attach" # Fix Pass 13 (Item 6): Drop Start is a pickup + transport now
 	is_drop_start = true
 	on_spur = false
 	spur_s = 0.0
@@ -3725,23 +3743,46 @@ func start_race() -> void:
 	# Fix Pass 2: hang anchor offset along WORLD up, so at swing centre
 	# the car hangs plumb over the ribbon centreline regardless of the
 	# section's slope/bank (the frame-up offset drifted sideways).
-	anchor_pos = fr["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR)
-	anchor_target = anchor_pos
+	anchor_target = fr["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR)
+	# Fix Pass 13 (Item 6): DROP START IS A PICKUP. The car
+	# starts ON THE GROUND beside the start line - the pickup
+	# point, HALF_WIDTH + 4 m off the centreline at road
+	# height - the carrier attaches over it, lifts it, and
+	# flies the same direct transport as a recovery (climb to
+	# transport altitude, cruise, descend into the arrival).
+	# The dangle exists only at the station; the pre-FP13
+	# instant station dangle is gone. anchor_target above is
+	# unchanged (the FP2 station).
+	var pickup: Vector3 = Vector3(fr["pos"]) + Vector3(fr["side"]) * (HALF_WIDTH + 4.0)
+	pickup.y = float(fr["pos"].y) + 0.4
+	hang_from_pos = pickup
+	car.global_position = pickup
+	anchor_pos = pickup + Vector3.UP * (HANG_LEN + 1.6)
 	pivot_pos = anchor_pos
-	# Fix Pass 10 (Item 2): carrier at station over the gantry.
+	anchor_t = 0.0
 	carrier_vel = Vector3.ZERO
 	carrier_accel = Vector3.ZERO
 	carrier_path.clear()
 	carrier_wp = 0
-	carrier_yaw = _frame_yaw(fr["tan"])
+	var alt13: float = _transport_altitude(anchor_pos, anchor_target, float(fr["pos"].y))
+	if anchor_pos.y < alt13 - 0.05:
+		var p_0: Vector3 = anchor_pos
+		p_0.y = alt13
+		carrier_path.append(p_0)
+	carrier_path.append(Vector3(anchor_target.x, alt13, anchor_target.z))
+	carrier_path.append(anchor_target)
+	carrier_yaw = atan2(-(anchor_target.x - anchor_pos.x), -(anchor_target.z - anchor_pos.z))
 	orient_yaw = carrier_yaw
 	orient_yaw_v = 0.0
 	# Fix Pass 5: bigger, out-of-phase starting swing (see PEND_LEN_*).
+	# Fix Pass 13 (Item 6): the seed is set at ATTACH and the
+	# pendulum evolves continuously through the flight - the
+	# swing judged at the drop is the flight's own, never a
+	# state imposed at the station.
 	pend_th_f = 0.34
 	pend_th_l = 0.26
 	pend_om_f = 0.0
 	pend_om_l = 0.0
-	_prep_new_sequence()
 	_capture_lean_neutral()
 	_refresh_car_visuals()
 
@@ -3781,76 +3822,37 @@ func _reset_dangle_feel() -> void:
 	orient_have = false
 
 
-func _prep_new_sequence() -> void:
-	prep_order = [0, 1, 2]
-	var rng := RandomNumberGenerator.new()
-	rng.randomize()
-	for i: int in range(2, 0, -1):
-		var j: int = rng.randi_range(0, i)
-		var tmp: int = prep_order[i]
-		prep_order[i] = prep_order[j]
-		prep_order[j] = tmp
-	prep_index = 0
-	prep_done = false
-	switch_on = [false, false, false]
-	_refresh_switch_visuals()
-	_update_prep_label()
-
-
-func _flip_switch(idx: int) -> void:
-	if mode != MODE_HANG:
-		return
-	if prep_done:
-		switch_on[idx] = not switch_on[idx]
-		_refresh_switch_visuals()
-		return
-	if idx == prep_order[prep_index]:
-		switch_on[idx] = true
-		prep_index += 1
-		if prep_index >= prep_order.size():
-			prep_done = true
-			boost_meter = minf(boost_meter + PREP_BOOST_CREDIT, 100.0)
-	else:
-		# wrong switch: sequence resets, flipped switches go back off
-		prep_index = 0
-		switch_on = [false, false, false]
-	_prep_update_labels()
-	_refresh_switch_visuals()
-
-
-func _refresh_switch_visuals() -> void:
-	for i: int in switch_pivots.size():
-		switch_pivots[i].rotation_degrees.x = 22.0 if switch_on[i] else -38.0
-
-
-func _update_prep_label() -> void:
-	if prep_label == null:
-		return
-	if mode != MODE_HANG:
-		prep_label.text = ""
-		return
-	if prep_done:
-		prep_label.text = "PREP COMPLETE +%d BOOST" % int(PREP_BOOST_CREDIT)
-		return
-	var parts: Array[String] = []
-	for i: int in prep_order.size():
-		var nm: String = SWITCH_NAMES[prep_order[i]]
-		if i < prep_index:
-			parts.append("[%s]" % nm)
-		else:
-			parts.append(nm)
-	prep_label.text = "PREP: " + " -> ".join(parts)
-
-
-func _prep_update_labels() -> void:
-	_update_prep_label()
-	_update_panel()
-
-
 func _call_drone() -> void:
 	if mode != MODE_DRIVE:
 		return
 	_begin_recovery(car.global_position, car_s)
+
+
+func _transport_altitude(a: Vector3, b: Vector3, seed_y: float) -> float:
+	# Fix Pass 13 (Item 6): the direct route's cruise
+	# altitude - the highest road surface within 45 m in plan
+	# of the straight line a->b, plus the hang stack
+	# (HANG_LEN + HANG_CLEAR) plus CARRIER_ROUTE_CLEAR_M.
+	# The 45 m window is the FP12 rule (it also covers where
+	# the swinging car reaches around the anchor's column),
+	# and stilts stand under their own surface, so clearing
+	# every nearby surface clears them too. Spine samples
+	# every ~5 m over the whole track; called at recovery /
+	# race start only, never per frame.
+	var m: float = seed_y
+	var pa := Vector2(a.x, a.z)
+	var pb := Vector2(b.x, b.z)
+	var spine: Array[Vector3] = []
+	var n: int = int(track_len / 5.0)
+	for i: int in range(n + 1):
+		spine.append(Vector3(_frame_at(float(i) * 5.0)["pos"]))
+	var steps: int = maxi(1, int(pa.distance_to(pb) / 5.0))
+	for k: int in range(steps + 1):
+		var p: Vector2 = pa.lerp(pb, float(k) / float(steps))
+		for sp: Vector3 in spine:
+			if Vector2(sp.x, sp.z).distance_to(p) <= 45.0:
+				m = maxf(m, sp.y)
+	return m + HANG_LEN + HANG_CLEAR + CARRIER_ROUTE_CLEAR_M
 
 
 func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
@@ -3871,90 +3873,52 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 	anchor_target = fr["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR)
 	anchor_pos = catch_pos + Vector3.UP * (HANG_LEN + 1.6)
 	pivot_pos = anchor_pos
-	# Fix Pass 10 (Item 2): the carrier starts at a hover over the
-	# catch and flies the RETRACE path back to the drop point -
-	# spine samples every ~30 m at hang height plus a clearance
-	# margin, so it follows the road's shape (climbs, descends)
-	# instead of cutting a straight line through it.
-	# Fix Pass 12 (Item 3): the path now flies a COLLISION-FREE
-	# ALTITUDE PROFILE. FP10 took each waypoint's altitude from
-	# its own sample only, so between samples the carrier flew
-	# chords and the hanging car sagged toward the road it
-	# crossed - measured on staged recoveries, the car's centre
-	# passed ~1.5 m over the surface (wheels ~0.7 m) at the
-	# worst sag, and on a route crossing the hump row a crest
-	# between samples stands higher than both neighbours: the
-	# run-12 "flies through road and pylon a lot". Now the
-	# route is sampled every ~5 m first, and each waypoint's
-	# altitude is the HIGHEST road surface within +-45 m of
-	# route travel around it (the window also covers where
-	# the SWINGING car actually reaches - metres ahead of and
-	# behind the anchor's column on a sloped route), plus the hang stack
-	# (HANG_LEN + HANG_CLEAR) plus CARRIER_ROUTE_CLEAR_M -
-	# so the chord between adjacent waypoints also clears
-	# (both endpoints sit at or above every surface in the
-	# segment's window). Stilts of OTHER pieces cannot be
-	# hit: the circuit's closest plan approach between
-	# distinct pieces is 57 m (measured, this pass), and the
-	# spur's stilts stand under a surface at or below the
-	# road the route follows. The suite asserts the carried
-	# car intersects neither ribbon nor stilt on staged
-	# carries (over the humps, across the climb, out of the
-	# gap). anchor_target itself is untouched: the dangle
-	# station is exactly where Fix Pass 2 put it, and a
-	# profiled penultimate point 15 m of travel before the
-	# drop keeps the final dive short and local.
+	# Fix Pass 13 (Item 6): THE SPLIT - travel is separated
+	# from the hang. The FP10-FP12 carrier retraced the road
+	# backwards at hang height, following every climb and
+	# curve with the car dangling under it the whole way
+	# (measured: FP11 1911 frames end to end for the stage-28
+	# recovery; FP12's clearance profile brought the carry to
+	# ~1480-1560 frames and it was still the long way home,
+	# swinging - the owner's run-13 verdict: "the drone
+	# remains a nightmare. Might need a rethink"). The route
+	# is now DIRECT, flown by the same machinery (waypoint
+	# advance, braking-curve flare on the final leg, the
+	# FP11 arrival yaw gate): climb out over the catch to a
+	# transport altitude, one straight cruise leg to above
+	# the station, descend into the arrival. The transport
+	# altitude keeps the FP12 clearance rule - the highest
+	# road surface within 45 m of the route plus the hang
+	# stack plus CARRIER_ROUTE_CLEAR_M - applied to the
+	# straight plan line instead of the retrace (see
+	# _transport_altitude). anchor_target itself is
+	# untouched: the dangle station is exactly where Fix
+	# Pass 2 put it. Nothing arms during transport: the
+	# wheel and the drop lever latch only in the dangle
+	# (Items 3/6), so the cruise is pure travel and the hang
+	# begins only on arrival - and the pendulum state is
+	# never touched by the transition, so the swing the car
+	# arrives with is the swing it dangles with.
 	carrier_vel = Vector3.ZERO
 	carrier_accel = Vector3.ZERO
 	carrier_yaw = _frame_yaw(_frame_at(from_s)["tan"])
 	station_wait_t = 0.0
 	carrier_path.clear()
 	carrier_wp = 0
-	var back_dist: float = wrapf(from_s - drop_target_s, 0.0, track_len) if track_closed \
-		else maxf(0.0, from_s - drop_target_s)
-	var route_y: Array[float] = []
-	var rd: float = 0.0
-	while rd <= back_dist + 0.01:
-		var s_r: float = wrapf(from_s - rd, 0.0, track_len) if track_closed else from_s - rd
-		route_y.append(float(_frame_at(s_r)["pos"].y))
-		rd += 5.0
-	var prof_alt = func(route_d: float) -> float:
-		var m: float = -1.0e30
-		for j: int in route_y.size():
-			if absf(float(j) * 5.0 - route_d) <= 45.0:
-				m = maxf(m, route_y[j])
-		return m + HANG_LEN + HANG_CLEAR + CARRIER_ROUTE_CLEAR_M
+	var alt13: float = _transport_altitude(anchor_pos, anchor_target,
+		float(_frame_at(from_s)["pos"].y))
 	# Climb-out first: a deep catch (a gap fall is caught ~13 m
 	# below the road) starts UNDER the surface it must cross.
-	# If the hover sits below the profile, the first path
-	# point is straight above the catch at profile altitude -
-	# the carrier climbs out of the hole vertically before it
+	# If the hover sits below the transport altitude, the
+	# first path point is straight above the catch - the
+	# carrier climbs out of the hole vertically before it
 	# travels, instead of dragging the car diagonally through
 	# the lip it fell past.
-	if anchor_pos.y < prof_alt.call(0.0) - 0.05:
+	if anchor_pos.y < alt13 - 0.05:
 		var p_0: Vector3 = anchor_pos
-		p_0.y = prof_alt.call(0.0)
+		p_0.y = alt13
 		carrier_path.append(p_0)
-	# The 30 m samples stop 20 m short of the drop: the first
-	# FP12 build let the last sample land past the penultimate
-	# (back_dist 158 -> sample at s 750, penultimate at s 757),
-	# doubling the path back on itself - the carrier reversed
-	# twice at the station and rang there for ~7 s (traced).
-	var steps: int = int(maxf(back_dist - 20.0, 0.0) / 30.0)
-	for k: int in range(1, steps + 1):
-		var s_k: float = wrapf(from_s - 30.0 * float(k), 0.0, track_len) if track_closed \
-			else from_s - 30.0 * float(k)
-		var fr_k: Dictionary = _frame_at(s_k)
-		var p_k: Vector3 = fr_k["pos"]
-		p_k.y = maxf(float(fr_k["pos"].y) + HANG_LEN + HANG_CLEAR + 1.2, prof_alt.call(30.0 * float(k)))
-		carrier_path.append(p_k)
-	if back_dist > 20.0:
-		var s_p: float = wrapf(drop_target_s + 15.0, 0.0, track_len) if track_closed \
-			else drop_target_s + 15.0
-		var fr_p: Dictionary = _frame_at(s_p)
-		var p_p: Vector3 = fr_p["pos"]
-		p_p.y = maxf(float(fr_p["pos"].y) + HANG_LEN + HANG_CLEAR + 1.2, prof_alt.call(back_dist - 15.0))
-		carrier_path.append(p_p)
+	carrier_path.append(Vector3(anchor_target.x, alt13, anchor_target.z))
 	carrier_path.append(anchor_target)
 	_reset_dangle_feel()
 	# initial pendulum angles from the catch offset
@@ -4681,14 +4645,29 @@ func _step_carrier(delta: float) -> void:
 		# ~5 m/s^2 the whole way in - gentle on the pendulum,
 		# and, unlike an accel cap, it cannot overshoot the
 		# P-law station: speed is a function of distance left.
-		if hang_phase == "carry":
-			var d_app: float = (target - anchor_pos).length()
-			var cap_app: float = sqrt(2.0 * 5.0 * maxf(d_app - 0.05, 0.0))
-			if desired.length() > cap_app:
-				desired = desired.normalized() * cap_app
 	else:
 		var to: Vector3 = target - anchor_pos
 		desired = to.normalized() * CARRIER_SPEED if to.length() > 0.01 else Vector3.ZERO
+	# Fix Pass 13 (Item 6): the flare now guards the whole
+	# APPROACH, not just the final leg. The direct route's
+	# penultimate point sits ~1 m above the station, so a
+	# carrier arriving at transport speed (26 m/s) crossed it
+	# at 11+ m/s, overshot the station by ~5 m with the car
+	# swinging low over the neighbouring road, and spent
+	# ~300 frames creeping back on the P-law tail (measured:
+	# every transport ~1700-1830 frames regardless of
+	# distance, and stage-28 hits on the overshoot). The cap
+	# is computed on the REMAINING route (to the current
+	# waypoint, plus the drop from the penultimate point to
+	# the station), so the carrier is already on the curve
+	# while it is still cruising.
+	if hang_phase == "carry":
+		var rem6: float = (target - anchor_pos).length()
+		if not arrive:
+			rem6 += (anchor_target - target).length()
+		var cap6: float = sqrt(2.0 * 5.0 * maxf(rem6 - 0.05, 0.0))
+		if desired.length() > cap6:
+			desired = desired.normalized() * cap6
 	# integrate under the accel limit; station-keeping gets a
 	# higher limit (the rig works hard over the drop point -
 	# that authority is what lets it fly the deep dips).
@@ -5537,6 +5516,14 @@ func debug_set_hang_dangle() -> void:
 		pivot_pos = anchor_pos
 		carrier_vel = Vector3.ZERO
 		carrier_accel = Vector3.ZERO
+		# Fix Pass 13 (Item 6): pose the full ARRIVED state,
+		# facing included - the real arrival gate guarantees
+		# the carrier within 0.08 rad of the drop heading, and
+		# a hook that left the pickup-facing yaw in place
+		# dropped test cars sideways off the road.
+		carrier_yaw = _frame_yaw(_frame_at(drop_target_s)["tan"])
+		orient_yaw = carrier_yaw
+		orient_yaw_v = 0.0
 
 
 func debug_body_width_m() -> float:

@@ -466,9 +466,13 @@ func _run() -> void:
 	check(not main.panels_visible and not main.panel_root.visible and not main.diag_root.visible,
 		"boot: both info boards start hidden (FP12 item 2)")
 
-	# Stage 1: Drop Start dangle - the pendulum actually swings the car.
-	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
-		"stage1: race opens dangling at Drop Start")
+	# Stage 1: Drop Start - the race opens with the pickup
+	# (Fix Pass 13, Item 6), the transport delivers the car to
+	# the station, and the dangle there actually swings it.
+	check(main.mode == main.MODE_HANG and main.hang_phase == "attach",
+		"stage1: race opens with the Drop Start pickup (phase %s)" % main.hang_phase)
+	var ok1: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 3000)
+	check(ok1, "stage1: the transport delivers the car to the Drop Start dangle")
 	# Fix Pass 5 re-derivation: the dangle is now TWO pendulum axes on
 	# different lengths (resultant path diagonal, never a clean
 	# single-plane rhythm), amplitude clearly above the old 0.74 m
@@ -940,9 +944,10 @@ func _run() -> void:
 	# mirrored sweeper, the descending staircase, the second gap,
 	# the final climb and the home straight to the relocated
 	# finish. (Boost is topped up once before the second gap -
-	# the prep credit a driver would have banked at a drone stop;
-	# the autopilot has no hands for switches.)
+	# a test convenience; the autopilot has no hands, and since
+	# Fix Pass 13 no dangle pays boost anyway.)
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	main.pend_th_f = 0.0
 	main.pend_th_l = 0.0
 	main.pend_om_f = 0.0
@@ -1027,6 +1032,7 @@ func _run() -> void:
 	# which isolate the sampled road from the spring integrators.
 	main.jitter_on = false
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	main.pend_th_f = 0.0
 	main.pend_th_l = 0.0
 	main.pend_om_f = 0.0
@@ -1294,61 +1300,87 @@ func _run() -> void:
 	# through the production grip path, plus the FP8 three-
 	# dangle regression coverage unchanged:
 	#   11a: grip-first-then-reach, then a HELD-GRIP SWEEP
-	#        across the remaining switches (each fires on zone
-	#        entry, exactly once), prep completes, credit lands.
-	#   11b: recovery dangle - wrong-order reset, a held-grip
-	#        probe (parked in the zone: exactly one flip), then
-	#        the original pose-then-grip sequence.
-	#   11c: post-FINISH Drop Start, pose-then-grip throughout.
+	#        across two more controls (each fires on zone
+	#        entry, exactly once), and a parked-grip latch
+	#        probe.
+	#   11b: recovery dangle - a held-grip probe (parked in
+	#        the zone: exactly one fire), then pose-then-grip.
+	#   11c: post-FINISH Drop Start, pose-then-grip.
+	# Fix Pass 13: the prep switches this stage was built on
+	# are DELETED (Item 1). The grip-path properties it proves
+	# (level-based fire on zone entry, exactly-once latch,
+	# both human orders, three successive dangles) are now
+	# exercised on the surviving dash controls - the LEAN
+	# button is the observable (a toggle: a second fire is
+	# directly visible as a toggle back), the TRACK button
+	# and a sweep back to LEAN carry the sweep.
 	main.test_throttle = 0.0
 	main.test_boost = false
 	# --- dangle A: fresh Drop Start (the production restart
 	# entry every restart path lands in) ---
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
 		"stage11a: fresh Drop Start dangle (mode=%d phase=%s)" % [main.mode, main.hang_phase])
-	var boost_a: float = main.boost_meter
 	# (a) GRIP FIRST, THEN REACH - the run-9 failure order.
-	var hold_idx: int = int(main.prep_order[0])
-	var hold_ctl: int = main.dash_ctl_kinds.find("switch%d" % hold_idx)
-	var hold_seg: Array[Vector3] = main._dash_ctl_segment(hold_ctl)
-	var hold_mid: Vector3 = (hold_seg[0] + hold_seg[1]) * 0.5
-	main.test_hand_pos["R"] = hold_mid + Vector3(0.0, 0.55, 0.0)
+	var lean_ctl_a: int = main.dash_ctl_kinds.find("lean")
+	var lean_seg_a: Array[Vector3] = main._dash_ctl_segment(lean_ctl_a)
+	var lean_mid_a: Vector3 = (lean_seg_a[0] + lean_seg_a[1]) * 0.5
+	main.test_hand_pos["R"] = lean_mid_a + Vector3(0.0, 0.55, 0.0)
 	main.test_hand_set = true
 	check(main._dash_ctl_near(main.test_hand_pos["R"]) == -1,
 		"stage11a: the reach starts outside every control zone")
+	var lean_a0: bool = main.lean_on
 	main.test_grip["R"] = 1.0
 	for ih: int in 2:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.prep_index == 0,
-		"stage11a: gripping in empty air fires nothing (index %d)" % main.prep_index)
-	main.test_hand_pos["R"] = hold_mid # hand arrives, grip STILL held
+	check(main.lean_on == lean_a0,
+		"stage11a: gripping in empty air fires nothing")
+	main.test_hand_pos["R"] = lean_mid_a # hand arrives, grip STILL held
 	for ih2: int in 2:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.prep_index == 1 and main.switch_on[hold_idx],
-		"stage11a: grip-first-then-reach flips the switch on zone entry (index %d)" % main.prep_index)
+	check(main.lean_on != lean_a0,
+		"stage11a: grip-first-then-reach fires the control on zone entry")
 	# (b) HELD-GRIP SWEEP: without ever releasing, the hand
-	# moves to the next switch's segment, then the last - each
-	# fires exactly once on entry and the sequence completes.
-	for ia: int in range(1, main.prep_order.size()):
-		var sw_idx: int = int(main.prep_order[ia])
-		var sw_ctl: int = main.dash_ctl_kinds.find("switch%d" % sw_idx)
-		var sw_seg: Array[Vector3] = main._dash_ctl_segment(sw_ctl)
-		main.test_hand_pos["R"] = (sw_seg[0] + sw_seg[1]) * 0.5
-		for ih3: int in 2:
-			main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.prep_done, "stage11a: held-grip sweep completes the prep sequence")
-	check(main.boost_meter > boost_a, "stage11a: prep credit lands (%.0f -> %.0f)" % [boost_a, main.boost_meter])
-	# Parked in the last zone, still gripping: no re-fire (a
-	# re-fire now would TOGGLE the switch back off - _flip_switch's
-	# post-completion branch - so a true latch is observable).
+	# moves to the TRACK button - it fires on entry - then
+	# back to LEAN, which fires again (toggle back). Each
+	# entry fires exactly once; the parked probe below is
+	# what proves the "exactly once".
+	var trk_ctl_a: int = main.dash_ctl_kinds.find("track")
+	var trk_seg_a: Array[Vector3] = main._dash_ctl_segment(trk_ctl_a)
+	main.test_hand_pos["R"] = (trk_seg_a[0] + trk_seg_a[1]) * 0.5
+	for ih3: int in 2:
+		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	check(main.active_track == "circuit",
+		"stage11a: held-grip sweep fires the next control on entry (track %s)" % main.active_track)
+	# The track switch restarted the race on the circuit -
+	# the car hangs at a new world pose, so the sweep back
+	# re-reads the LEAN segment from the live car.
+	var lean_seg_a2: Array[Vector3] = main._dash_ctl_segment(lean_ctl_a)
+	main.test_hand_pos["R"] = (lean_seg_a2[0] + lean_seg_a2[1]) * 0.5
+	for ih3b: int in 2:
+		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	check(main.lean_on == lean_a0,
+		"stage11a: sweeping back fires the first control again (toggle back)")
+	# Parked in the LEAN zone, still gripping: no re-fire (a
+	# re-fire would toggle LEAN again - directly observable).
 	for ih4: int in 4:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.switch_on[int(main.prep_order[2])] and main.prep_index == 3,
-		"stage11a: a parked held grip does not re-fire (index %d)" % main.prep_index)
+	check(main.lean_on == lean_a0,
+		"stage11a: a parked held grip does not re-fire")
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	# The sweep switched the live track to the circuit; the
+	# rest of this stage (and stage 12+) was authored on the
+	# ribbon - restore it (a track switch restarts the race
+	# into a fresh Drop Start dangle on the ribbon).
+	# Fix Pass 13 (Item 6): the restart now opens with the
+	# pickup transport; this stage's subject is the fall, so
+	# it takes the setup shortcut to the station dangle.
+	main._set_track("ribbon")
+	main.debug_set_hang_dangle()
+	await frames(4)
 	# --- forced fall -> drone recovery dangle ---
 	main._do_release()
 	var drv_a: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
@@ -1449,12 +1481,14 @@ func _run() -> void:
 	main.test_throttle = 0.0
 	check(fin_c, "stage11c: lap finishes (mode=%d)" % main.mode)
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle" and main.is_drop_start,
 		"stage11c: restart re-enters a Drop Start dangle")
-	for ic: int in main.prep_order.size():
-		grip_flip_switch(int(main.prep_order[ic]))
-	check(main.prep_done, "stage11c: post-FINISH Drop Start prep completes through the grip path")
+	var lean_c0: bool = main.lean_on
+	grip_press_ctl("lean")
+	check(main.lean_on != lean_c0,
+		"stage11c: the grip path still works the dash on the post-FINISH Drop Start")
 	main.test_hand_set = false
 	main.test_grip["R"] = 0.0
 	main.test_grip["L"] = 0.0
@@ -1680,6 +1714,7 @@ func _run() -> void:
 	# (pure function of the built track), then fly one LIVE gap
 	# fall through the production recovery path.
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	var fall_cases: Array = [
 		[main.gap_s1 + 2.0, "just past gap 1"],
@@ -1749,6 +1784,7 @@ func _run() -> void:
 	# swing must LAG first (small angle early) and settle at the
 	# physical equilibrium -atan(a/g) = -0.297 rad.
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	main.dip_timer = 1000.0 # keep flown dips out of the measurements
 	main.pend_th_f = 0.0
@@ -1789,6 +1825,7 @@ func _run() -> void:
 	# the CARRIER and confirm the car realigns to it (no
 	# permanent twist left behind).
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	main.dip_timer = 1000.0
 	main.pend_th_f = 0.0
@@ -1978,6 +2015,7 @@ func _run() -> void:
 	# ---------- stage 19: three laps to DONE, seam steps invisible ----
 	main.jitter_on = false
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(3)
 	main.step_rows.clear()
 	main._step_last_us = 0
@@ -2057,6 +2095,7 @@ func _run() -> void:
 	main._set_track("circuit")
 	await frames(3)
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(3)
 	main._do_release()
 	var gap_ok20: bool = false
@@ -2088,6 +2127,7 @@ func _run() -> void:
 	main._set_track("circuit")
 	await frames(3)
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(3)
 	main._do_release()
 	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 300)
@@ -2151,6 +2191,7 @@ func _run() -> void:
 	main._set_track("circuit")
 	await frames(3)
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(3)
 	main._do_release()
 	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 300)
@@ -2317,22 +2358,22 @@ func _run() -> void:
 		"stage23: worst segment-to-handle deviation %.3f m (tol %.3f)" % [float(audit23["worst"]), main.DASH_AUDIT_TOL])
 
 	# ---------- stage 24: Fix Pass 11 (Item 3) - drone approach ----
-	# Production recovery with a LONG opposed walk-back: warp to
-	# circuit s 900, whose drop piece sits 158 m behind on the
-	# same road - mid-carry the carrier flies back along the
-	# track facing its velocity, ~180 deg from the drop heading
-	# (asserted, so the stage cannot silently stop exercising
-	# the owner's case). It must still ARRIVE aligned: yaw
-	# error at the dangle transition within the gate's few
-	# degrees (the old behaviour arrived ~180 deg out and spun
-	# at the station), the alignment already flown 30 frames
-	# before arrival, and the car's own facing settled on the
-	# drop heading within ~2 s of arrival (releasable).
+	# Production recovery: warp to circuit s 900, whose drop
+	# piece sits 158 m behind. Fix Pass 13 (Item 6) re-derives
+	# the geometry: the carrier no longer retraces the road
+	# (FP11/12 flew back along the track facing its velocity,
+	# ~180 deg from the drop heading); it flies the DIRECT
+	# chord at transport altitude, facing the chord - still a
+	# real arrival turn (the max yaw error is printed), and
+	# it must still ARRIVE aligned: yaw error at the dangle
+	# transition within the gate's few degrees, the alignment
+	# already flown 30 frames before arrival, and the car's
+	# own facing settled on the drop heading within ~2 s of
+	# arrival (releasable).
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	main.dip_timer = 1000.0 # keep flown dips out of the measurements
-	for idx: Variant in main.prep_order.duplicate():
-		grip_flip_switch(int(idx), "R")
 	main._do_release()
 	var drv24: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv24, "stage24: setup release lands into DRIVE")
@@ -2362,8 +2403,8 @@ func _run() -> void:
 	main.dip_timer = 1000.0
 	check(saw_carry24 and yaw_err_dangle24 >= 0.0,
 		"stage24: the recovery carries and arrives (dangle reached)")
-	check(yaw_err_max24 > deg_to_rad(90.0),
-		"stage24: the carry really is opposed mid-flight (max yaw err %.0f deg)" % rad_to_deg(yaw_err_max24))
+	check(yaw_err_max24 > deg_to_rad(20.0),
+		"stage24: the direct carry still works a real arrival turn (max yaw err %.0f deg)" % rad_to_deg(yaw_err_max24))
 	check(yaw_err_dangle24 >= 0.0 and yaw_err_dangle24 < deg_to_rad(5.0),
 		"stage24: carrier arrives aligned (yaw err %.1f deg at the dangle)" % rad_to_deg(maxf(yaw_err_dangle24, 0.0)))
 	check(err_hist24.size() >= 10 and err_hist24[0] < deg_to_rad(20.0),
@@ -2378,8 +2419,6 @@ func _run() -> void:
 			break
 	check(aligned24,
 		"stage24: car facing settles on the drop heading within 2 s of arrival (%.1f s)" % (float(t24) / 90.0))
-	for idx: Variant in main.prep_order.duplicate():
-		grip_flip_switch(int(idx), "R")
 	main._do_release()
 	var drv24b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv24b, "stage24: release after the aligned arrival resumes driving")
@@ -2391,26 +2430,26 @@ func _run() -> void:
 	# springs home and nothing drops; (c) the panel names the
 	# lever as THE release (the XR trigger release is retired).
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	main.dip_timer = 1000.0
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
 		"stage25: dangling for the lever test")
-	# Fix Pass 12 (Item 1): the shifter's placement, measured:
-	# pivot forward beside the wheel on the right pod, and the
-	# grab segment spans the SHORT shaft (0.19 m of segment on
-	# a 0.33 m shaft, vs FP11's 0.22 on 0.50 - the segment was
-	# re-based to the same upper-shaft-plus-knob span).
-	check(main.drop_lever_pivot.position == Vector3(0.72, 0.71, -0.60),
-		"stage25: shifter pivot forward beside the wheel (0.72, 0.71, -0.60)")
+	# Fix Pass 13 (Item 2): the lever's placement, measured:
+	# pivot at the CENTRE of the dash on its bracket, and the
+	# grab segment spans the upper shaft (0.19 m of segment on
+	# the 0.34 m shaft - the same upper-shaft-plus-knob span
+	# every placement has carried).
+	check(main.drop_lever_pivot.position == Vector3(0, 0.88, -0.70),
+		"stage25: drop lever pivot at the centre dash (0, 0.88, -0.70)")
 	var seg25: Array = main.debug_drop_lever_segment()
 	check(seg25.size() == 2 and absf((seg25[0] as Vector3).distance_to(seg25[1]) - 0.19) < 0.01,
-		"stage25: grab segment spans the shortened shaft (%.2f m)" % (
+		"stage25: grab segment spans the upper shaft (%.2f m)" % (
 			(seg25[0] as Vector3).distance_to(seg25[1]) if seg25.size() == 2 else -1.0))
-	check(main._panel_text().contains("DROP SHIFTER"),
-		"stage25: the panel names the DROP SHIFTER as the release")
-	# Fix Pass 12 (Item 1): the hand poses on the SHIFTER's
-	# shaft - 0.27 m out the pivot (the 0.33 m shaft's working
-	# reach; FP11's 0.50 m shaft used 0.45).
+	check(main._panel_text().contains("DROP LEVER"),
+		"stage25: the panel names the DROP LEVER as the release")
+	# The hand poses on the lever's shaft - 0.27 m out the
+	# pivot (inside the 0.34 m shaft's working reach).
 	var lever_at = func(th: float) -> Vector3:
 		return main.car_body.global_transform * (main.drop_lever_pivot.position \
 			+ Basis(Vector3.RIGHT, th) * Vector3(0, 0.27, 0))
@@ -2435,6 +2474,7 @@ func _run() -> void:
 	check(drv25, "stage25: the lever's drop lands into DRIVE")
 	# (b) partial pull, early release
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	main.dip_timer = 1000.0
 	main.test_hand_set = true
@@ -2481,6 +2521,7 @@ func _run() -> void:
 	main._set_track("circuit")
 	await frames(3)
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(3)
 	main._do_release()
 	var rel26: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
@@ -2555,6 +2596,7 @@ func _run() -> void:
 	main._set_track("ribbon")
 	await frames(3)
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(3)
 	main._do_release()
 	var rel26d: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
@@ -2616,10 +2658,9 @@ func _run() -> void:
 	var run_case28 = func(fall_s: float, label: String, frame_cap: int) -> Array:
 		main._set_track("circuit") # stage 26 leaves the ribbon active
 		main.start_race()
+		main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 		await frames(4)
 		main.dip_timer = 1000.0
-		for idx: Variant in main.prep_order.duplicate():
-			grip_flip_switch(int(idx), "R")
 		main._do_release()
 		var drv: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 		if not drv:
@@ -2738,10 +2779,9 @@ func _run() -> void:
 	# Case G: the gap fall (drives in at pin 13, falls, drone).
 	main._set_track("circuit")
 	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	main.dip_timer = 1000.0
-	for idx: Variant in main.prep_order.duplicate():
-		grip_flip_switch(int(idx), "R")
 	main._do_release()
 	var drv_g28: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv_g28, "stage28: case G setup release lands into DRIVE")
@@ -2922,8 +2962,357 @@ func _run() -> void:
 	check(band29 > 200,
 		"stage29: the ring's rim band is painted (bright underside verts %d)" % band29)
 
+	# Stage 30 (Fix Pass 13, Item 1): TOUCHDOWN CONNECTION - the
+	# prep sequence is gone and the getaway is judged from the
+	# sway. Releases from the same drop point (the ribbon's Drop
+	# Start) with the pendulum poked to three states: settled
+	# (sway-zero), the Drop Start's own seed swing, and the
+	# dangle's full sway-peak envelope (derived below).
+	# For each: the contact the tires met (main.contact_*) and
+	# the time from touchdown to 20 m/s at full throttle, wheel
+	# centred. The spread between settled and peak is the
+	# owner's mechanic; it must be material.
+	main._set_track("ribbon")
+	await frames(5)
+	check(main.dash_ctl_kinds.filter(func(k: String) -> bool: return k.begins_with("switch")).is_empty(),
+		"stage30: no prep switches remain on the dash (kinds %s)" % str(main.dash_ctl_kinds))
+	var getaway := func(om_f: float, om_l: float) -> Array:
+		main.start_race()
+		main.dip_timer = 1000.0 # keep flown dips out of the measurement
+		var ok_d: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+		if not ok_d:
+			return [-1.0, -1.0, -1.0, ""]
+		# Fix Pass 13 (Item 6): the carrier arrives aligned but
+		# the CAR's facing twists in behind it over ~2 s (stage
+		# 24 measures the same settle). Stage the release on
+		# the settled facing, as a driver would, so the contact
+		# numbers are the pendulum's alone.
+		var drop_yaw30: float = main._frame_yaw(main._frame_at(main.drop_target_s)["tan"])
+		await wait_until(func() -> bool: return absf(wrapf(main.orient_yaw - drop_yaw30, -PI, PI)) < 0.003, 300)
+		main.carrier_vel = Vector3.ZERO
+		main.pend_th_f = 0.0
+		main.pend_th_l = 0.0
+		main.pend_om_f = om_f
+		main.pend_om_l = om_l
+		main.slack_t = 0.0
+		main.wheel_angle = 0.0
+		# Re-pose before releasing: zeroing the pendulum STATE
+		# does not move the CAR - _do_release falls from the
+		# car's current pose, which is wherever the last dangle
+		# frame left it (mid-swing, metres off-centre). Two
+		# frames let the hang re-pose the car on the staged
+		# state (plumb centre, the staged omegas barely begun
+		# to swing), so the instrument measures the contact.
+		await frames(2)
+		var boost_pre: float = main.boost_meter
+		main._do_release()
+		var ok_l: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+		if not ok_l:
+			return [-1.0, -1.0, -1.0, ""]
+		var lat_c: float = main.contact_lat_speed
+		var hdg_c: float = main.contact_head_err
+		var grd_c: String = main.contact_grade
+		var boost_post: float = main.boost_meter
+		main.test_throttle = 1.0
+		var t20: float = -1.0
+		var f30: int = 0
+		while f30 < 90 * 8:
+			await physics_frame
+			f30 += 1
+			if main.speed >= 20.0:
+				t20 = float(f30) / 90.0
+				break
+		main.test_throttle = 0.0
+		return [t20, lat_c, hdg_c, grd_c, boost_post - boost_pre]
+	# Sway-peak = the full envelope the dangle can hand over:
+	# the recovery catch clamps pendulum angles at 0.6 rad, and
+	# the velocity peak of a 0.6 rad swing on the pendulum's own
+	# lengths is om_f 0.6*sqrt(g/5.5) = 0.80, om_l 0.6*sqrt(g/3.9)
+	# = 0.95 rad/s. The seed row is the Drop Start's own opening
+	# swing (0.34/0.26 rad -> om peaks 0.45/0.41) for the record.
+	var g_clean: Array = await getaway.call(0.0, 0.0)
+	var g_seed: Array = await getaway.call(-0.45, 0.41)
+	var g_peak: Array = await getaway.call(-0.80, 0.95)
+	print("stage30: clean  t20 %.2f s, contact lat %.2f m/s, hdg %+.2f deg, grade %s, boost delta %+.1f" % [
+		float(g_clean[0]), float(g_clean[1]), float(g_clean[2]), String(g_clean[3]), float(g_clean[4])])
+	print("stage30: seed   t20 %.2f s, contact lat %.2f m/s, hdg %+.2f deg, grade %s, boost delta %+.1f" % [
+		float(g_seed[0]), float(g_seed[1]), float(g_seed[2]), String(g_seed[3]), float(g_seed[4])])
+	print("stage30: peak   t20 %.2f s, contact lat %.2f m/s, hdg %+.2f deg, grade %s, boost delta %+.1f" % [
+		float(g_peak[0]), float(g_peak[1]), float(g_peak[2]), String(g_peak[3]), float(g_peak[4])])
+	check(float(g_clean[0]) > 0.0 and float(g_peak[0]) > 0.0,
+		"stage30: all staged releases land and reach 20 m/s")
+	check(absf(float(g_clean[4])) < 0.01 and absf(float(g_peak[4])) < 0.01,
+		"stage30: no boost is paid at the drop (deltas %+.1f / %+.1f)" % [float(g_clean[4]), float(g_peak[4])])
+	check(String(g_clean[3]) == "CLEAN",
+		"stage30: a settled release grades CLEAN (got %s)" % String(g_clean[3]))
+	check(String(g_peak[3]) == "CROSSED-UP",
+		"stage30: a sway-peak release grades CROSSED-UP (got %s)" % String(g_peak[3]))
+	check(float(g_peak[0]) - float(g_clean[0]) >= 1.5,
+		"stage30: getaway spread sway-peak vs sway-zero is %.2f s (target >= 1.5)" % (float(g_peak[0]) - float(g_clean[0])))
+
+	# ---------- stage 31: Fix Pass 13 (Item 3) - wheel in the dangle ----
+	# The wheel grabs during the dangle, dials a lock, has NO
+	# yaw authority while hanging, and the first DRIVE frames
+	# after the release steer by the dialled lock. Production
+	# path: posed test hands through _poll_grab.
+	main.start_race()
+	var dang31: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+	check(dang31, "stage31: dangling for the wheel test")
+	main.dip_timer = 1000.0
+	var hub31: Vector3 = main._wheel_hub_local()
+	var pv31: Vector3 = main._wheel_plane_v()
+	var rim_at = func(th: float) -> Vector3:
+		return main.car.global_transform * (hub31 + 0.21 * (Vector3.RIGHT * cos(th) + pv31 * sin(th)))
+	main.test_hand_set = true
+	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_hand_pos["R"] = rim_at.call(0.0)
+	main.test_grip["L"] = 0.0
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.grab_hand == "R", "stage31: the wheel grabs in the dangle")
+	var yaw31: float = main.orient_yaw
+	main.test_hand_pos["R"] = rim_at.call(0.6)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - 0.6) < 0.05,
+		"stage31: the held wheel turns to the dialled lock (%.2f rad)" % main.wheel_angle)
+	check(main.mode == main.MODE_HANG and absf(wrapf(main.orient_yaw - yaw31, -PI, PI)) < 0.001,
+		"stage31: no yaw authority in the hang - the pendulum owns the car")
+	main._refresh_car_visuals()
+	var fw31: float = 0.0
+	var rw31: float = 0.0
+	for wi31: int in main.wheel_mis.size():
+		if main.wheel_axle[wi31] == 0:
+			fw31 = (main.wheel_mis[wi31] as MeshInstance3D).rotation_degrees.y
+		else:
+			rw31 = (main.wheel_mis[wi31] as MeshInstance3D).rotation_degrees.y
+	check(fw31 < -5.0 and absf(rw31) < 0.01,
+		"stage31: front road wheels show the lock (%.1f deg), rears stay straight" % fw31)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_set = false
+	check(main.grab_hand == "" and absf(main.wheel_angle - 0.6) < 0.05,
+		"stage31: releasing the grip keeps the lock dialled (%.2f rad)" % main.wheel_angle)
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	main._do_release()
+	var drv31: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv31, "stage31: the drop lands into DRIVE")
+	await frames(1)
+	check(main.wheel_angle > 0.5 and main.yaw_rate < -0.004,
+		"stage31: the first DRIVE frames steer by the dangle lock (wheel %.2f rad, yaw_rate %.3f)" % [main.wheel_angle, main.yaw_rate])
+	main.wheel_angle = 0.0
+
+	# ---------- stage 32: Fix Pass 13 (Item 4) - the hang button gate ----
+	# Production path: posed button states through
+	# _poll_xr_buttons (test_btn is the test_mode substitute,
+	# same pattern as test_grip).
+	main.start_race()
+	var dang32: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+	check(dang32, "stage32: dangling for the button-gate test")
+	main.dip_timer = 1000.0
+	main.hang_btn_log.clear()
+	main.race_time = 42.0
+	check(not main._recenter_allowed(),
+		"stage32: the both-grips recenter is suppressed in the hang")
+	(main.test_btn["L"] as Dictionary)["by_button"] = true
+	main._poll_xr_buttons(0.016)
+	(main.test_btn["L"] as Dictionary)["by_button"] = false
+	main._poll_xr_buttons(0.016)
+	check(main.mode == main.MODE_HANG and main.race_time > 40.0,
+		"stage32: a short Y stab in the hang does not restart (race_time %.1f)" % main.race_time)
+	check(main.hang_btn_log.size() == 1 and main.hang_btn_log[0].ends_with(":LY"),
+		"stage32: the Y stab is named in the hang input log (%s)" % str(main.hang_btn_log))
+	(main.test_btn["L"] as Dictionary)["ax_button"] = true
+	main._poll_xr_buttons(0.016)
+	(main.test_btn["L"] as Dictionary)["ax_button"] = false
+	main._poll_xr_buttons(0.016)
+	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
+		"stage32: X in the hang is inert (the drone call is DRIVE-only)")
+	(main.test_btn["R"] as Dictionary)["ax_button"] = true
+	main._poll_xr_buttons(0.016)
+	check(not main.in_boost and main.boost_arm_blocked,
+		"stage32: A held in the hang gives no boost")
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	main._do_release()
+	var drv32: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv32, "stage32: the drop lands into DRIVE")
+	main._poll_xr_buttons(0.016) # A still held from the hang
+	check(not main.in_boost,
+		"stage32: A held through touchdown still gives no boost")
+	(main.test_btn["R"] as Dictionary)["ax_button"] = false
+	main._poll_xr_buttons(0.016)
+	(main.test_btn["R"] as Dictionary)["ax_button"] = true
+	main._poll_xr_buttons(0.016)
+	check(main.in_boost, "stage32: a fresh A press after landing boosts")
+	(main.test_btn["R"] as Dictionary)["ax_button"] = false
+	main._poll_xr_buttons(0.016)
+	check(main._recenter_allowed(),
+		"stage32: the recenter is allowed in DRIVE with no control held")
+	# long-press Y in a fresh hang restarts deliberately
+	main.start_race()
+	var dang32b: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+	check(dang32b, "stage32: dangling again for the long-press test")
+	main.dip_timer = 1000.0
+	main.race_time = 42.0
+	(main.test_btn["L"] as Dictionary)["by_button"] = true
+	for i32: int in 100:
+		main._poll_xr_buttons(1.0 / 90.0)
+	(main.test_btn["L"] as Dictionary)["by_button"] = false
+	main._poll_xr_buttons(0.016)
+	check(main.race_time < 1.0 and main.mode == main.MODE_HANG,
+		"stage32: holding Y >= 0.8 s in the hang restarts deliberately (race_time %.2f)" % main.race_time)
+	(main.test_btn["L"] as Dictionary).clear()
+	(main.test_btn["R"] as Dictionary).clear()
+
+	# ---------- stage 33: Fix Pass 13 (Item 5) - articulation ----
+	# Every control that actuates also articulates, driven
+	# through the production path: a gripping hand in the
+	# SEAT+ zone deflects its lever while the trim moves, and
+	# the lever springs back on release; a held dash button
+	# dips and returns.
+	main.start_race()
+	var dang33: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+	check(dang33, "stage33: dangling for the articulation test")
+	main.dip_timer = 1000.0
+	var up33: Node3D = main.seat_pivots[0]
+	check(absf(up33.rotation_degrees.x - (-20.0)) < 0.5,
+		"stage33: the SEAT+ lever rests at -20 deg (%.1f)" % up33.rotation_degrees.x)
+	var seg33: Array = main._dash_ctl_segment(main.dash_ctl_kinds.find("seatup"))
+	main.test_hand_set = true
+	main.test_hand_pos["L"] = (seg33[0] as Vector3).lerp(seg33[1] as Vector3, 0.6)
+	main.test_hand_pos["R"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_grip["L"] = 1.0
+	main.test_grip["R"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	var trim33a: float = main.seat_trim
+	await frames(30)
+	# Re-pose from a FRESH segment before polling again: the
+	# hanging car swings, and a world-fixed hand leaves the
+	# zone (the driver's hand rides the car; the pose must).
+	var seg33b: Array = main._dash_ctl_segment(main.dash_ctl_kinds.find("seatup"))
+	main.test_hand_pos["L"] = (seg33b[0] as Vector3).lerp(seg33b[1] as Vector3, 0.6)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(up33.rotation_degrees.x > -8.0,
+		"stage33: the SEAT+ lever DEFLECTS while held (%.1f deg)" % up33.rotation_degrees.x)
+	check(main.seat_trim > trim33a,
+		"stage33: the trim moves while the lever is held (%+.3f -> %+.3f)" % [trim33a, main.seat_trim])
+	main.test_grip["L"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	await frames(30)
+	check(absf(up33.rotation_degrees.x - (-20.0)) < 2.0,
+		"stage33: the lever springs back to rest on release (%.1f deg)" % up33.rotation_degrees.x)
+	var lean_idx33: int = main.dash_ctl_kinds.find("lean")
+	var lean_node33: Node3D = main.dash_ctl_nodes[lean_idx33]
+	var base_y33: float = main.dash_ctl_base_y[lean_idx33]
+	var p33: Vector3 = (main._dash_ctl_segment(lean_idx33)[0] as Vector3)
+	main.test_hand_pos["R"] = p33
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	await frames(15)
+	check(lean_node33.position.y < base_y33 - 0.005,
+		"stage33: a held dash button DIPS (%.4f m)" % (base_y33 - lean_node33.position.y))
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_set = false
+	await frames(15)
+	check(absf(lean_node33.position.y - base_y33) < 0.002,
+		"stage33: the button returns flush on release")
+
+	# ---------- stage 34: Fix Pass 13 (Item 6) - the split transport ----
+	# (a) Drop Start is a pickup: the car starts ON THE GROUND
+	# beside the start line, the carrier attaches and flies it
+	# to the station; nothing arms during transport (wheel and
+	# drop lever polls are inert in attach/carry), and the
+	# pendulum state crosses the carry->dangle transition
+	# untouched. (b) Two staged falls' catch->dangle seconds,
+	# printed against the FP12 retrace numbers.
+	main._set_track("ribbon")
+	main.dip_timer = 1000.0
+	check(main.mode == main.MODE_HANG and main.hang_phase == "attach",
+		"stage34: Drop Start opens with the attach (phase %s)" % main.hang_phase)
+	var fr34: Dictionary = main._frame_at(2.0)
+	var pickup34: Vector3 = Vector3(fr34["pos"]) + Vector3(fr34["side"]) * (main.HALF_WIDTH + 4.0)
+	pickup34.y = float(fr34["pos"].y) + 0.4
+	check(main.car.global_position.distance_to(pickup34) < 0.05,
+		"stage34: the car starts on the ground at the pickup point beside the start line")
+	# inert controls during transport (attach here; the same
+	# gates cover carry - the lever/wheel latch conditions
+	# test the dangle phase itself)
+	var dseg34: Array = main.debug_drop_lever_segment()
+	main.test_hand_set = true
+	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_hand_pos["R"] = (dseg34[0] as Vector3).lerp(dseg34[1] as Vector3, 0.5)
+	main.test_grip["L"] = 0.0
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.drop_lever_hand == "",
+		"stage34: the drop lever does not latch during transport")
+	var hub34: Vector3 = main._wheel_hub_local()
+	var pv34: Vector3 = main._wheel_plane_v()
+	main.test_hand_pos["R"] = main.car.global_transform * (hub34 + 0.21 * Vector3.RIGHT)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.grab_hand == "",
+		"stage34: the wheel does not grab during transport")
+	main.test_grip["R"] = 0.0
+	main.test_hand_set = false
+	var f34: int = 0
+	var pend_prev34: Vector4 = Vector4(main.pend_th_f, main.pend_th_l, main.pend_om_f, main.pend_om_l)
+	var pend_jump34: float = 0.0
+	var dang34: bool = false
+	while f34 < 3000:
+		await physics_frame
+		f34 += 1
+		if main.hang_phase == "dangle":
+			var pc34 := Vector4(main.pend_th_f, main.pend_th_l, main.pend_om_f, main.pend_om_l)
+			pend_jump34 = maxf(absf(pc34.x - pend_prev34.x), absf(pc34.y - pend_prev34.y))
+			dang34 = true
+			break
+		pend_prev34 = Vector4(main.pend_th_f, main.pend_th_l, main.pend_om_f, main.pend_om_l)
+	check(dang34, "stage34: the Drop Start transport arrives (dangle after %d frames, %.1f s)" % [f34, float(f34) / 90.0])
+	check(pend_jump34 < 0.05,
+		"stage34: pendulum state is continuous across the handover (jump %.3f rad)" % pend_jump34)
+	# (b) the two staged falls
+	var transport34 = func(fall_s: float) -> Array:
+		main._set_track("circuit")
+		main.start_race()
+		main.debug_set_hang_dangle()
+		await frames(4)
+		main.dip_timer = 1000.0
+		main._do_release()
+		var drv: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+		if not drv:
+			return [-1, 0.0]
+		main.debug_warp_to_s(fall_s)
+		await frames(3)
+		main._call_drone()
+		var n: int = 0
+		var ok: bool = false
+		while n < 6000:
+			await physics_frame
+			n += 1
+			if main.hang_phase == "dangle":
+				ok = true
+				break
+		return [n if ok else -1, main.drop_target_s]
+	var fall_a34: Array = await transport34.call(900.0)
+	print("stage34: fall A (s900) catch->dangle %d frames = %.1f s (drop s %.0f); FP12's retrace needed 1482-1559 frames for the carry portion alone, FP11 1911 end to end" % [
+		int(fall_a34[0]), float(fall_a34[0]) / 90.0, float(fall_a34[1])])
+	check(int(fall_a34[0]) > 0 and int(fall_a34[0]) < 1482,
+		"stage34: fall A transport (%d frames) beats FP12's carry-only frames (1482)" % int(fall_a34[0]))
+	var fall_b34: Array = await transport34.call(3279.0)
+	print("stage34: fall B (s3279, the hairpin walk-back) catch->dangle %d frames = %.1f s (drop s %.0f)" % [
+		int(fall_b34[0]), float(fall_b34[0]) / 90.0, float(fall_b34[1])])
+	check(int(fall_b34[0]) > 0,
+		"stage34: fall B transport arrives (drop s %.0f)" % float(fall_b34[1]))
+	main._set_track("ribbon")
+
 	print("---")
-	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
+	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
 		print("API GUARD: ALL %d CHECKS PASSED" % guard_checks)
 	else:
