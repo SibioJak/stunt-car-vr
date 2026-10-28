@@ -231,7 +231,7 @@ const DASH_CTL_RADIUS: float = 0.15
 const SUSP_TRAVEL: float = 0.34 # full stroke, metres of compression
 const SUSP_REST: float = 0.10 # compression at rest under the car's weight
 const SUSP_K: float = 160.0 # spring rate toward target (1/s^2)
-const SUSP_DAMP: float = 4.6 # underdamped on purpose: it must overshoot
+const SUSP_DAMP: float = 11.0 # FP14 (Item 2): was 4.6 (zeta ~0.18, rang 4 overshoots / 2.2 s parked) - the film settles in ~1 s with <=1 overshoot (zeta ~0.36 here) # underdamped on purpose: it must overshoot
 const SUSP_TRANSFER_K: float = 0.0055 # compression shift per m/s^2 of long. accel
 const AXLE_F: float = 1.55 # front axle, metres ahead of car origin along s
 const AXLE_R: float = 1.45 # rear axle, metres behind
@@ -262,8 +262,41 @@ const VIEW_HEAVE_GAIN: float = 0.35
 # from a bounce; the load level can).
 const AIR_LOAD_EPS: float = 0.03 # crest load factor that counts as unloaded
 const AIR_SUSTAIN_FRAMES: int = 3 # frames at ~zero load before separation
-const REBOUND_THROW_VEL: float = -0.6 # cv_f + cv_r (m/s) that counts as a throw
+const REBOUND_THROW_VEL: float = -1.6 # cv_f + cv_r (m/s) that counts as a throw (FP14: staged from the joint trace below)
 const REBOUND_LOAD_FLOOR: float = 0.8 # rebound route needs the road fully supporting
+# Fix Pass 14 (Item 2): the throw route's travel condition.
+# FP5/8 fired at full droop (mean compression <= 0.005),
+# which the old underdamped ring (zeta ~0.18) always reached
+# by slamming to the stop. The Item 2 damping (zeta ~0.44)
+# settles a drop landing WITHOUT crossing droop - and
+# silently deleted the Drop Start's soft bounce (stage 2c:
+# hop peak 0.16 m -> 0.00 m) and with it ~0.4 s of FP13's
+# sway-getaway spread (stage 30: 1.60 s -> 1.19 s), because
+# the hop's airborne beat was part of the crossed-up price.
+# The throw IS the extension velocity, not the droop
+# position: the route now fires as the springs cross
+# near-droop still extending fast. The load floor above
+# remains the bleed discriminator (unchanged), and the
+# velocity floor keeps tremble and gentle returns grounded.
+# Staged refinement (M8/M8b probes): the joint trace of a
+# drop landing at the new damping reads - extension
+# velocity peaks (cv sum -2.93) while the springs are still
+# at 0.20 m, crosses rest (0.10) at -2.25..-1.55, and by
+# the time the mean compression bottoms (0.060) the throw
+# is spent (-0.22). Waiting for near-droop throws the
+# energy away: a wheel separates when its spring passes
+# natural length still extending fast, not at the stop.
+# The route therefore fires mid-stroke: mean compression
+# at/below 0.16 with the summed extension velocity past
+# -1.6 (the trace crosses that pair at bounce 1.5 m/s,
+# hop ~0.12 m - the film's soft bounce). And the
+# stored-energy evidence sits where it belongs: a DEEP
+# HIT (mean compression >= REBOUND_DEEP_HIT) within the
+# last half second. Gentle returns and sagging chases
+# (the climb-top bleed never compresses deep) stay grounded.
+const REBOUND_FIRE_TRAVEL: float = 0.16 # mean compression (m) at/below which a committed return separates
+const REBOUND_DEEP_HIT: float = 0.22 # mean compression (m) that counts as stored energy
+const REBOUND_DEEP_HIT_WINDOW: float = 0.5 # seconds a deep hit stays evidence
 # Fix Pass 14 (Item 1) - THE REBOUND, energy-gated. The film
 # study's headline: every big jump in the original lands and
 # REBOUNDS into a second flight of ~1/2-2/3 the first (High
@@ -599,6 +632,7 @@ var pending_rebound: bool = false # FP14 (Item 1): the pending bounce is the spr
 var air_from_rebound: bool = false # FP14 (Item 1): this flight began as a spring rebound
 var air_from_release: bool = false # FP14 (Item 1): this flight began as a drone release (a drop, not a jump)
 var rebound_gate_vy: float = 0.0 # FP14 (Item 1): impact vy of an armed energy return (0 = unarmed)
+var deep_hit_age: float = 9.0 # FP14 (Item 2): seconds since the last deep compression (route-2 evidence)
 var bounce_chain: int = 0 # FP14 (Item 1): spring throws since the last settled ground run
 var grounded_t: float = 0.0 # FP14 (Item 1): continuous grounded seconds (chain re-arm clock)
 var air_load_frames: int = 0 # consecutive frames at ~zero crest load, both axles
@@ -3856,6 +3890,7 @@ func _reset_suspension() -> void:
 	air_from_rebound = false
 	air_from_release = false
 	rebound_gate_vy = 0.0
+	deep_hit_age = 9.0
 	bounce_chain = 0
 	grounded_t = 0.0
 	air_load_frames = 0
@@ -4431,7 +4466,20 @@ func _update_air(delta: float) -> void:
 	# Fix Pass 9: the landing window widens to the straddle
 	# shoulder - touching down with wheels on the shoulder is a
 	# landing (the support model takes it from there), not a miss.
-	if not bool(fr["gap"]) and h <= CLEARANCE + 0.05 and h > -2.2 and absf(lat) <= HALF_WIDTH + EDGE_FALL_OVERSHOOT and air_vel.y < 2.5:
+	# Fix Pass 14 (Item 2): the vertical-velocity bound drops
+	# from 2.5 to 0.5. The FP5/8 spring throw left the ground
+	# from full droop (car placed ~0.46 m up, above the window),
+	# so the old bound never met a rising car; the Item 2
+	# mid-stroke throw leaves from c ~0.155 (car at ~0.31 m,
+	# INSIDE the window) and the old test re-landed it on the
+	# first airborne tick - the hop existed in the state
+	# (bounce_pending fired, bounce_vy 1.53) but never in the
+	# air. A car rising faster than 0.5 m/s is leaving, not
+	# landing; falls and arcs come back through the bound on
+	# their way down, and the below-window case (h far under
+	# the ribbon) is unaffected in practice - it lands when it
+	# falls back through, a few frames later.
+	if not bool(fr["gap"]) and h <= CLEARANCE + 0.05 and h > -2.2 and absf(lat) <= HALF_WIDTH + EDGE_FALL_OVERSHOOT and air_vel.y < 0.5:
 		_land(fr, lat, h)
 		return
 	# missed it so far - but the drone is called only when the
@@ -5142,8 +5190,10 @@ func _update_suspension(delta: float) -> void:
 		# axles, sustained - the surface falls away faster than
 		# gravity can pull the car after it (v^2*kv > g). No
 		# history: load level + duration are the whole rule.
-		# (2) REBOUND: the springs reach full droop still throwing
-		# fast - stored energy leaving - but ONLY while the road
+		# (2) REBOUND: the springs cross near-droop still throwing
+		# fast - stored energy leaving (FP14 Item 2: the crossing
+		# is the condition, not the droop stop - see
+		# REBOUND_FIRE_TRAVEL) - but ONLY while the road
 		# is fully supporting the car (load >= REBOUND_LOAD_FLOOR
 		# at both axles). That load floor is the discriminator
 		# against the climb-top bleed, and it is a mechanism, not
@@ -5163,6 +5213,12 @@ func _update_suspension(delta: float) -> void:
 			air_load_frames += 1
 		else:
 			air_load_frames = 0
+		# Fix Pass 14 (Item 2): stored-energy evidence for the
+		# throw route - a deep compression inside the window.
+		if (c_f + c_r) * 0.5 >= REBOUND_DEEP_HIT:
+			deep_hit_age = 0.0
+		else:
+			deep_hit_age += delta
 		if grounded_t > REBOUND_CHAIN_RESET_S:
 			bounce_chain = 0
 		# Fix Pass 14 (Item 1): an armed return that has not
@@ -5176,9 +5232,9 @@ func _update_suspension(delta: float) -> void:
 			bounce_vy = 0.35
 			pending_rebound = false
 			air_load_frames = 0
-		elif (c_f + c_r) * 0.5 <= 0.005 and cv_f + cv_r < REBOUND_THROW_VEL \
+		elif (c_f + c_r) * 0.5 <= REBOUND_FIRE_TRAVEL and cv_f + cv_r < REBOUND_THROW_VEL \
 				and load_f >= REBOUND_LOAD_FLOOR and load_r >= REBOUND_LOAD_FLOOR \
-				and bounce_chain == 0:
+				and bounce_chain == 0 and deep_hit_age <= REBOUND_DEEP_HIT_WINDOW:
 			# Fix Pass 14 (Item 1): the throw. Ungated landings
 			# (drops, drumbeat hops) keep the FP5/8 cap exactly;
 			# an armed energy return raises the cap with the

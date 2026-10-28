@@ -548,8 +548,8 @@ func _run() -> void:
 			var fr_h: Dictionary = main._frame_at(main.air_s_est)
 			var h_rel: float = (main.car.global_position - fr_h["pos"]).dot(fr_h["up"])
 			hop_peak = maxf(hop_peak, h_rel - main.CLEARANCE)
-	print("stage2c diag: min mean c %.3f, min cv sum %.2f, bounce_pending seen %s, chain %d" % [
-		dbg_min_c, dbg_min_cv, str(dbg_pend), main.bounce_chain])
+	print("stage2c diag: min mean c %.3f, min cv sum %.2f, bounce_pending seen %s, chain %d, deep_age %.2f" % [
+		dbg_min_c, dbg_min_cv, str(dbg_pend), main.bounce_chain, main.deep_hit_age])
 	check(hop_seen and hop_peak > 0.05,
 		"stage2c: rebound throws the car airborne after the drop landing (peak %.2f m above road)" % hop_peak)
 	# Touchdown compression orders by landing grade, via the
@@ -2622,12 +2622,13 @@ func _run() -> void:
 		main.debug_pin_speed(48.0)
 		await physics_frame
 	var pitch48_26: float = main.engine_player.pitch_scale
-	# Fix Pass 14: the 34 m/s tolerance widens from 0.12 to
-	# 0.18 - the drop bounce (stage 2c) puts ~0.3 s of the
-	# pitch-settle window airborne, where the rev target is
-	# the unloaded 1.05, and the measured sag is 0.13 (reads
-	# 1.98). The pitch FORMULA and the rescale stations are
-	# untouched; the ordering assert still binds.
+	# Fix Pass 14 (Item 2): the 34 m/s tolerance widens from
+	# 0.12 to 0.18 - the restored drop bounce (stage 2c) puts
+	# ~0.3 s of the pitch-settle window airborne, where the
+	# rev target is the unloaded 1.05, and the measured sag
+	# is 0.13 (reads 1.98). The pitch FORMULA and the
+	# rescale stations are untouched; the ordering assert
+	# below still binds.
 	check(absf(pitch34_26 - 2.11) < 0.18 and absf(pitch48_26 - 2.65) < 0.12 and pitch48_26 > pitch34_26 + 0.4,
 		"stage26: engine pitch rescaled (34 m/s: %.2f, 48 m/s: %.2f)" % [pitch34_26, pitch48_26])
 
@@ -3062,8 +3063,24 @@ func _run() -> void:
 		"stage30: a settled release grades CLEAN (got %s)" % String(g_clean[3]))
 	check(String(g_peak[3]) == "CROSSED-UP",
 		"stage30: a sway-peak release grades CROSSED-UP (got %s)" % String(g_peak[3]))
-	check(float(g_peak[0]) - float(g_clean[0]) >= 1.5,
-		"stage30: getaway spread sway-peak vs sway-zero is %.2f s (target >= 1.5)" % (float(g_peak[0]) - float(g_clean[0])))
+	# Fix Pass 14 (Items 1+2) re-derivation of the spread
+	# floor, with the mechanism on the record: FP13's 1.60 s
+	# spread was measured in a model whose CLEAN drop did not
+	# bounce - the old throw route needed a full-droop slam
+	# that a flat, symmetric landing's ring never quite
+	# reached, while tilted sway landings slammed a corner
+	# and did bounce. The film (notes section 4) gives EVERY
+	# drop one soft bounce, and FP14's mid-stroke throw
+	# restores it for the clean case too: the clean getaway
+	# now spends 22 frames airborne and reads 2.08 s. The
+	# sway cases are untouched to 0.04 s (seed 2.59 vs 2.61,
+	# peak 3.38 vs 3.42 - their bounce and its transient
+	# re-arm are exactly FP13's), so the connection penalty
+	# structure is intact; the spread compresses from below
+	# because the baseline now pays the bounce too. Floor
+	# re-derived at 1.25 (measured 1.30).
+	check(float(g_peak[0]) - float(g_clean[0]) >= 1.25,
+		"stage30: getaway spread sway-peak vs sway-zero is %.2f s (FP14 floor 1.25; FP13's 1.5 predates the clean drop's restored bounce)" % (float(g_peak[0]) - float(g_clean[0])))
 
 	# ---------- stage 31: Fix Pass 13 (Item 3) - wheel in the dangle ----
 	# The wheel grabs during the dangle, dials a lock, has NO
@@ -3453,6 +3470,182 @@ func _run() -> void:
 				int(ct35b[0]), float(fl35b[1]) / 90.0])
 	main.test_throttle = 0.0
 
+
+	# ---------- stage 36: Fix Pass 14 (Item 2) - ONE-BOUNCE SETTLE ----
+	# The film (notes section 2): a landing compresses, returns
+	# with AT MOST ONE overshoot, and settles in ~1 s; flat
+	# running is dead steady. BEFORE (base, SUSP_DAMP 4.6, zeta
+	# ~0.18): the parked poke below rang FOUR overshoots below
+	# rest and needed 2.18 s to settle (and slammed to full
+	# droop on the first swing); the same ring followed real
+	# landings (a 0.85 m staged landing was still outside its
+	# band at 3 s). The tune is damping only (SUSP_DAMP 4.6 ->
+	# 11.0, zeta ~0.44); stiffness is untouched, and Item 1's
+	# gated return cuts its own damping while a big landing's
+	# energy is being returned, so the two items do not fight.
+	# Protocol: the car is PARKED on the flat home straight
+	# (speed pinned to 0) so the trace is the suspension's
+	# alone - no road shape, no jitter input (a parked car
+	# samples a constant s).
+	main.debug_warp_to_s(main.track_len - 175.0)
+	main.test_throttle = 0.0
+	main.wheel_angle = 0.0
+	for i36: int in 30:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+	# Fixture hygiene: the traces below are the suspension's
+	# alone, so each poke starts from a rested state explicitly
+	# (the first version of this stage inherited stage 35's
+	# driving ring through a 30-frame calm and read 2
+	# overshoots / a droop slam that the rested harness trace
+	# - 1 overshoot, min 0.049 - does not have).
+	main.c_f = main.SUSP_REST
+	main.c_r = main.SUSP_REST
+	main.cv_f = 0.0
+	main.cv_r = 0.0
+	for i36z: int in 10:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+	# (a) both-axle poke: compression 0.20, released from
+	# rest. The poke sits BELOW the throw route's deep-hit
+	# evidence (0.22), so this trace is the spring settle
+	# alone - a landing hard enough to store a bounce is
+	# Item 1's case (stage 35) and case (c) below; the
+	# film's <=1-overshoot settle is a claim about the
+	# SPRING, and at 0.30 the poked car now quite correctly
+	# hops (it is indistinguishable from a landing's
+	# bottom), which the first version of this stage
+	# mis-read as ring.
+	main.c_f = 0.20
+	main.c_r = 0.20
+	main.cv_f = 0.0
+	main.cv_r = 0.0
+	var over36: int = 0
+	var was36: bool = false
+	var settle36: int = -1
+	var min36: float = 9.0
+	var f36: int = 0
+	while f36 < 270:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+		f36 += 1
+		var mc36: float = (main.c_f + main.c_r) * 0.5
+		min36 = minf(min36, mc36)
+		if mc36 < main.SUSP_REST - 0.01:
+			if not was36:
+				over36 += 1
+				was36 = true
+		else:
+			was36 = false
+		if settle36 < 0 and f36 > 5 and absf(mc36 - main.SUSP_REST) <= 0.01:
+			var stay36: bool = true
+			for j36: int in 30:
+				main.debug_pin_speed(0.0)
+				await physics_frame
+				f36 += 1
+				if absf((main.c_f + main.c_r) * 0.5 - main.SUSP_REST) > 0.01:
+					stay36 = false
+					break
+			if stay36:
+				settle36 = f36 - 30
+	print("stage36: parked poke trace - overshoots %d, settle %d frames (%.2f s), min mean compression %.3f m" % [
+		over36, settle36, float(settle36) / 90.0, min36])
+	check(over36 <= 1,
+		"stage36: the poked suspension overshoots rest at most once (%d, film: <=1; a 0.30 poke at base rang 4)" % over36)
+	check(settle36 > 0 and settle36 <= 95,
+		"stage36: the poke settles in ~1 s (%d frames; base 196 at the deeper poke)" % settle36)
+	check(min36 > 0.02,
+		"stage36: the return no longer slams to full droop (min mean %.3f m; base 0.000)" % min36)
+	# (b) front-only poke: the PITCH channel settles the same way.
+	main.c_f = main.SUSP_REST
+	main.c_r = main.SUSP_REST
+	main.cv_f = 0.0
+	main.cv_r = 0.0
+	for i36b: int in 10:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+	var base36: float = main.pitch_extra
+	main.c_f = 0.30
+	main.c_r = main.SUSP_REST
+	main.cv_f = 0.0
+	main.cv_r = 0.0
+	var pover36: int = 0
+	var pwas36: bool = false
+	var psettle36: int = -1
+	var f36b: int = 0
+	while f36b < 270:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+		f36b += 1
+		var dp36: float = main.pitch_extra - base36
+		if dp36 < -0.004:
+			if not pwas36:
+				pover36 += 1
+				pwas36 = true
+		else:
+			pwas36 = false
+		if psettle36 < 0 and f36b > 5 and absf(dp36) <= 0.004:
+			var pstay36: bool = true
+			for j36b: int in 30:
+				main.debug_pin_speed(0.0)
+				await physics_frame
+				f36b += 1
+				if absf(main.pitch_extra - base36) > 0.004:
+					pstay36 = false
+					break
+			if pstay36:
+				psettle36 = f36b - 30
+	print("stage36: front poke pitch trace - overshoots %d, settle %d frames" % [pover36, psettle36])
+	check(pover36 <= 1 and psettle36 > 0 and psettle36 <= 95,
+		"stage36: a front-only poke settles its pitch with <=1 overshoot in ~1 s (%d / %d frames)" % [pover36, psettle36])
+	# (c) a parked SOFT LANDING on the flat (0.85 m stage: an
+	# ungated vy ~4.1 touchdown, the drop class of landing).
+	# The film's settle claim reads on the FIRST return: the
+	# compression overshoots at most once before the car
+	# either settles or takes its one soft bounce (stage
+	# 2c's behaviour); after a bounce the trace is the
+	# bounce's own landing, judged by the full-settle clock
+	# and the one-bounce rule instead.
+	main.debug_stage_landing(main.track_len - 150.0, 0.85, 0.0)
+	var lover36: int = 0
+	var lwas36: bool = false
+	var lsettle36: int = -1
+	var lair36: int = 0
+	var lpm36: int = main.mode
+	var f36c: int = 0
+	while f36c < 270:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+		f36c += 1
+		if main.mode == main.MODE_AIR and lpm36 != main.MODE_AIR:
+			lair36 += 1
+		lpm36 = main.mode
+		var lc36: float = (main.c_f + main.c_r) * 0.5
+		if lair36 == 0 and lc36 < main.SUSP_REST - 0.01:
+			if not lwas36:
+				lover36 += 1
+				lwas36 = true
+		else:
+			lwas36 = false
+		if lsettle36 < 0 and f36c > 5 and absf(lc36 - main.SUSP_REST) <= 0.01:
+			var lstay36: bool = true
+			for j36c: int in 30:
+				main.debug_pin_speed(0.0)
+				await physics_frame
+				f36c += 1
+				if absf((main.c_f + main.c_r) * 0.5 - main.SUSP_REST) > 0.01:
+					lstay36 = false
+					break
+			if lstay36:
+				lsettle36 = f36c - 30
+	print("stage36: parked soft landing - first-return overshoots %d, air episodes %d, full settle %d frames" % [lover36, lair36, lsettle36])
+	check(lover36 <= 1,
+		"stage36: a soft landing's first return overshoots at most once (%d; base rang 5 excursions)" % lover36)
+	check(lair36 <= 1,
+		"stage36: a soft landing takes at most its one soft bounce (%d air episodes)" % lair36)
+	check(lsettle36 > 0 and lsettle36 <= 135,
+		"stage36: a soft landing is fully settled within 1.5 s (%d frames; base rang past 3 s)" % lsettle36)
+	main.test_throttle = 0.0
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
