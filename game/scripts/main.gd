@@ -1357,6 +1357,42 @@ func _build_spur(d: Dictionary) -> void:
 		for i5: int in range(2, pts.size() - 2):
 			sm[i5] = pts[i5 - 1] * 0.25 + pts[i5] * 0.5 + pts[i5 + 1] * 0.25
 		pts = sm
+	# Fix Pass 12 (Item 6): the merge arrives ALIGNED. The loop
+	# audit measured the shipped exit leg reaching the join
+	# with a -2.54 deg heading residual, still unwinding at up
+	# to 3.45 deg/m over the last 12 m (the entry side unwinds
+	# at <= 1.00 deg/m). The Bezier's end tangent is parallel
+	# to the straight's by construction, but arc-length
+	# resampling plus the two smoothing passes above bend the
+	# final samples. Cure: blend the exit leg's last 40 m of
+	# POINTS onto the surveyed merge line - the main frame at
+	# the matching distance-to-join, offset -2 m like the
+	# merge point itself - with a smoothstep weight that
+	# reaches FULL by 15 m out (the last 15 m lie exactly on
+	# the surveyed line; the first FP12 blend, full weight
+	# only at the join itself, zeroed the residual but left
+	# a 3.79 deg/m unwind in the last 12 m - measured, then
+	# strengthened to this), BEFORE tangents/sides/kv are
+	# derived, so the whole frame field inherits the fix.
+	var n_pre: int = pts.size()
+	var suffix: Array[float] = []
+	suffix.resize(n_pre)
+	var acc2: float = 0.0
+	for ib2: int in range(n_pre - 1, -1, -1):
+		if ib2 < n_pre - 1:
+			acc2 += pts[ib2].distance_to(pts[ib2 + 1])
+		suffix[ib2] = acc2
+	for ic2: int in n_pre:
+		var d_end: float = suffix[ic2]
+		if d_end >= 40.0 or d_end <= 0.0:
+			continue
+		var w9: float = 1.0
+		if d_end > 15.0:
+			var u9: float = clampf((40.0 - d_end) / 25.0, 0.0, 1.0)
+			w9 = u9 * u9 * (3.0 - 2.0 * u9)
+		var fr9: Dictionary = _frame_at(SPUR_JOIN_S - d_end)
+		var tgt9: Vector3 = Vector3(fr9["pos"]) + Vector3(fr9["side"]) * -2.0
+		pts[ic2] = pts[ic2].lerp(tgt9, w9)
 	# Tangents: centred finite differences of the positions.
 	var n: int = pts.size()
 	var tans: Array[Vector3] = []
@@ -1409,6 +1445,16 @@ func _build_spur(d: Dictionary) -> void:
 	var skirt_c := Color(1.0, 0.5, 0.05)
 	var bot_c := Color(0.55, 0.27, 0.03)
 	var edge_c := Color(1.0, 0.72, 0.10)
+	# Fix Pass 12 (Item 6): the ring's OUTER RIM BAND - for
+	# ring segments the underside is painted bright amber and
+	# gains continuous underside edge strips, so the hoop
+	# reads as ribbon from behind/above (the audit: from the
+	# approach the ring presents its dark barrel back, mouth
+	# tucked under the near rim). Ring points occupy sample
+	# indices ring_s0 .. ring_s0+69 (base point shared at
+	# both ends), so ring segments are [ring_s0, ring_s0+68].
+	var ring_c := Color(1.0, 0.58, 0.06)
+	var ring_i0: int = int(ring_s0)
 	for i10: int in range(0, n - 1):
 		var p0: Vector3 = pts[i10]
 		var p1: Vector3 = pts[i10 + 1]
@@ -1426,20 +1472,32 @@ func _build_spur(d: Dictionary) -> void:
 		var br1: Vector3 = r1 - u1 * RIBBON_DEPTH
 		var up_avg: Vector3 = (u0 + u1) * 0.5
 		var side_avg: Vector3 = (s0 + s1) * 0.5
+		var on_ring: bool = i10 >= ring_i0 and i10 <= ring_i0 + 68
 		_add_quad(surf_pos, surf_nrm, surf_col, l0, r0, r1, l1, up_avg, surf_c)
 		_add_quad(skirt_pos, skirt_nrm, skirt_col, l0, l1, bl1, bl0, -side_avg, skirt_c)
 		_add_quad(skirt_pos, skirt_nrm, skirt_col, r1, r0, br0, br1, side_avg, skirt_c)
-		_add_quad(skirt_pos, skirt_nrm, skirt_col, bl1, br1, br0, bl0, -up_avg, bot_c)
+		_add_quad(skirt_pos, skirt_nrm, skirt_col, bl1, br1, br0, bl0, -up_avg,
+			ring_c if on_ring else bot_c)
+		if on_ring:
+			# underside amber strips, continuous (a hoop
+			# outline, not optic flow - undashed), 2 cm proud
+			# of the underside so they never z-fight it.
+			_add_quad(edge_pos, edge_nrm, edge_col,
+				bl1 - u1 * 0.02, bl1 + s1 * EDGE_STRIP_W - u1 * 0.02, bl0 + s0 * EDGE_STRIP_W - u0 * 0.02, bl0 - u0 * 0.02,
+				-up_avg, edge_c)
+			_add_quad(edge_pos, edge_nrm, edge_col,
+				br1 - s1 * EDGE_STRIP_W - u1 * 0.02, br1 - u1 * 0.02, br0 - u0 * 0.02, br0 - s0 * EDGE_STRIP_W - u0 * 0.02,
+				-up_avg, edge_c)
 		# Fix Pass 11 (Item 5): the edge strips are DASHED
 		# (3 m on / 2 m off) - optic flow for the raised top
 		# speed; a continuous strip on a flat surface gives the
 		# eye nothing temporal to measure speed against.
 		if i10 % 5 < 3:
 			_add_quad(edge_pos, edge_nrm, edge_col,
-				l0 + u0 * 0.02, l0 + s0 * 0.36 + u0 * 0.02, l1 + s1 * 0.36 + u1 * 0.02, l1 + u1 * 0.02,
+				l0 + u0 * 0.02, l0 + s0 * EDGE_STRIP_W + u0 * 0.02, l1 + s1 * EDGE_STRIP_W + u1 * 0.02, l1 + u1 * 0.02,
 				up_avg, edge_c)
 			_add_quad(edge_pos, edge_nrm, edge_col,
-				r0 + u0 * 0.02, r0 - s0 * 0.36 + u0 * 0.02, r1 - s1 * 0.36 + u1 * 0.02, r1 + u1 * 0.02,
+				r0 + u0 * 0.02, r0 - s0 * EDGE_STRIP_W + u0 * 0.02, r1 - s1 * EDGE_STRIP_W + u1 * 0.02, r1 + u1 * 0.02,
 				up_avg, edge_c)
 		if i10 % 12 == 0:
 			var tp: Vector3 = p0 + s0 * 0.3
@@ -1450,6 +1508,98 @@ func _build_spur(d: Dictionary) -> void:
 	_add_mesh(surf_pos, surf_nrm, surf_col, "SpurSurface", false, root)
 	_add_mesh(skirt_pos, skirt_nrm, skirt_col, "SpurSkirt", false, root)
 	_add_mesh(edge_pos, edge_nrm, edge_col, "SpurEdges", true, root)
+	# Fix Pass 12 (Item 6): the loop entrance LEADS THE EYE -
+	# the audit's three presentation defects get their three
+	# remaining garnishes (the rim band is in the mesh loop
+	# above). All visual only: no physics, no capture change.
+	# (1) A LOOP gantry over the home straight at s 158, ahead
+	# of the capture window (168-243) - the START gantry's
+	# language, amber for the spur.
+	_build_gantry(158.0, Color(0.95, 0.58, 0.05), "LOOP", root)
+	# (2) The amber GUIDE STRIP on the road surface along the
+	# capture corridor: it starts on the centreline ahead of
+	# the entry and curves left along the exact line a car
+	# must drive to be captured (the spur centreline's own
+	# easing, then a gentle continuation toward the edge as
+	# the spur separates below it) - the mouth the audit found
+	# missing. Painted 3 cm proud, unshaded.
+	var guide_pos := PackedVector3Array()
+	var guide_nrm := PackedVector3Array()
+	var guide_col := PackedColorArray()
+	var guide_c := Color(1.0, 0.60, 0.04)
+	for gi: int in range(160, 212):
+		var ga: Dictionary = _frame_at(float(gi))
+		var gb: Dictionary = _frame_at(float(gi + 1))
+		var lat_a: float = 0.0
+		var lat_b: float = 0.0
+		var xa: float = float(gi) - SPUR_ENTRY_S
+		var xb: float = float(gi + 1) - SPUR_ENTRY_S
+		if xa > 0.0:
+			var ua: float = clampf(xa / 35.0, 0.0, 1.0)
+			lat_a = -3.4 * (ua * ua * (3.0 - 2.0 * ua)) - minf(maxf(xa - 35.0, 0.0) * 0.08, 0.5)
+		if xb > 0.0:
+			var ub: float = clampf(xb / 35.0, 0.0, 1.0)
+			lat_b = -3.4 * (ub * ub * (3.0 - 2.0 * ub)) - minf(maxf(xb - 35.0, 0.0) * 0.08, 0.5)
+		var ca: Vector3 = Vector3(ga["pos"]) + Vector3(ga["side"]) * lat_a + Vector3(ga["up"]) * 0.03
+		var cb: Vector3 = Vector3(gb["pos"]) + Vector3(gb["side"]) * lat_b + Vector3(gb["up"]) * 0.03
+		var sa2: Vector3 = ga["side"]
+		var sb2: Vector3 = gb["side"]
+		# Corner order mirrored against the surface's: as
+		# first built (back-left, back-right, fwd-right,
+		# fwd-left) the strip faced DOWN and was culled from
+		# every driver's view - convicted by render: with the
+		# material's cull disabled it drew 12,568 px, with
+		# culling on, zero. (The surface's identical-looking
+		# order works there; the strip's frames come from the
+		# banked _frame_at and the measured fact is the fact.)
+		_add_quad(guide_pos, guide_nrm, guide_col,
+			ca + sa2 * 0.275, ca - sa2 * 0.275, cb - sb2 * 0.275, cb + sb2 * 0.275,
+			(Vector3(ga["up"]) + Vector3(gb["up"])).normalized(), guide_c)
+	_add_mesh(guide_pos, guide_nrm, guide_col, "SpurGuide", true, root)
+	# (3) CHEVRONS down the descent leg (spur_s ~44-84, the
+	# run from the fork to the ring base): flat arrow pairs on
+	# the surface pointing along travel - the eye is told
+	# this chute goes somewhere, and where. Sized to READ at
+	# speed (wings +-2.4 m, stroke 0.9 m, 2.6 m long): the
+	# first FP12 proof's +-0.85 m version photographed as
+	# dashes. (The marks then grew twice more chasing a
+	# pixel count that turned out to be a WINDING bug - see
+	# the mirrored corner order below; the motorway scale
+	# stayed because at 48 m/s it is the right scale.)
+	var chev_pos := PackedVector3Array()
+	var chev_nrm := PackedVector3Array()
+	var chev_col := PackedColorArray()
+	var chev_c := Color(1.0, 0.80, 0.20)
+	for cs2: float in [44.0, 52.0, 60.0, 68.0, 76.0, 84.0]:
+		# The frame comes from the LOCAL spur arrays, not
+		# _spur_frame_at: that helper reads track_data, which
+		# does not hold the circuit yet while _build_spur runs
+		# (the first FP12 suite run died on exactly that -
+		# chevrons silently unbuilt behind a script error).
+		var ci2: int = 0
+		while ci2 < cum.size() - 2 and float(cum[ci2 + 1]) < cs2:
+			ci2 += 1
+		var seg2: float = maxf(float(cum[ci2 + 1]) - float(cum[ci2]), 0.001)
+		var frc2: float = clampf((cs2 - float(cum[ci2])) / seg2, 0.0, 1.0)
+		var cf2: Vector3 = Vector3(tans[ci2]).lerp(Vector3(tans[ci2 + 1]), frc2).normalized()
+		var csd: Vector3 = Vector3(sides[ci2]).lerp(Vector3(sides[ci2 + 1]), frc2).normalized()
+		var cup: Vector3 = csd.cross(cf2).normalized()
+		var cc0: Vector3 = Vector3(pts[ci2]).lerp(Vector3(pts[ci2 + 1]), frc2) + cup * 0.03
+		for sgn: float in [-1.0, 1.0]:
+			var aw: Vector3 = cc0 - cf2 * 1.3 + csd * (2.4 * sgn)
+			var bw: Vector3 = cc0 + cf2 * 1.3
+			var dw: Vector3 = bw - aw
+			var perp: Vector3 = dw.cross(cup).normalized() * 0.45
+			# Mirrored corner order, same conviction as the
+			# guide strip: as first built these faced DOWN -
+			# the proof counted only the far pair at the ring
+			# base (where the chute's roll tips the culled
+			# side toward the camera) at a constant 117 px
+			# through three size increases, while the near
+			# marks drew nothing.
+			_add_quad(chev_pos, chev_nrm, chev_col,
+				aw + perp, aw - perp, bw - perp, bw + perp, cup, chev_c)
+	_add_mesh(chev_pos, chev_nrm, chev_col, "SpurChevrons", true, root)
 
 
 func _spur_frame_at(s: float) -> Dictionary:
@@ -3952,9 +4102,12 @@ func _update_drive(delta: float) -> void:
 		finished_time = race_time
 		state_label.text = "FINISH!"
 	# Fix Pass 10 (Item 4): spur capture - in the entry window
-	# past SPUR_ENTRY_S, a car whose centre is within 1.3 m of
+	# past SPUR_ENTRY_S, a car whose centre is within 1.2 m of
 	# the spur centreline is on the spur (the driver steered
 	# onto the fork's line); a car staying right never is.
+	# (Fix Pass 12: the comment said 1.3 m; the test below has
+	# always been 1.2 m - the loop audit caught the mismatch.
+	# Comment corrected; the rule is unchanged.)
 	if active_track == "circuit" and track_data["circuit"].has("spur"):
 		var d_in: float = wrapf(car_s - SPUR_ENTRY_S + 2.0, 0.0, track_len)
 		if d_in < 75.0 and vf > 0.0:

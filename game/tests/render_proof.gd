@@ -903,6 +903,93 @@ func _run() -> void:
 			break
 	check(snapped19, "capture 19: cockpit snapped mid-ring (spur_s %.0f)" % main.spur_s)
 
+	# Captures 20-22 (Fix Pass 12, Item 6): the loop approach
+	# from the driver's seat, boards HIDDEN (their spawn state
+	# - the toggle was left on for the label checks; turn it
+	# off through production), at 100 / 50 / 20 m before the
+	# entry: the LOOP gantry, the amber guide strip curving off
+	# the centreline, the ring's brightened rim beyond - and
+	# NOT the DIAG board that used to cover the ring's window.
+	if main.panels_visible:
+		main._toggle_panels()
+	check(not main.panel_root.visible and not main.diag_root.visible,
+		"FP12 approach series: boards hidden, as the owner drives")
+	# State hygiene: earlier captures leave the car on the
+	# SPUR (on_spur) or mid-hang, and a warp then places it on
+	# spur frames - the first two FP12 proof runs photographed
+	# the ring wall and a recovery instead of the approach.
+	# start_race is the production reset; the warp then parks
+	# the car on the MAIN road.
+	main.start_race()
+	for i: int in 4:
+		await physics_frame
+	check(not main.on_spur, "FP12 approach series: car reset to the main track")
+	# The car is PARKED at each station (pin 0 every settle
+	# frame): the first FP12 proof run let it roll driverless
+	# through the settle, and by the 20 m frame it had left
+	# the road and was dangling in a recovery - the shot
+	# judged the drone, not the approach.
+	main.debug_warp_to_s(70.0)
+	for i: int in 30:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+	await snap(main.fallback_cam, "loop_approach_100m.png")
+	main.debug_warp_to_s(120.0)
+	for i: int in 30:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+	await snap(main.fallback_cam, "loop_approach_50m.png")
+	main.debug_warp_to_s(150.0)
+	for i: int in 30:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+	await snap(main.fallback_cam, "loop_approach_20m.png")
+	# The guide strip is IN the 20 m frame: count its
+	# unshaded amber in the ROAD BAND (y 30-62%, x 30-75% -
+	# where the far road actually sits in this frame; the
+	# lower half is the car's nose and the near road before
+	# the strip starts, and the first FP12 proof run scanned
+	# exactly there and found the strip "missing" while a
+	# winding bug hid it - both fixed, the band is the honest
+	# one). Measured 61 sampled px on the final frame; the
+	# strip is a 0.55 m thread 10-60 m out, so the count is
+	# small by geometry, not by absence.
+	var img20: Image = Image.load_from_file(ProjectSettings.globalize_path("res://tests/loop_approach_20m.png"))
+	var guide_px: int = 0
+	if img20 != null:
+		for y20: int in range(int(img20.get_height() * 0.30), int(img20.get_height() * 0.62), 2):
+			for x20: int in range(int(img20.get_width() * 0.30), int(img20.get_width() * 0.75), 2):
+				var pc20: Color = img20.get_pixel(x20, y20)
+				if absf(pc20.r - 1.0) < 0.06 and absf(pc20.g - 0.60) < 0.06 and pc20.b < 0.12:
+					guide_px += 1
+	check(guide_px > 40, "FP12: the amber guide strip reads in the 20 m approach frame (%d px)" % guide_px)
+
+	# Capture 23 (Item 6): the descent leg from a chase
+	# vantage above and behind - chevrons on the chute, the
+	# ring beyond. (The first FP12 proof stood trackside at
+	# skirt height and photographed the skirt: the chevrons
+	# live on the TOP surface, so the camera belongs above
+	# the chute looking down its length, as the driver sees
+	# them.)
+	var fr23: Dictionary = main._spur_frame_at(40.0)
+	var p23: Vector3 = fr23["pos"]
+	var cam23 := Camera3D.new()
+	main.add_child(cam23)
+	cam23.position = p23 + Vector3(fr23["up"]) * 4.0 - Vector3(fr23["tan"]) * 8.0
+	var fr23b: Dictionary = main._spur_frame_at(68.0)
+	cam23.look_at(Vector3(fr23b["pos"]), Vector3.UP)
+	await snap(cam23, "spur_descent_view.png")
+	cam23.queue_free()
+	var img23: Image = Image.load_from_file(ProjectSettings.globalize_path("res://tests/spur_descent_view.png"))
+	var chev_px: int = 0
+	if img23 != null:
+		for y23: int in range(0, img23.get_height(), 2):
+			for x23: int in range(0, img23.get_width(), 2):
+				var pc23: Color = img23.get_pixel(x23, y23)
+				if absf(pc23.r - 1.0) < 0.06 and absf(pc23.g - 0.80) < 0.06 and pc23.b < 0.30:
+					chev_px += 1
+	check(chev_px > 120, "FP12: descent chevrons read in the trackside frame (%d px)" % chev_px)
+
 	# Capture 24 (Item 4): the dip-valley sightline - the far
 	# read the fog cut and wider edge strips serve. Driver's
 	# view from the valley floor, the road running on across

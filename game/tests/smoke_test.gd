@@ -2876,6 +2876,38 @@ func _run() -> void:
 	var lost29: Array = await fly_case.call(735.0, 2.0, 30.0)
 	check(not bool(lost29[0]) and int(lost29[1]) < 200,
 		"stage29: a lateral exit off the dip lip is genuinely lost - drone in %.2f s (lateral-exit rule)" % (float(lost29[1]) / 90.0))
+	# Item 6: the merge arrives aligned, and the garnishes exist.
+	var spur29: Dictionary = main.track_data["circuit"]["spur"]
+	var slen29: float = float(spur29["len"])
+	var end29: Dictionary = main._spur_frame_at(slen29)
+	var jfr29: Dictionary = main._frame_at(main.SPUR_JOIN_S)
+	var resid29: float = absf(rad_to_deg(wrapf(main._spur_frame_yaw(end29) - main._frame_yaw(Vector3(jfr29["tan"])), -PI, PI)))
+	check(resid29 <= 0.5,
+		"stage29: merge heading residual %.2f deg (was 2.54 before the blend)" % resid29)
+	var worst29: float = 0.0
+	var prev_yaw29: float = main._spur_frame_yaw(main._spur_frame_at(slen29 - 12.0))
+	for k29: int in range(11, -1, -1):
+		var yw29: float = main._spur_frame_yaw(main._spur_frame_at(slen29 - float(k29)))
+		worst29 = maxf(worst29, absf(rad_to_deg(wrapf(yw29 - prev_yaw29, -PI, PI))))
+		prev_yaw29 = yw29
+	check(worst29 <= 1.1,
+		"stage29: exit-leg unwind over the last 12 m peaks at %.2f deg/m (entry side: <= 1.00)" % worst29)
+	var circ_root29: Node3D = main.track_data["circuit"]["root"]
+	check(circ_root29.get_node_or_null("SpurGuide") != null,
+		"stage29: the amber guide strip is built on the capture corridor")
+	check(circ_root29.get_node_or_null("SpurChevrons") != null,
+		"stage29: descent chevrons are built")
+	check(circ_root29.get_node_or_null("GantryLOOP") != null,
+		"stage29: the LOOP gantry stands at s 158")
+	var skirt29: MeshInstance3D = circ_root29.get_node("SpurSkirt") as MeshInstance3D
+	var cols29: PackedColorArray = skirt29.mesh.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+	var band29: int = 0
+	for c29: Color in cols29:
+		if absf(c29.r - 1.0) < 0.01 and absf(c29.g - 0.58) < 0.01 and absf(c29.b - 0.06) < 0.01:
+			band29 += 1
+	check(band29 > 200,
+		"stage29: the ring's rim band is painted (bright underside verts %d)" % band29)
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
