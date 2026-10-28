@@ -3,8 +3,10 @@ extends Node3D
 ## Stunt Car VR - DE Test 1 "Drop & Dangle"
 ## Throwaway FEEL prototype (Godot 4.7 / OpenXR, Quest-native target).
 ## One ribbon track, one placeholder Odd Rod car, grab-wheel steering,
-## Drop Start + drone recovery with cockpit prep while dangling, and the
+## Drop Start + drone recovery while dangling, and the
 ## lean-for-traction experiment. See design-spec.md items 1-16.
+## (Fix Pass 13 deleted the dangle prep sequence entirely: the
+## hang is sway, wheel and release timing now - see Item 1.)
 ## Fix Pass 6 adds the project's first audio: synthesized engine + skid
 ## as an information channel (see the AUDIO constants block).
 ##
@@ -173,8 +175,6 @@ const CLEARANCE: float = 0.35
 const HANG_LEN: float = 5.5
 const HANG_CLEAR: float = 1.2
 const GRAV: float = 9.8
-const SWITCH_NAMES: Array[String] = ["FUEL", "SPARK", "BOOST"]
-const PREP_BOOST_CREDIT: float = 25.0
 # Fix Pass 2: fixed driver eye anchor in car space. The seat offset rig
 # lands the player's HMD exactly here on spawn/recenter, so physical
 # seated height no longer floats the driver on top of the car. The wheel
@@ -486,11 +486,17 @@ var anchor_t: float = 0.0
 var hang_from_pos: Vector3 = Vector3.ZERO
 var drop_target_s: float = 2.0
 
-# prep sequence
-var prep_order: Array[int] = []
-var prep_index: int = 0
-var prep_done: bool = false
-var switch_on: Array[bool] = [false, false, false]
+# Fix Pass 13 (Item 1): the prep sequence is DELETED (owner's
+# call - no sequence, no reaction game, no boost payout at the
+# drop). The hang is: read the sway, hold the wheel, pick the
+# moment. Touchdown connection state (see _land): the measured
+# contact that grades the getaway.
+var contact_grade: String = "-"
+var contact_lat_speed: float = 0.0 # |lateral velocity| at contact, m/s
+var contact_head_err: float = 0.0 # heading error vs road tangent at contact, deg
+var contact_readout_t: float = 0.0 # seconds the touchdown readout stays up
+var contact_transient_t: float = 0.0 # seconds of contact-governed tires left (see _land)
+var contact_load_age: float = 0.0 # seconds since touchdown (the load ramp's clock)
 
 # lean experiment
 var lean_on: bool = false
@@ -641,12 +647,12 @@ var lean_needle: MeshInstance3D
 var drone: Node3D
 var drone_rotors: Array[MeshInstance3D] = []
 var line_mis: Array[MeshInstance3D] = []
-var switch_pivots: Array[Node3D] = []
+
 var dash_ctl_nodes: Array[Node3D] = []
 var dash_ctl_kinds: Array[String] = []
 var state_label: Label3D
 var panel_label: Label3D
-var prep_label: Label3D
+var contact_label: Label3D # Fix Pass 13 (Item 1): the touchdown readout (was the prep prompt)
 # Fix Pass 4: the DIAG block lives on its own small board (diag_label
 # under diag_root); panel_label keeps the status + command list.
 var diag_label: Label3D
@@ -2586,15 +2592,17 @@ func _build_cockpit() -> void:
 	state_label.modulate = Color(1.0, 0.85, 0.2)
 	state_label.outline_size = 8
 	car_body.add_child(state_label)
-	# Prep prompt label, under the state label
-	prep_label = Label3D.new()
-	prep_label.position = Vector3(0, 1.34, -0.85)
-	prep_label.font_size = 40
-	prep_label.pixel_size = 0.0016
-	prep_label.text = ""
-	prep_label.modulate = Color(0.6, 0.95, 1.0)
-	prep_label.outline_size = 6
-	car_body.add_child(prep_label)
+	# Touchdown readout label, under the state label (Fix
+	# Pass 13, Item 1: it shows the connection grade for ~2.5 s
+	# after each landing - it was the prep prompt's node).
+	contact_label = Label3D.new()
+	contact_label.position = Vector3(0, 1.34, -0.85)
+	contact_label.font_size = 40
+	contact_label.pixel_size = 0.0016
+	contact_label.text = ""
+	contact_label.modulate = Color(0.6, 0.95, 1.0)
+	contact_label.outline_size = 6
+	car_body.add_child(contact_label)
 	# Controls panel placard + separate DIAG board (Fix Pass 4 rework).
 	# STANDING RULE: the panel lists EVERY command the game accepts.
 	# Run 4 verdict on the Fix Pass 3 layout: "Panel isn't readable" -
@@ -2706,7 +2714,7 @@ func _panel_text() -> String:
 	lines.append("Panels: R B button (show/hide)")
 	lines.append("-- DESKTOP --")
 	lines.append("W/S throttle/brake, A/D steer, SHIFT boost")
-	lines.append("SPACE release, 1/2/3 flip FUEL/SPARK/BOOST")
+	lines.append("SPACE release")
 	lines.append("TAB panels, L lift, T lean, J jitter, Q/E lean body")
 	lines.append("PgUp/PgDn seat trim, R restart race")
 	lines.append("C recenter, V track")
@@ -2771,8 +2779,7 @@ func _diag_zone_line() -> String:
 	# owner's next capture states outright whether a dead
 	# lever is a dead CHANNEL (grip reads 0.00 above) or a
 	# hand that never entered the zone.
-	var short: Dictionary = {"switch0": "FUEL", "switch1": "SPARK",
-		"switch2": "BOOST", "restart": "RST", "lean": "LEAN", "track": "TRK",
+	var short: Dictionary = {"restart": "RST", "lean": "LEAN", "track": "TRK",
 		"seatup": "SUP", "seatdn": "SDN"}
 	var near_l: int = _dash_ctl_near(_hand_pos("L"))
 	var near_r: int = _dash_ctl_near(_hand_pos("R"))
@@ -3025,12 +3032,7 @@ func _input(event: InputEvent) -> void:
 			_toggle_panels()
 		KEY_C:
 			_recenter()
-		KEY_1:
-			_flip_switch(0)
-		KEY_2:
-			_flip_switch(1)
-		KEY_3:
-			_flip_switch(2)
+
 
 
 func _recenter() -> void:
@@ -3493,9 +3495,7 @@ func _dash_ctl_near(world_pos: Vector3) -> int:
 
 
 func _activate_dash_ctl(kind: String) -> void:
-	if kind.begins_with("switch"):
-		_flip_switch(int(kind.substr(6)))
-	elif kind == "restart":
+	if kind == "restart":
 		start_race()
 	elif kind == "lean":
 		_toggle_lean()
@@ -3781,7 +3781,6 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 	pend_th_l = clampf(off.dot(fr["side"]) / HANG_LEN, -0.6, 0.6)
 	pend_om_f = 0.0
 	pend_om_l = 0.0
-	_prep_new_sequence()
 
 
 # Fix Pass 10 (Item 1): DROP_MIN_RUNUP_M - the hazard-free road a
@@ -3906,7 +3905,8 @@ func _do_release() -> void:
 	yaw_rate = 0.0
 	vel2 = Vector2(air_vel.x, air_vel.z)
 	mode = MODE_AIR
-	prep_label.text = ""
+	contact_label.text = ""
+	contact_readout_t = 0.0
 
 
 # ---------------------------------------------------------------- sim
@@ -3920,6 +3920,11 @@ func _physics_process(delta: float) -> void:
 		diag_block = _build_diag_block()
 	_poll_inputs(delta)
 	race_time += delta
+	# Fix Pass 13 (Item 1): the touchdown readout's clock.
+	if contact_readout_t > 0.0:
+		contact_readout_t -= delta
+		if contact_readout_t <= 0.0 and contact_label != null:
+			contact_label.text = ""
 	match mode:
 		MODE_HANG:
 			_update_hang(delta)
@@ -4004,6 +4009,12 @@ func _update_drive(delta: float) -> void:
 	if on_spur:
 		_update_drive_spur(delta)
 		return
+	# Fix Pass 13 (Item 1): the contact transient's clock runs
+	# on drive frames (a bounce back into the air pauses it;
+	# the next landing re-arms it from its own contact).
+	if contact_transient_t > 0.0:
+		contact_transient_t -= delta
+		contact_load_age += delta
 	# Suspension air entry (Fix Pass 5/8, unchanged rule): the
 	# load decision was made in _update_suspension last frame.
 	if bounce_pending:
@@ -4020,13 +4031,26 @@ func _update_drive(delta: float) -> void:
 	var vl: float = vel2.dot(Vector2(r0.x, r0.z))
 	# Longitudinal: engine / brake / boost / drag / slope gravity -
 	# the same terms the slaved model had, applied to vf.
-	var accel: float = in_throttle * 10.0
+	var tire_long: float = in_throttle * 10.0
+	if in_boost and boost_meter > 0.0 and in_throttle > 0.05:
+		tire_long += 9.0
+		boost_meter = maxf(boost_meter - 30.0 * delta, 0.0)
+	# Fix Pass 13 (Item 1): COMBINED SLIP at a governed contact.
+	# One tire has one friction budget: while the contact
+	# transient runs (see _land) the lateral bleed is spending
+	# it, and the engine gets only what the friction ellipse
+	# leaves - sqrt(budget^2 - a_lat^2) - further scaled by the
+	# load ramp while the springs take the car's weight. The
+	# cruise model is untouched: with no transient running this
+	# cap does not exist, and at a clean contact (no lateral
+	# velocity) the ellipse leaves the full budget anyway.
+	var cap13: float = _contact_long_cap(vl)
+	if cap13 >= 0.0:
+		tire_long = minf(tire_long, cap13)
+	var accel: float = tire_long
 	accel -= in_brake * 14.0
 	accel -= vf * 0.10
 	accel += -GRAV * tanv.y * 0.85 # slope gravity: climbs bite, descents push
-	if in_boost and boost_meter > 0.0 and in_throttle > 0.05:
-		accel += 9.0
-		boost_meter = maxf(boost_meter - 30.0 * delta, 0.0)
 	vf = clampf(vf + accel * delta, -6.0, TOP_SPEED)
 	if in_brake > 0.05 and vf < 0.5 and vf > -0.5:
 		vf = 0.0
@@ -4057,6 +4081,12 @@ func _update_drive(delta: float) -> void:
 	grip_mult = _grip_for(yaw_rate / maxf(absf(vf), 2.0))
 	var bleed: float = clampf(-GRIP_BITE_RATE * vl * grip_mult,
 		-GRIP_LAT_ACCEL * grip_mult, GRIP_LAT_ACCEL * grip_mult)
+	# Fix Pass 13 (Item 1): during the contact transient the
+	# bleed itself is load-limited - a tire still taking the
+	# car's weight cannot bite at full rate yet (the same ramp
+	# that caps the engine in _contact_long_cap).
+	if contact_transient_t > 0.0:
+		bleed *= _contact_load_factor()
 	vl += bleed * delta
 	# Mild scrub: sliding sideways scrubs forward speed.
 	vf -= vf * 0.015 * absf(vl) * delta
@@ -4275,7 +4305,16 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	var f2: Vector3 = _heading_fwd()
 	var r2: Vector3 = _heading_right()
 	var vf_land: float = vel2.dot(Vector2(f2.x, f2.z))
-	if vf_land < 4.0:
+	# Fix Pass 13 (Item 1): the minimum-forward guarantee tops
+	# up only a FORWARD contact. The old code floored every
+	# landing to the same 4 m/s, which erased the fore-aft half
+	# of the swing: a release at backward sway-peak landed with
+	# the pendulum's backward tip velocity and was handed the
+	# same 4 m/s as a settled drop. A backward contact now
+	# keeps its velocity - the car touches down rolling
+	# backward and the driver recovers it, which is the cost
+	# of the mistimed release, honestly come by.
+	if vf_land >= 0.0 and vf_land < 4.0:
 		vel2 += Vector2(f2.x, f2.z) * (4.0 - vf_land)
 		vf_land = 4.0
 	elif vf_land > TOP_SPEED:
@@ -4284,12 +4323,97 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	speed = vf_land
 	lat_vel = vel2.dot(Vector2(r2.x, r2.z))
 	yaw_rate = 0.0
+	# Fix Pass 13 (Item 1): SURFACE THE RULING - the touchdown
+	# connection, measured from the contact state itself: how
+	# much lateral velocity the tires met, and how far the car's
+	# heading sat from the road's tangent. These two numbers
+	# ARE the getaway: the drive model's grip bleed has to kill
+	# the lateral part before the car is truly going anywhere,
+	# and the heading error is the angle it must be killed
+	# across. Graded against thresholds taken from the staged
+	# sway-zero / sway-peak distribution (smoke stage 30).
+	contact_lat_speed = absf(lat_vel)
+	contact_head_err = rad_to_deg(wrapf(car_heading - _frame_yaw(fr["tan"]), -PI, PI))
+	if contact_lat_speed <= CONTACT_CLEAN_LAT and absf(contact_head_err) <= CONTACT_CLEAN_HDG:
+		contact_grade = "CLEAN"
+	elif contact_lat_speed <= CONTACT_SCRUB_LAT and absf(contact_head_err) <= CONTACT_SCRUB_HDG:
+		contact_grade = "SCRUBBED"
+	else:
+		contact_grade = "CROSSED-UP"
+	contact_readout_t = CONTACT_READOUT_S
+	if contact_label != null:
+		contact_label.text = "TOUCHDOWN %s - LAT %.1f M/S, HDG %+.1f DEG" % [
+			contact_grade, contact_lat_speed, contact_head_err]
+	# The contact TRANSIENT: for as long as this touchdown's
+	# own slide takes to bleed (the model's bleed law integrated
+	# against the contact's lateral speed), the tires are
+	# governed by the contact, not the cruise model: combined
+	# slip caps the engine force at what the friction ellipse
+	# leaves after the lateral bleed, and the load ramp scales
+	# both while the springs take the car's weight. Set here,
+	# consumed in _update_drive, expired by the bleed itself.
+	contact_transient_t = _bleed_time(contact_lat_speed)
+	contact_load_age = 0.0
 	var pr: Array = _project_to_spine(car.global_position, air_s_est, true)
 	car_s = float(pr[0])
 	car_lat = float(pr[1])
 	mode = MODE_DRIVE
 	was_airborne = false
 	_place_car_on_track(_frame_at(car_s))
+
+
+func _bleed_time(v0: float) -> float:
+	# Fix Pass 13 (Item 1): how long the drive model's own
+	# lateral bleed law (proportional at GRIP_BITE_RATE, capped
+	# at GRIP_LAT_ACCEL) takes to bring a lateral velocity of
+	# v0 under 0.3 m/s - integrated at the physics step so the
+	# contact transient lasts exactly as long as the slide it
+	# governs, no longer. Zero for a clean contact. The
+	# integration applies the SAME load factor the bleed will
+	# live under (the tires are not fully weighted yet - see
+	# _contact_load_factor), so the estimate is the slide's
+	# real duration, not the fully-weighted fiction: with the
+	# shipped ramp (floor 0.10 over 0.65 s) a sway-peak slide
+	# governs for ~1 s, not the ~0.57 s the bare law gives.
+	# The constants were tuned on the staged getaways (stage
+	# 30): clean 1.82 s to 20 m/s (no transient - untouched),
+	# Drop-Start seed swing 2.61 s, sway-peak 3.42 s - a
+	# 1.60 s spread against the brief's 1.5 s floor.
+	var v: float = v0
+	var t: float = 0.0
+	var dt: float = 1.0 / 90.0
+	while v > 0.3 and t < 3.0:
+		var lf: float = clampf(CONTACT_LOAD_FLOOR + (1.0 - CONTACT_LOAD_FLOOR) \
+			* (t / CONTACT_LOAD_RAMP_S), CONTACT_LOAD_FLOOR, 1.0)
+		v -= minf(GRIP_BITE_RATE * v, GRIP_LAT_ACCEL) * lf * dt
+		t += dt
+	return t
+
+
+func _contact_long_cap(vl_now: float) -> float:
+	# Fix Pass 13 (Item 1): the longitudinal tire force the
+	# friction ellipse leaves during the contact transient, or
+	# -1 when no contact governs the tires. budget is the
+	# frame's lateral limit (the lean multiplier scales both
+	# sides of the ellipse, as it scales the bleed); a_lat is
+	# what the bleed is about to spend of it.
+	if contact_transient_t <= 0.0:
+		return -1.0
+	var budget: float = GRIP_LAT_ACCEL * grip_mult
+	var a_lat: float = minf(GRIP_BITE_RATE * absf(vl_now) * grip_mult, budget)
+	return sqrt(maxf(budget * budget - a_lat * a_lat, 0.0)) * _contact_load_factor()
+
+
+func _contact_load_factor() -> float:
+	# Tire capacity while the springs take the car's weight
+	# after a touchdown: ramps from CONTACT_LOAD_FLOOR to full
+	# over CONTACT_LOAD_RAMP_S (the suspension's compression
+	# timescale - SUSP_K's quarter period is ~0.12 s; the tires
+	# are fully weighted about twice that after first contact).
+	if contact_transient_t <= 0.0:
+		return 1.0
+	return clampf(CONTACT_LOAD_FLOOR + (1.0 - CONTACT_LOAD_FLOOR) \
+		* (contact_load_age / CONTACT_LOAD_RAMP_S), CONTACT_LOAD_FLOOR, 1.0)
 
 
 func _carrier_dip_offset() -> Vector2:

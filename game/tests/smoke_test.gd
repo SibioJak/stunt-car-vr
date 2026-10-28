@@ -1,14 +1,16 @@
 extends SceneTree
 
 ## Headless smoke for DE Test 1 (fallback mode, scripted inputs through
-## the production action functions - _do_release / _flip_switch /
+## the production action functions - _do_release /
 ## _call_drone / _toggle_lean - plus an autopilot on the wheel):
 ##   Godot --headless --path . --script tests/smoke_test.gd
 ## Stages asserted: drop-start dangle sways -> release -> touchdown
 ## scored -> drive -> climb -> banked corner held -> gap crossed
-## airborne -> on-demand drone lift -> dangle -> prep sequence ->
-## boost credit up -> release over track -> driving resumes -> lean
-## experiment changes grip at the bank.
+## airborne -> on-demand drone lift -> dangle -> release over
+## track -> driving resumes -> lean experiment changes grip at
+## the bank. (The prep sequence this header used to list was
+## deleted in Fix Pass 13 - stage 5 proves the deletion, and
+## stage 30 stages the touchdown connection that replaced it.)
 ## Fix Pass 6 stages: 2e = driver-body seat spring (sink depth,
 ## phase lag behind the car springs, ordering by impact, zero at
 ## rest); 2f = 8 m road width + the engine/skid audio state
@@ -309,21 +311,25 @@ func _autopilot_drive(lat_off: float, with_speed: bool, cap: float = 34.0) -> vo
 			main.test_brake = 0.7
 
 
-func grip_flip_switch(switch_idx: int, hand: String = "R") -> void:
-	# Fix Pass 8 (Item 0): flip a prep switch through the
+func grip_press_ctl(kind: String, hand: String = "R") -> void:
+	# Fix Pass 8 (Item 0): work a dash control through the
 	# PRODUCTION grip path - the synthetic hand is posed on the
-	# switch's grab segment (production geometry via
+	# control's grab segment (production geometry via
 	# _dash_ctl_segment), proximity is resolved by
-	# _dash_ctl_near, and the flip must come from _poll_grab
-	# into _activate_dash_ctl -> _flip_switch. (Fix Pass 9:
+	# _dash_ctl_near, and the activation must come from
+	# _poll_grab into _activate_dash_ctl. (Fix Pass 9:
 	# pose-then-grip is one of the two human orders the
 	# level-based activation serves; stage 11a covers the
 	# other.)
-	# Nothing here calls _flip_switch directly. The poll calls
-	# are synchronous (no physics frames between posing and
-	# polling), so the swinging car cannot move the segment
-	# mid-flip.
-	var ctl: int = main.dash_ctl_kinds.find("switch%d" % switch_idx)
+	# Nothing here calls _activate_dash_ctl directly. The poll
+	# calls are synchronous (no physics frames between posing
+	# and polling), so the swinging car cannot move the segment
+	# mid-press.
+	# Fix Pass 13: this helper drove the prep switches until
+	# Item 1 deleted them; it now addresses any dash control
+	# by kind (the stages use the LEAN button - a harmless,
+	# observable toggle).
+	var ctl: int = main.dash_ctl_kinds.find(kind)
 	var seg: Array[Vector3] = main._dash_ctl_segment(ctl)
 	main.test_hand_pos[hand] = (seg[0] + seg[1]) * 0.5
 	main.test_hand_set = true
@@ -338,21 +344,26 @@ func grip_flip_switch(switch_idx: int, hand: String = "R") -> void:
 	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
 
 
-func prep_one_hand(hand: String) -> bool:
-	# Fix Pass 10 (Item 0, stage 15): complete a full prep
-	# sequence on a fresh Drop Start dangle using ONE hand,
-	# with the other hand's grip held at 0.0 the whole time (a
-	# simulated DEAD channel) and its hand parked far away, so
-	# no zone entry can be credited to it. Returns prep_done.
+func dash_one_hand(hand: String) -> bool:
+	# Fix Pass 10 (Item 0, stage 15): work the dash with ONE
+	# hand - the other hand's grip held at 0.0 the whole time
+	# (a simulated DEAD channel) and its hand parked far away,
+	# so no zone entry can be credited to it.
+	# Fix Pass 13: the prep sequence this used to complete is
+	# deleted; the proof is now the LEAN button toggled on and
+	# back off through the production grip path.
 	var other: String = "L" if hand == "R" else "R"
 	main.start_race()
 	await frames(4)
 	main.test_grip[other] = 0.0
 	main.test_hand_pos[other] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
 	main.test_hand_set = true
-	for idx: Variant in main.prep_order.duplicate():
-		grip_flip_switch(int(idx), hand)
-	return main.prep_done and float(main.test_grip[other]) == 0.0
+	var was_on: bool = main.lean_on
+	grip_press_ctl("lean", hand)
+	var on_ok: bool = main.lean_on != was_on
+	grip_press_ctl("lean", hand)
+	var off_ok: bool = main.lean_on == was_on
+	return on_ok and off_ok and float(main.test_grip[other]) == 0.0
 
 
 func hf_p2p(series: Array) -> float:
@@ -634,7 +645,11 @@ func _run() -> void:
 		"stage2d: dash activation radius is 0.15 m (got %.2f)" % main.DASH_CTL_RADIUS)
 	check(absf(main.WHEEL_GRAB_RADIUS - 0.40) < 0.001,
 		"stage2d: wheel grab radius unchanged at 0.40 m (got %.2f)" % main.WHEEL_GRAB_RADIUS)
-	var seg0: Array = main._dash_ctl_segment(0)
+	# Fix Pass 13: control 0 was a prep switch; the segment
+	# measure now runs on a seat lever (the surviving lever
+	# family), the point measure on the restart button - both
+	# found by kind, not by their old indices.
+	var seg0: Array = main._dash_ctl_segment(main.dash_ctl_kinds.find("seatup"))
 	var seg_base: Vector3 = seg0[0]
 	var seg_tip: Vector3 = seg0[1]
 	var seg_dir: Vector3 = (seg_tip - seg_base).normalized()
@@ -643,12 +658,12 @@ func _run() -> void:
 	if seg_perp.length() < 0.1:
 		seg_perp = seg_dir.cross(Vector3.RIGHT)
 	seg_perp = seg_perp.normalized()
-	check(main._dash_ctl_near(seg_mid + seg_perp * 0.10) == 0,
+	check(main._dash_ctl_near(seg_mid + seg_perp * 0.10) == main.dash_ctl_kinds.find("seatup"),
 		"stage2d: hand 0.10 m off the lever's mid-shaft activates it (grab segment)")
 	check(main._dash_ctl_near(seg_tip + seg_dir * 0.20) == -1,
 		"stage2d: hand 0.20 m past the cap (from the whole segment) activates nothing")
-	var btn_pos: Vector3 = main.dash_ctl_nodes[3].global_position
-	check(main._dash_ctl_near(btn_pos + Vector3(0.0, 0.10, 0.0)) == 3,
+	var btn_pos: Vector3 = main.dash_ctl_nodes[main.dash_ctl_kinds.find("restart")].global_position
+	check(main._dash_ctl_near(btn_pos + Vector3(0.0, 0.10, 0.0)) == main.dash_ctl_kinds.find("restart"),
 		"stage2d: hand 0.10 m from a dash button activates it (point measure)")
 	check(main._dash_ctl_near(btn_pos + Vector3(0.0, 0.20, 0.0)) == -1,
 		"stage2d: hand 0.20 m from a dash button activates nothing")
@@ -863,15 +878,22 @@ func _run() -> void:
 	check(absf(lat_rc) < 0.05,
 		"stage4b: recovery hangs centred over the centreline (lat offset %.3f m, drop s=%.0f)" % [lat_rc, main.drop_target_s])
 
-	# Stage 5: prep sequence in order -> boost credit increases.
+	# Stage 5 (Fix Pass 13, Item 1): THE PREP IS GONE. This
+	# stage used to run the FUEL/SPARK/BOOST sequence and
+	# assert its boost credit; the owner's call deleted the
+	# design whole. What remains to prove on this dangle: no
+	# switch controls exist on the dash, and a full dangle
+	# pays out NOTHING - the boost meter does not move while
+	# the car hangs (the payout died with the sequence; the
+	# touchdown-connection payout that replaced it is physics,
+	# staged in stage 30).
 	main.boost_meter = 40.0
 	var boost0: float = main.boost_meter
-	var order: Array = main.prep_order.duplicate()
-	for idx: Variant in order:
-		main._flip_switch(int(idx))
-		await frames(3)
-	check(main.prep_done, "stage5: prep sequence completes in the shown order")
-	check(main.boost_meter > boost0, "stage5: good prep grants boost credit (%.0f -> %.0f)" % [boost0, main.boost_meter])
+	await frames(90)
+	check(main.dash_ctl_kinds.filter(func(k: String) -> bool: return k.begins_with("switch")).is_empty(),
+		"stage5: no prep switches on the dash (kinds %s)" % str(main.dash_ctl_kinds))
+	check(absf(main.boost_meter - boost0) < 0.01,
+		"stage5: a dangle pays no boost (%.0f -> %.0f)" % [boost0, main.boost_meter])
 
 	# Stage 6: release over the track -> driving resumes. The pendulum is
 	# still zeroed from stage 4b, so this is a release AT SWING CENTRE -
@@ -1372,31 +1394,42 @@ func _run() -> void:
 	main.test_throttle = 0.0
 	check(dang_b, "stage11b: steering hard over drives the car off the edge into a drone-recovery dangle (mode=%d phase=%s, %d frames)" % [main.mode, main.hang_phase, tf])
 	check(not main.is_drop_start, "stage11b: this dangle is a recovery, not a Drop Start")
-	# wrong switch first: the production reset, through the grip path
-	var wrong_idx: int = int(main.prep_order[1])
-	grip_flip_switch(wrong_idx)
-	check(main.prep_index == 0 and not main.switch_on[wrong_idx],
-		"stage11b: wrong-order grip flip resets the sequence (index %d)" % main.prep_index)
-	# held-grip probe on the sequence's first switch: a grip
-	# parked in the zone across many polls flips EXACTLY once
-	# (a second fire would be the wrong switch now and reset
-	# the sequence to 0 - so index == 1 proves the latch).
-	var hold_idx_b: int = int(main.prep_order[0])
-	var hold_ctl_b: int = main.dash_ctl_kinds.find("switch%d" % hold_idx_b)
+	# held-grip probe on the LEAN button: a grip parked in
+	# the zone across many polls fires EXACTLY once (a second
+	# fire would toggle LEAN straight back - so the state
+	# after six polls proves the latch). Fix Pass 13: this
+	# probe ran on a prep switch and read the sequence index;
+	# the toggle carries the same information now.
+	var lean_b0: bool = main.lean_on
+	var hold_ctl_b: int = main.dash_ctl_kinds.find("lean")
 	var hold_seg_b: Array[Vector3] = main._dash_ctl_segment(hold_ctl_b)
 	main.test_hand_pos["R"] = (hold_seg_b[0] + hold_seg_b[1]) * 0.5
 	main.test_hand_set = true
 	main.test_grip["R"] = 1.0
 	for ihb: int in 6:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.prep_index == 1 and main.switch_on[hold_idx_b],
-		"stage11b: a HELD grip parked in the zone flips exactly once (index %d)" % main.prep_index)
+	check(main.lean_on != lean_b0,
+		"stage11b: a HELD grip parked in the zone fires exactly once (lean %s -> %s)" % [lean_b0, main.lean_on])
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	for ib: int in range(1, main.prep_order.size()):
-		grip_flip_switch(int(main.prep_order[ib]))
-	check(main.prep_done, "stage11b: recovery-dangle prep completes through the grip path")
+	# pose-then-grip, the other human order, on the same
+	# recovery dangle: the button toggles back.
+	grip_press_ctl("lean")
+	check(main.lean_on == lean_b0,
+		"stage11b: pose-then-grip works the dash on the recovery dangle")
 	# --- FINISH, restart, fresh Drop Start dangle ---
+	# The release is staged on a SETTLED pendulum: this stage
+	# tests the dash/release machinery, and a release from a
+	# wild recovery swing is stage 30's subject - it can
+	# legitimately throw the car off the road (Item 1's whole
+	# point). Zero the state, step two frames so the hang
+	# re-poses the car on it, then release.
+	main.carrier_vel = Vector3.ZERO
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	await frames(2)
 	main._do_release()
 	var drv_b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv_b, "stage11c: recovery release lands into DRIVE")
@@ -1578,47 +1611,35 @@ func _run() -> void:
 		var drv13: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 		check(drv13, "stage13: %s - release resumes driving for the mirror run" % side_name)
 
-	# Stage 15 (Fix Pass 10, Item 0): the levers against a DEAD
+	# Stage 15 (Fix Pass 10, Item 0): the dash against a DEAD
 	# CHANNEL, and one-hand reach. Run 10: the left grip channel
 	# delivered nothing live, ever - so activation must provably
-	# not depend on a specific hand. (a) A full prep completed
+	# not depend on a specific hand. (a) The dash worked
 	# RIGHT-hand-only with the left grip held at 0.0 throughout
 	# (the run-10 world), and LEFT-hand-only with the right
 	# dead - both through the production grip path on fresh
-	# dangles. (b) Reach, measured from the anchored seat: the
-	# three prep switches must sit within cross-body reach of
-	# BOTH shoulders (an arm plus the torso allowance a seated
-	# player actually has) and within a one-hand sweep of both
-	# wheel-rest positions, so the surviving hand can always
-	# work the whole prep row. The two dash BUTTONS are also
-	# measured: same-side reach is asserted, cross-body is
-	# printed for the record (each also has a controller twin -
-	# lean = R B button, restart = L Y button - and they sit
-	# at the dash's far corners by design).
-	var ok15a: bool = await prep_one_hand("R")
-	check(ok15a, "stage15: full prep with a DEAD LEFT channel (right hand works all three switches)")
-	var ok15b: bool = await prep_one_hand("L")
-	check(ok15b, "stage15: full prep with a DEAD RIGHT channel (left hand works all three switches)")
+	# dangles. (b) Reach, measured from the anchored seat:
+	# every dash control must sit within same-side shoulder
+	# reach (an arm plus the torso allowance a seated player
+	# actually has); cross-body is printed for the record
+	# (the buttons also have controller twins - lean lives on
+	# the dash button by grip and used to be R B, restart =
+	# L Y button).
+	# Fix Pass 13: (a) completed the prep sequence; the
+	# sequence is deleted, so the proof is the LEAN button
+	# toggled on and off one-handed (dash_one_hand). (b) was
+	# keyed to the three prep switches; it now covers every
+	# surviving dash control.
+	var ok15a: bool = await dash_one_hand("R")
+	check(ok15a, "stage15: dash worked with a DEAD LEFT channel (right hand toggles LEAN on and off)")
+	var ok15b: bool = await dash_one_hand("L")
+	check(ok15b, "stage15: dash worked with a DEAD RIGHT channel (left hand toggles LEAN on and off)")
 	main.test_hand_set = false
 	main.test_grip["L"] = 0.0
 	main.test_grip["R"] = 0.0
 	var inv15: Transform3D = main.car.global_transform.affine_inverse()
 	var sh15: Dictionary = {"L": Vector3(-0.21, 1.02, 0.12), "R": Vector3(0.21, 1.02, 0.12)}
-	var rest15: Dictionary = {"L": Vector3(-0.23, 0.88, -0.40), "R": Vector3(0.23, 0.88, -0.40)}
-	var worst_sw_sh: float = 0.0
-	var worst_sw_rest: float = 0.0
-	for ci15: int in 3:
-		var seg15: Array = main._dash_ctl_segment(ci15)
-		var b15: Vector3 = inv15 * (seg15[0] as Vector3)
-		var t15: Vector3 = inv15 * (seg15[1] as Vector3)
-		for h15: String in ["L", "R"]:
-			worst_sw_sh = maxf(worst_sw_sh, main._seg_point_dist(b15, t15, sh15[h15] as Vector3))
-			worst_sw_rest = maxf(worst_sw_rest, main._seg_point_dist(b15, t15, rest15[h15] as Vector3))
-	check(worst_sw_sh <= 0.90,
-		"stage15: every prep switch within cross-body reach of both shoulders (worst %.2f m, bound 0.90)" % worst_sw_sh)
-	check(worst_sw_rest <= 0.60,
-		"stage15: every prep switch within a one-hand sweep of both wheel-rest positions (worst %.2f m, bound 0.60)" % worst_sw_rest)
-	for ci15b: int in range(3, main.dash_ctl_nodes.size()):
+	for ci15b: int in range(0, main.dash_ctl_nodes.size()):
 		var seg15b: Array = main._dash_ctl_segment(ci15b)
 		var b15b: Vector3 = inv15 * (seg15b[0] as Vector3)
 		var t15b: Vector3 = inv15 * (seg15b[1] as Vector3)
@@ -1647,7 +1668,7 @@ func _run() -> void:
 	var segz: Array = main._dash_ctl_segment(0)
 	main.test_hand_pos["R"] = ((segz[0] as Vector3) + (segz[1] as Vector3)) * 0.5
 	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
-	check(main._build_diag_block().contains("FUEL:R"),
+	check(main._build_diag_block().contains("RST:R"),
 		"stage15: DIAG zone line names the hand in the zone (%s)" % main._diag_zone_line())
 	main.test_hand_set = false
 
@@ -1682,8 +1703,6 @@ func _run() -> void:
 	# in, and let the production recovery run. The drop must sit
 	# at or behind where the car left the road AND clear of the
 	# gap it just failed (run-up may not cross the lip).
-	for idx: Variant in main.prep_order.duplicate():
-		grip_flip_switch(int(idx), "R")
 	main._do_release()
 	var drv16: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv16, "stage16: setup release lands into DRIVE")
@@ -1803,8 +1822,6 @@ func _run() -> void:
 	# the pendulum (accel/braking/turns), the hang must SETTLE
 	# after arrival, and a flown dip at full depth must slack
 	# the lines through MEASURED carrier acceleration.
-	for idx: Variant in main.prep_order.duplicate():
-		grip_flip_switch(int(idx), "R")
 	main._do_release()
 	var drv17: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv17, "stage17: setup release lands into DRIVE")
@@ -1869,8 +1886,6 @@ func _run() -> void:
 	check(slack_seen17,
 		"stage17: full-depth dip slacks the lines via measured accel (min %.1f, threshold %.1f)" % [min_acc17, main.DIP_SLACK_ACCEL])
 	# and the whole hang still hands off to a drive
-	for idx: Variant in main.prep_order.duplicate():
-		grip_flip_switch(int(idx), "R")
 	main._do_release()
 	var drv17b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv17b, "stage17: release after the carried, dipped hang resumes driving")
@@ -1977,8 +1992,6 @@ func _run() -> void:
 		if main.mode == main.MODE_AIR:
 			await wait_until(func() -> bool: return main.mode != main.MODE_AIR, 4000)
 		elif main.mode == main.MODE_HANG:
-			for idx: Variant in main.prep_order.duplicate():
-				grip_flip_switch(int(idx), "R")
 			main._do_release()
 		elif main.mode == main.MODE_DONE:
 			done19 = true
@@ -2058,8 +2071,6 @@ func _run() -> void:
 		if main.mode == main.MODE_AIR:
 			await wait_until(func() -> bool: return main.mode != main.MODE_AIR, 4000)
 		elif main.mode == main.MODE_HANG:
-			for idx: Variant in main.prep_order.duplicate():
-				grip_flip_switch(int(idx), "R")
 			main._do_release()
 		elif main.mode == main.MODE_DONE:
 			break
@@ -2240,8 +2251,11 @@ func _run() -> void:
 	# SEAT+ runs the trim up at SEAT_TRIM_RATE, SEAT- back down.
 	var sup_idx: int = main.dash_ctl_kinds.find("seatup")
 	var sdn_idx: int = main.dash_ctl_kinds.find("seatdn")
-	check(sup_idx > 5 and sdn_idx > 5,
-		"stage22: seat levers registered after the FP10 controls (idx %d/%d)" % [sup_idx, sdn_idx])
+	# Fix Pass 13 (Item 1): the prep switches' deletion moved
+	# the seat levers up the registration order - the control
+	# set is exactly [restart, lean, track, seatup, seatdn].
+	check(sup_idx == 3 and sdn_idx == 4,
+		"stage22: seat levers registered after the dash buttons (idx %d/%d)" % [sup_idx, sdn_idx])
 	main._apply_seat_trim(0.0)
 	main.test_hand_set = true
 	var seg_sup: Array = main._dash_ctl_segment(sup_idx)
@@ -2564,7 +2578,7 @@ func _run() -> void:
 	# The boards spawn hidden (asserted at boot). One switch -
 	# production _toggle_panels(), driven here through the real
 	# desktop input path (a Tab key event into _input) and back
-	# - flips BOTH boards together, and the prep/DIAG content
+	# - flips BOTH boards together, and the panel/DIAG content
 	# keeps refreshing while hidden (visibility is display
 	# state, not a data gate).
 	var tab_ev := InputEventKey.new()

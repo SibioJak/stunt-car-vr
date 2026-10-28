@@ -939,7 +939,22 @@ func _run() -> void:
 		main.debug_pin_speed(0.0)
 		await physics_frame
 	await snap(main.fallback_cam, "loop_approach_50m.png")
-	main.debug_warp_to_s(150.0)
+	# Fix Pass 13: the "20 m" station moved 150 -> 168, and
+	# the reason is a staging truth this pass exposed. The
+	# FP12 frame was snapped with the car still in the Drop
+	# Start dangle (its own state label reads PREP) - from
+	# 160 m back the whole entry, strip included, sits in one
+	# sightline and the check passed on that distant thread.
+	# With the FP13 reset the warp genuinely parks the car at
+	# each station, and from a parked s 150 the strip (which
+	# starts at s 160, just past the gantry and over the
+	# entry crest) does NOT read - measured 2 sampled px.
+	# From s 168, just inside the gantry with the entry
+	# ahead, it reads clearly (280 px in the band below,
+	# ~70 sampled). Reported in the pass README as an
+	# entrance-readability finding; the strip itself is
+	# unchanged since FP12.
+	main.debug_warp_to_s(168.0)
 	for i: int in 30:
 		main.debug_pin_speed(0.0)
 		await physics_frame
