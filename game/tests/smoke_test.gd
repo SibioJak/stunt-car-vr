@@ -2584,6 +2584,243 @@ func _run() -> void:
 	check(main.panels_visible and main.panel_root.visible and main.diag_root.visible,
 		"stage27: production toggle shows both boards (the R B path calls this)")
 
+	# ---------- stage 28: Fix Pass 12 (Item 3) - drone clearance --
+	# Production recoveries, asserted ANALYTICALLY on every frame
+	# of the carry: the carried car (plan disc r=1.7 m at its
+	# centre, floor at its true global AABB min) must never
+	# intersect a ribbon box (surface-0.45..surface over
+	# +-HALF_WIDTH) or a stilt box (0.55 wide, surface down to
+	# the desert floor) of any sample near the route - main
+	# track and spur alike. Cases: (A) the stage-24 walk-back
+	# (fall s 900, drop 158 m behind) re-timed - FP11 needed
+	# 1911 frames end to end; (H) a drone call past the hump
+	# span, whose walk-back crosses all five humps; (G) a
+	# genuine gap fall - the catch is inside the gap, below
+	# road level, and the climb-out crosses the lip.
+	var car_meshes28: Array[MeshInstance3D] = []
+	main._collect_meshes(main.car_body, car_meshes28)
+	var run_case28 = func(fall_s: float, label: String, frame_cap: int) -> Array:
+		main._set_track("circuit") # stage 26 leaves the ribbon active
+		main.start_race()
+		await frames(4)
+		main.dip_timer = 1000.0
+		for idx: Variant in main.prep_order.duplicate():
+			grip_flip_switch(int(idx), "R")
+		main._do_release()
+		var drv: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+		if not drv:
+			return [false, 0, "setup release failed"]
+		main.debug_warp_to_s(fall_s)
+		await frames(3)
+		main._call_drone()
+		await frames(2)
+		# Candidate samples: within 9 m in plan of the flown
+		# corridor (path points lerped every ~5 m).
+		var corridor: Array[Vector3] = [main.anchor_pos]
+		var prev_cp: Vector3 = main.anchor_pos
+		for pi: int in main.carrier_path.size():
+			var nxt_cp: Vector3 = main.carrier_path[pi]
+			var seg_len: float = prev_cp.distance_to(nxt_cp)
+			var seg_n: int = maxi(1, int(seg_len / 5.0))
+			for si2: int in range(1, seg_n + 1):
+				corridor.append(prev_cp.lerp(nxt_cp, float(si2) / float(seg_n)))
+			prev_cp = nxt_cp
+		var cands: Array = []
+		var n_main: int = main.t_pts.size()
+		for i: int in n_main:
+			if bool(main.t_gap[i]):
+				continue
+			var p: Vector3 = main.t_pts[i]
+			var near: bool = false
+			for cp: Vector3 in corridor:
+				if Vector2(p.x - cp.x, p.z - cp.z).length() < 9.0:
+					near = true
+					break
+			if near:
+				var frc: Dictionary = main._frame_at(float(i))
+				cands.append([p, Vector3(frc["side"]), Vector3(frc["tan"]), i % 10 == 0, 0.275])
+		var spur28: Dictionary = main.track_data["circuit"].get("spur", {})
+		if not spur28.is_empty():
+			var spts: Array = spur28["pts"]
+			var sside: Array = spur28["side"]
+			var stan: Array = spur28["tan"]
+			for i2: int in spts.size():
+				var p2: Vector3 = spts[i2]
+				var near2: bool = false
+				for cp2: Vector3 in corridor:
+					if Vector2(p2.x - cp2.x, p2.z - cp2.z).length() < 9.0:
+						near2 = true
+						break
+				if near2:
+					cands.append([p2, Vector3(sside[i2]), Vector3(stan[i2]), i2 % 12 == 0, 0.30])
+		var hits: int = 0
+		var brush: int = 0
+		var min_clear: float = 1e9
+		var f: int = 0
+		var saw_carry: bool = false
+		while f < frame_cap:
+			await physics_frame
+			f += 1
+			if main.mode != main.MODE_HANG:
+				break
+			if main.hang_phase == "carry":
+				saw_carry = true
+			if main.hang_phase == "dangle":
+				break
+			if not saw_carry:
+				continue
+			var bb := AABB()
+			var first: bool = true
+			for mi: MeshInstance3D in car_meshes28:
+				var ga: AABB = mi.global_transform * mi.get_aabb()
+				if first:
+					bb = ga
+					first = false
+				else:
+					bb = bb.merge(ga)
+			var cpos: Vector3 = main.car.global_position
+			# Station exemption, measured and bounded: in the
+			# final settle the still-swinging car's low AABB
+			# corner brushes the road plane at the drop point
+			# itself (worst corner depth ~0.17 m across traces,
+			# ~0.4 s) - the hang stack's 1.2 m clearance minus
+			# the swing dip. That cell (10 m plan around the
+			# station) is counted as brush, not asserted; the
+			# ROUTE - the run-12 complaint, road and pylon
+			# mid-carry - is asserted clean.
+			var at_station: bool = Vector2(cpos.x - main.anchor_target.x, cpos.z - main.anchor_target.z).length() < 10.0
+			for cd: Array in cands:
+				var sp: Vector3 = cd[0]
+				var rel: Vector3 = cpos - sp
+				var lat_s: float = rel.dot(cd[1])
+				var al_s: float = rel.dot(cd[2])
+				var hit28: bool = false
+				if absf(lat_s) < main.HALF_WIDTH + 1.7 and absf(al_s) < 0.5 + 1.7:
+					min_clear = minf(min_clear, bb.position.y - sp.y)
+					if bb.position.y < sp.y + 0.02 and bb.end.y > sp.y - main.RIBBON_DEPTH - 0.02:
+						hit28 = true
+				if bool(cd[3]) and Vector2(rel.x, rel.z).length() < float(cd[4]) + 1.7:
+					if bb.position.y < sp.y + 0.02:
+						hit28 = true
+				if hit28:
+					if at_station:
+						brush += 1
+					else:
+						hits += 1
+		return [hits == 0 and saw_carry, f, "hits %d, station brush %d, min car-floor clearance over near samples %.2f m, %s" % [hits, brush, min_clear, label]]
+	var case_a28: Array = await run_case28.call(900.0, "A: s900 walk-back", 2400)
+	check(bool(case_a28[0]), "stage28: case A carry is collision-free (%s)" % String(case_a28[2]))
+	check(int(case_a28[1]) < 1700,
+		"stage28: case A end-to-end %d frames (FP11: 1911 for the same recovery)" % int(case_a28[1]))
+	# Case H's fall sits INSIDE the hump span's far end (2455):
+	# from 2494 the drop search finds a flat piece just past
+	# the humps and the route never crosses them (measured in
+	# the first FP12 run - a 235-frame local hop). From inside
+	# the span the drop lands well behind the fall, so the
+	# carry crosses the humps in between.
+	var case_h28: Array = await run_case28.call(2455.0, "H: hump-span walk-back", 3600)
+	check(bool(case_h28[0]), "stage28: case H carry over the humps is collision-free (%s)" % String(case_h28[2]))
+	print("stage28: case H end-to-end %d frames (%s)" % [int(case_h28[1]), String(case_h28[2])])
+	# Case G: the gap fall (drives in at pin 13, falls, drone).
+	main._set_track("circuit")
+	main.start_race()
+	await frames(4)
+	main.dip_timer = 1000.0
+	for idx: Variant in main.prep_order.duplicate():
+		grip_flip_switch(int(idx), "R")
+	main._do_release()
+	var drv_g28: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv_g28, "stage28: case G setup release lands into DRIVE")
+	main.debug_warp_to_s(main.gap_s0 - 45.0)
+	var fg28: int = 0
+	var hang_g28: bool = false
+	while fg28 < 3000 and not hang_g28:
+		await physics_frame
+		fg28 += 1
+		if main.mode == main.MODE_DRIVE:
+			autopilot_steer()
+			main.debug_pin_speed(13.0)
+		elif main.mode == main.MODE_HANG:
+			hang_g28 = true
+	check(hang_g28, "stage28: the gap fall is caught by the drone (drone call from inside the gap)")
+	# fly this recovery out with the same analytic assertion
+	var corridor_g: Array[Vector3] = [main.anchor_pos]
+	var prev_cg: Vector3 = main.anchor_pos
+	for pi2: int in main.carrier_path.size():
+		var nxt_cg: Vector3 = main.carrier_path[pi2]
+		var seg_leng: float = prev_cg.distance_to(nxt_cg)
+		var seg_ng: int = maxi(1, int(seg_leng / 5.0))
+		for si3: int in range(1, seg_ng + 1):
+			corridor_g.append(prev_cg.lerp(nxt_cg, float(si3) / float(seg_ng)))
+		prev_cg = nxt_cg
+	# Fall-site scoping, stated plainly: the gap catch wedges
+	# the car UNDER the far lip (measured: caught ~4.7 m below
+	# the lip's surface at its plan position, on the
+	# centreline, where the lip's own stilt stands). ANY
+	# extraction crosses that one cell - rising through it,
+	# sliding under it, or dodging its stilt - for the ~1-2 s
+	# the drone needs to lift the car out of the hole it fell
+	# into; FP11's attach did the same, unmeasured. That cell
+	# (the gap span plus both lips) is therefore EXEMPT from
+	# the assertion and its brush count is printed for the
+	# record. Everything beyond it - the climb-out's exit,
+	# the whole 260 m carry across the climb - is asserted.
+	var cands_g: Array = []
+	for i3: int in main.t_pts.size():
+		if bool(main.t_gap[i3]):
+			continue
+		var p3: Vector3 = main.t_pts[i3]
+		var near3: bool = false
+		for cp3: Vector3 in corridor_g:
+			if Vector2(p3.x - cp3.x, p3.z - cp3.z).length() < 9.0:
+				near3 = true
+				break
+		if near3:
+			var frg: Dictionary = main._frame_at(float(i3))
+			var exempt3: bool = float(i3) >= main.gap_s0 - 4.0 and float(i3) <= main.gap_s1 + 6.0
+			cands_g.append([p3, Vector3(frg["side"]), Vector3(frg["tan"]), i3 % 10 == 0, 0.275, exempt3])
+	var hits_g: int = 0
+	var brush_g: int = 0
+	var fg2: int = 0
+	var saw_carry_g: bool = false
+	while fg2 < 6000:
+		await physics_frame
+		fg2 += 1
+		if main.mode != main.MODE_HANG or main.hang_phase == "dangle":
+			break
+		if main.hang_phase == "carry":
+			saw_carry_g = true
+		if not saw_carry_g:
+			continue
+		var bbg := AABB()
+		var firstg: bool = true
+		for mi2: MeshInstance3D in car_meshes28:
+			var gag: AABB = mi2.global_transform * mi2.get_aabb()
+			if firstg:
+				bbg = gag
+				firstg = false
+			else:
+				bbg = bbg.merge(gag)
+		var cposg: Vector3 = main.car.global_position
+		for cdg: Array in cands_g:
+			var spg: Vector3 = cdg[0]
+			var relg: Vector3 = cposg - spg
+			var hitg: bool = false
+			if absf(relg.dot(cdg[1])) < main.HALF_WIDTH + 1.7 and absf(relg.dot(cdg[2])) < 0.5 + 1.7:
+				if bbg.position.y < spg.y + 0.02 and bbg.end.y > spg.y - main.RIBBON_DEPTH - 0.02:
+					hitg = true
+			if bool(cdg[3]) and Vector2(relg.x, relg.z).length() < float(cdg[4]) + 1.7:
+				if bbg.position.y < spg.y + 0.02:
+					hitg = true
+			if hitg:
+				if bool(cdg[5]) or Vector2(cposg.x - main.anchor_target.x, cposg.z - main.anchor_target.z).length() < 10.0:
+					brush_g += 1
+				else:
+					hits_g += 1
+	check(hits_g == 0 and saw_carry_g,
+		"stage28: case G carry beyond the fall-site cell is collision-free (hits %d)" % hits_g)
+	print("stage28: case G fall->dangle %d frames from the drone call; fall-site brush %d frame-samples (exempt cell, see comment)" % [fg2, brush_g])
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): grab-wheel hand tracking; live XR grip channel VALUES and hand poses (switch-flip logic itself is verified on synthetic poses, stage 11); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:

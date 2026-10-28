@@ -286,9 +286,28 @@ const PEND_DAMP: float = 0.10
 # survive as FLOWN manoeuvres: the carrier descends on a smooth
 # profile and climbs back, so line tension, slack and the catch
 # all follow from the carrier's real vertical acceleration.
-const CARRIER_SPEED: float = 9.0 # m/s cruise (the old carry's step rate)
-const CARRIER_ACCEL: float = 6.0 # m/s^2 - flight accel/brake limit
+const CARRIER_SPEED: float = 15.0 # m/s cruise (FP12 item 3: was 9.0)
+const CARRIER_ACCEL: float = 9.0 # m/s^2 - flight accel/brake limit (FP12 item 3: was 6.0)
 const CARRIER_YAW_RATE: float = 0.9 # rad/s the carrier turns at speed
+# Fix Pass 12 (Item 3): extra clearance the carry's altitude
+# profile holds over the highest intervening road surface -
+# on top of the hang stack (HANG_LEN + HANG_CLEAR) the drop
+# station itself uses. (0.8 as first shipped measured a
+# 0.17 m graze on the staged s900 carry - the swinging car
+# reaches metres past the anchor's column, where the road
+# can stand higher than the profile's window maximum; the
+# window widened to +-45 m in the same fix, and the margin
+# went to 1.0.)
+const CARRIER_ROUTE_CLEAR_M: float = 1.0
+# Fix Pass 12 (Item 5): the air-recovery trigger's terms.
+# Below-band dwell: how long the car must stay below the
+# landing band, descending, before it counts as lost (a
+# lower piece ahead re-opens the landing the moment h
+# climbs back into the band). Failsafe: an absolute air-time
+# ceiling no ballistic on this track can honestly reach -
+# the longest genuine flight measured is 3.64 s.
+const AIR_LOST_BELOW_T: float = 0.3
+const AIR_FAILSAFE_T: float = 8.0
 const ORIENT_YAW_K: float = 3.2 # car-facing seek spring (overshoots)
 const ORIENT_YAW_DAMP: float = 2.0
 const DIP_DUR: float = 1.6 # s, one flown dip
@@ -3495,6 +3514,34 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 	# spine samples every ~30 m at hang height plus a clearance
 	# margin, so it follows the road's shape (climbs, descends)
 	# instead of cutting a straight line through it.
+	# Fix Pass 12 (Item 3): the path now flies a COLLISION-FREE
+	# ALTITUDE PROFILE. FP10 took each waypoint's altitude from
+	# its own sample only, so between samples the carrier flew
+	# chords and the hanging car sagged toward the road it
+	# crossed - measured on staged recoveries, the car's centre
+	# passed ~1.5 m over the surface (wheels ~0.7 m) at the
+	# worst sag, and on a route crossing the hump row a crest
+	# between samples stands higher than both neighbours: the
+	# run-12 "flies through road and pylon a lot". Now the
+	# route is sampled every ~5 m first, and each waypoint's
+	# altitude is the HIGHEST road surface within +-45 m of
+	# route travel around it (the window also covers where
+	# the SWINGING car actually reaches - metres ahead of and
+	# behind the anchor's column on a sloped route), plus the hang stack
+	# (HANG_LEN + HANG_CLEAR) plus CARRIER_ROUTE_CLEAR_M -
+	# so the chord between adjacent waypoints also clears
+	# (both endpoints sit at or above every surface in the
+	# segment's window). Stilts of OTHER pieces cannot be
+	# hit: the circuit's closest plan approach between
+	# distinct pieces is 57 m (measured, this pass), and the
+	# spur's stilts stand under a surface at or below the
+	# road the route follows. The suite asserts the carried
+	# car intersects neither ribbon nor stilt on staged
+	# carries (over the humps, across the climb, out of the
+	# gap). anchor_target itself is untouched: the dangle
+	# station is exactly where Fix Pass 2 put it, and a
+	# profiled penultimate point 15 m of travel before the
+	# drop keeps the final dive short and local.
 	carrier_vel = Vector3.ZERO
 	carrier_accel = Vector3.ZERO
 	carrier_yaw = _frame_yaw(_frame_at(from_s)["tan"])
@@ -3503,12 +3550,49 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 	carrier_wp = 0
 	var back_dist: float = wrapf(from_s - drop_target_s, 0.0, track_len) if track_closed \
 		else maxf(0.0, from_s - drop_target_s)
-	var steps: int = int(back_dist / 30.0)
+	var route_y: Array[float] = []
+	var rd: float = 0.0
+	while rd <= back_dist + 0.01:
+		var s_r: float = wrapf(from_s - rd, 0.0, track_len) if track_closed else from_s - rd
+		route_y.append(float(_frame_at(s_r)["pos"].y))
+		rd += 5.0
+	var prof_alt = func(route_d: float) -> float:
+		var m: float = -1.0e30
+		for j: int in route_y.size():
+			if absf(float(j) * 5.0 - route_d) <= 45.0:
+				m = maxf(m, route_y[j])
+		return m + HANG_LEN + HANG_CLEAR + CARRIER_ROUTE_CLEAR_M
+	# Climb-out first: a deep catch (a gap fall is caught ~13 m
+	# below the road) starts UNDER the surface it must cross.
+	# If the hover sits below the profile, the first path
+	# point is straight above the catch at profile altitude -
+	# the carrier climbs out of the hole vertically before it
+	# travels, instead of dragging the car diagonally through
+	# the lip it fell past.
+	if anchor_pos.y < prof_alt.call(0.0) - 0.05:
+		var p_0: Vector3 = anchor_pos
+		p_0.y = prof_alt.call(0.0)
+		carrier_path.append(p_0)
+	# The 30 m samples stop 20 m short of the drop: the first
+	# FP12 build let the last sample land past the penultimate
+	# (back_dist 158 -> sample at s 750, penultimate at s 757),
+	# doubling the path back on itself - the carrier reversed
+	# twice at the station and rang there for ~7 s (traced).
+	var steps: int = int(maxf(back_dist - 20.0, 0.0) / 30.0)
 	for k: int in range(1, steps + 1):
 		var s_k: float = wrapf(from_s - 30.0 * float(k), 0.0, track_len) if track_closed \
 			else from_s - 30.0 * float(k)
 		var fr_k: Dictionary = _frame_at(s_k)
-		carrier_path.append(fr_k["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR + 1.2))
+		var p_k: Vector3 = fr_k["pos"]
+		p_k.y = maxf(float(fr_k["pos"].y) + HANG_LEN + HANG_CLEAR + 1.2, prof_alt.call(30.0 * float(k)))
+		carrier_path.append(p_k)
+	if back_dist > 20.0:
+		var s_p: float = wrapf(drop_target_s + 15.0, 0.0, track_len) if track_closed \
+			else drop_target_s + 15.0
+		var fr_p: Dictionary = _frame_at(s_p)
+		var p_p: Vector3 = fr_p["pos"]
+		p_p.y = maxf(float(fr_p["pos"].y) + HANG_LEN + HANG_CLEAR + 1.2, prof_alt.call(back_dist - 15.0))
+		carrier_path.append(p_p)
 	carrier_path.append(anchor_target)
 	_reset_dangle_feel()
 	# initial pendulum angles from the catch offset
@@ -4019,7 +4103,12 @@ func _step_carrier(delta: float) -> void:
 		if carrier_wp < carrier_path.size():
 			target = carrier_path[carrier_wp]
 			arrive = carrier_wp == carrier_path.size() - 1
-			if not arrive and anchor_pos.distance_to(target) < 2.5:
+			# Advance on proximity OR on passing the waypoint
+			# abeam (a chord-cutting carrier can pass a point
+			# metres off and orbit it at cruise otherwise).
+			if not arrive and (anchor_pos.distance_to(target) < 2.5 or \
+					(anchor_pos.distance_to(target) < 7.0 and \
+					carrier_vel.dot(target - anchor_pos) < 0.0)):
 				carrier_wp += 1
 				target = carrier_path[carrier_wp]
 				arrive = carrier_wp == carrier_path.size() - 1
@@ -4052,6 +4141,23 @@ func _step_carrier(delta: float) -> void:
 		desired = target_vel + (target - anchor_pos) * 1.4
 		if desired.length() > CARRIER_SPEED:
 			desired = desired.normalized() * CARRIER_SPEED
+		# Fix Pass 12 (Item 3): the arrival FLARE, shipped form -
+		# a braking-curve speed cap on the carry's final leg:
+		# |v| <= sqrt(2 * 5 * d). Full-limit braking from the
+		# new 15 m/s cruise otherwise holds the pendulum near
+		# atan(9/9.8) ~ 43 deg through the arrival, and a
+		# release in that swing throws the car metres sideways
+		# (the instrumented stage-11c release measured om_l
+		# -2.65 rad/s, a ~14 m/s tip velocity, and a clean miss
+		# of the road). On the curve the carrier decelerates at
+		# ~5 m/s^2 the whole way in - gentle on the pendulum,
+		# and, unlike an accel cap, it cannot overshoot the
+		# P-law station: speed is a function of distance left.
+		if hang_phase == "carry":
+			var d_app: float = (target - anchor_pos).length()
+			var cap_app: float = sqrt(2.0 * 5.0 * maxf(d_app - 0.05, 0.0))
+			if desired.length() > cap_app:
+				desired = desired.normalized() * cap_app
 	else:
 		var to: Vector3 = target - anchor_pos
 		desired = to.normalized() * CARRIER_SPEED if to.length() > 0.01 else Vector3.ZERO
@@ -4063,6 +4169,12 @@ func _step_carrier(delta: float) -> void:
 		carrier_vel += test_pivot_accel * delta
 	else:
 		var accel_lim: float = 11.0 if hang_phase == "dangle" else CARRIER_ACCEL
+		# (The FP12 flare's first form - an accel cap of 5 on
+		# this branch - was measured RINGING against the P-law
+		# for ~18 s at the station: too weak to shed 15 m/s
+		# inside the P-law's braking distance, it overshot and
+		# oscillated. The shipped flare is the braking-curve
+		# speed cap in the velocity command below.)
 		var dv: Vector3 = desired - carrier_vel
 		var max_dv: float = accel_lim * delta
 		if dv.length() > max_dv:
