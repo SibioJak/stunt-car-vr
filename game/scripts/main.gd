@@ -2475,23 +2475,11 @@ func _build_cockpit() -> void:
 	hub.mesh = hubm
 	hub.material_override = _mat_unshaded(Color(1.0, 0.75, 0.15))
 	wheel_spin.add_child(hub)
-	# 3 prep switches on the dash (lever pivots)
-	# Fix Pass 11 (Item 2): the pivots sat at y 0.90, INSIDE the
-	# dash slab (its top is 0.93) - the lever's base and the
-	# first ~3 cm of its activation segment lived below the
-	# surface the driver sees, which is exactly where run 11
-	# put the left lever's sweet spot ("looks below lever,
-	# maybe inside console"). Pivots now sit ON the surface.
-	var switch_cols: Array[Color] = [Color(0.9, 0.2, 0.15), Color(0.95, 0.8, 0.15), Color(0.2, 0.5, 0.95)]
-	for i: int in 3:
-		var piv := Node3D.new()
-		piv.position = Vector3(-0.30 + 0.30 * float(i), 0.93, -0.60)
-		piv.rotation_degrees = Vector3(-38, 0, 0)
-		car_body.add_child(piv)
-		switch_pivots.append(piv)
-		_box(piv, Vector3(0.055, 0.20, 0.055), Vector3(0, 0.08, 0), _mat(Color(0.65, 0.65, 0.68)))
-		_box(piv, Vector3(0.085, 0.06, 0.085), Vector3(0, 0.19, 0), _mat_unshaded(switch_cols[i]))
-		_register_dash_ctl(piv, "switch%d" % i)
+	# Fix Pass 13 (Item 1): the three prep switches that lived
+	# on the dash top are DELETED with the prep sequence - the
+	# dash top is bare now. The dash controls that remain are
+	# the three buttons below (restart / lean / track), the
+	# seat levers on the left pod, and the centre drop lever.
 	# Red RESTART button + green LEAN toggle button (physical dash controls)
 	# Fix Pass 10 (Item 3): restart shifts left (0.48 -> 0.40) to
 	# make room for the purple TRACK button at 0.57 - the pair
@@ -2971,7 +2959,12 @@ func _poll_inputs(delta: float) -> void:
 	if grab_hand == "":
 		if steer_key != 0.0:
 			wheel_angle = clampf(wheel_angle + steer_key * 2.6 * delta, -PI, PI)
-		else:
+		elif mode == MODE_DRIVE:
+			# Fix Pass 13 (Item 3): the return-to-centre runs
+			# ONLY in DRIVE. It used to run in every mode, so a
+			# lock dialled into the wheel during the dangle was
+			# silently centred away during the fall - the first
+			# DRIVE frame must receive the lock the driver set.
 			wheel_angle = move_toward(wheel_angle, 0.0, 2.2 * delta)
 	# --- XR continuous ---
 	if xr_ok:
@@ -4965,9 +4958,21 @@ func _refresh_car_visuals() -> void:
 		car_body.rotation.x = pitch_extra
 	# Fix Pass 5: wheel travel - each wheel rides its axle's spring:
 	# compressed = up into the body, drooped = hanging low.
+	# Fix Pass 13 (Item 3): the FRONT wheels also show the steer
+	# angle (until now they only travelled). The yaw is the drive
+	# model's own expression, so what the driver sees on the road
+	# wheels is what the car will do - including a lock dialled
+	# in during the dangle (speed 0 -> full lock scale), which is
+	# the visible promise the release then keeps. Rear wheels
+	# never yaw. Sign: a positive (right) lock turns the wheels
+	# toward +X, which is -Y rotation for a wheel modelled
+	# rolling toward -Z.
+	var fa_vis: float = clampf(wheel_angle / PI, -1.0, 1.0) * MAX_LOCK_RAD * _lock_scale(speed)
 	for wi: int in wheel_mis.size():
 		var c_axle: float = c_f if wheel_axle[wi] == 0 else c_r
 		wheel_mis[wi].position.y = WHEEL_RAD_REF + (c_axle - SUSP_REST)
+		if wheel_axle[wi] == 0:
+			wheel_mis[wi].rotation_degrees.y = -rad_to_deg(fa_vis)
 	_update_view_spring()
 	# dent carnage placeholder: nose crumples/tilts with dent level
 	if nose_mi != null:
