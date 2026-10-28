@@ -362,6 +362,21 @@ const AUDIO_SKID_FLOOR_DB: float = -34.0 # skid level at the onset of slip
 const AUDIO_SLIP_ONSET: float = 1.2 # |lateral velocity| (m/s) where tires start to sing
 const AUDIO_SLIP_SPAN: float = 3.8 # lateral-velocity range from onset to full slip
 const AUDIO_STALL_MS: int = 600 # physics-tick gap that counts as a stall
+# Fix Pass 13 (Item 1) - touchdown connection grading. The
+# grade is read off the measured contact state (see _land):
+# lateral speed at contact and heading error vs the road
+# tangent. Thresholds sit between the staged sway-zero and
+# sway-peak releases of smoke stage 30 (zero swing lands at
+# ~0.1-0.3 m/s lateral and <1 deg; a peak-swing release lands
+# at ~4-5 m/s and several degrees - the bands are set from
+# that distribution, see the Fix Pass 13 README section).
+const CONTACT_CLEAN_LAT: float = 1.0 # m/s
+const CONTACT_CLEAN_HDG: float = 3.0 # deg
+const CONTACT_SCRUB_LAT: float = 3.0 # m/s
+const CONTACT_SCRUB_HDG: float = 8.0 # deg
+const CONTACT_READOUT_S: float = 2.5 # s the touchdown readout stays up
+const CONTACT_LOAD_RAMP_S: float = 0.65 # s for the springs to take the car's weight at contact
+const CONTACT_LOAD_FLOOR: float = 0.10 # tire capacity fraction at the first contact instant
 # Fix Pass 7 (Item 2) - the Crammond jitter mechanism, reproduced
 # structurally (crammond-notes.md Q3): the original's road profiles
 # are smooth analytic ramps - its tire jitter EMERGES from faceted
@@ -2703,8 +2718,7 @@ func _panel_text() -> String:
 	lines.append("Grab wheel: GRIP near wheel, turn hand")
 	lines.append("Throttle R trigger / Brake L trigger")
 	lines.append("Boost: R A button (while driving)")
-	lines.append("Release: pull the DROP SHIFTER (right pod, fwd)")
-	lines.append("Flip switch: GRIP near a dash switch")
+	lines.append("Release: pull the DROP LEVER down")
 	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
 	lines.append("Call drone: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
@@ -3293,11 +3307,15 @@ func _hand_wheel_angle(hand: String) -> float:
 ## 0.33 m, so the segment is pivot-local (0, 0.17, 0) to
 ## (0, 0.36, 0) - still the upper shaft plus the knob
 ## (knob centre 0.35, span 0.295..0.405).
+## Fix Pass 13 (Item 2): the centre lever's shaft is
+## 0.34 m with the knob at 0.36 - the segment re-bases to
+## the same upper-shaft-plus-knob span, (0, 0.18, 0) to
+## (0, 0.37, 0).
 func debug_drop_lever_segment() -> Array:
 	if drop_lever_pivot == null:
 		return []
 	var xf: Transform3D = drop_lever_pivot.global_transform
-	return [xf * Vector3(0, 0.17, 0), xf * Vector3(0, 0.36, 0)]
+	return [xf * Vector3(0, 0.18, 0), xf * Vector3(0, 0.37, 0)]
 
 
 func _hand_near_drop_lever(hand: String) -> bool:
@@ -3443,7 +3461,8 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 		wheel_angle = move_toward(wheel_angle, 0.0, 1.6 * _delta)
 
 
-# Fix Pass 5 (Item 2): lever-shaped controls (the prep switches) are
+# Fix Pass 5 (Item 2): lever-shaped controls (the seat levers; the
+# prep switches this was written for were deleted in Fix Pass 13) are
 # measured to their GRAB SEGMENT - base of the shaft to the cap - not
 # to a point at the tip. Chris's hand arrives at the shaft; the old
 # point measure (at the pivot origin the coloured cap sits ~0.19 m
@@ -3451,7 +3470,7 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 # Buttons keep the point measure.
 func _dash_ctl_segment(i: int) -> Array[Vector3]:
 	var node: Node3D = dash_ctl_nodes[i]
-	if dash_ctl_kinds[i].begins_with("switch") or dash_ctl_kinds[i].begins_with("seat"):
+	if dash_ctl_kinds[i].begins_with("seat"):
 		var xf: Transform3D = node.global_transform
 		# Fix Pass 11 (Item 2): the segment starts at local
 		# +0.02, just above the mounting surface - it used to
@@ -4729,7 +4748,7 @@ func _update_lean_reading() -> void:
 	else:
 		lean_value = move_toward(lean_value, 0.0, 0.05)
 	if lean_needle != null:
-		lean_needle.position.x = lean_value * 0.16
+		lean_needle.position.x = -0.18 + lean_value * 0.16 # FP13: centred on its shifted mount
 
 
 func _lean_effective() -> float:

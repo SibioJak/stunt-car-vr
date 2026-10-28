@@ -276,12 +276,17 @@ func _run() -> void:
 	main._update_panel()
 	var ptxt: String = main.panel_label.text + "\n" + main.diag_label.text
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call drone",
-			"restart", "lean", "track", "Recenter", "SPACE", "1/2/3", "W/S", "V track",
-			"DIAG", "ANCHOR", "CAMH", "FRC", "Jitter", "JIT",
-			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP SHIFTER", "Panels", "TAB"]:
+			"restart", "lean", "track", "Recenter", "SPACE", "W/S", "V track",
+			"DIAG", "ANCHOR", "CAMH", "FRC", "Jitter", "JIT", "CONTACT",
+			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP LEVER", "Panels", "TAB"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)
 	check(main.wheel_node != null, "grab wheel exists")
-	check(main.switch_pivots.size() == 3, "3 prep switches on the dash")
+	# Fix Pass 13 (Item 1): the prep switches are deleted -
+	# the dash top is bare and exactly five dash controls
+	# survive (restart / lean / track buttons, seatup /
+	# seatdn levers).
+	check(main.dash_ctl_kinds == ["restart", "lean", "track", "seatup", "seatdn"],
+		"dash carries exactly the five surviving controls (%s)" % str(main.dash_ctl_kinds))
 	check(main.state_label.text.length() > 0, "state label is live (%s)" % main.state_label.text)
 
 	# Fix Pass 2 anchor geometry: the fallback camera sits exactly on the
