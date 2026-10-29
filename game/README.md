@@ -1790,6 +1790,293 @@ tolerance 0.18 stand as FP14 left them — not re-derived. The
 crane's drop behaviour is reported against FP14's numbers in
 Item 2 above. Steering lock scale ≤ 24 m/s untouched.
 
+## Fix Pass 16 — OPERATION FIX THE FUCKING LEVERS
+
+Base: FP15 final (84d0922). One subject only: the cockpit grab
+path — dash buttons, seat levers, the drop lever, the wheel.
+Ordered after run 15 ("It's fiddly as hell, like most levers
+so far. Sometimes it work, sometimes it don't"), which also
+brought the standing both-hands-on-wheel defect ("only one
+hand can visually grab wheel at a time, even though both are
+grabbed — been a problem since start"), a SIDE button that
+flipped the drop lever's side by itself mid-session, and the
+owner's sizing amendment: "make em smaller, I feel like an
+Oompa Loompa." Five items, one commit each, in brief order.
+Tallies on the final tree: SMOKE 395/395, API GUARD
+70/70, RENDER PROOF 146/146. Everything below is
+probe-verified only. Whether the grabs FEEL fixed is the
+owner's verdict on his device — this pass is explicit that
+staged-green is not evidence about the live path, which is
+why Item 0 comes first and Item 5 ships.
+
+### Item 0 — the differential (before any fix) (commit cc8db14)
+
+The whole live grab path was read end-to-end and each suspect
+given a verdict; the external research note
+(research/xr-grab-reliability.md — XR Tools / VTOL VR patterns,
+OpenXR action semantics) was checked against the code.
+
+1. **Analog threshold, no hysteresis — CONVICTED.**
+   `_poll_grab` computed the held state fresh every physics
+   frame as `grip_v > 0.65 or grip_click or grip_force > 0.65`
+   and assigned it directly to every latch. A squeeze hovering
+   at the cut — nerves, sensor noise, a weakening grip — drops
+   for one frame and returns: a toggle control's latch cleared
+   and refired (double-flip), the drop lever's latch died
+   mid-pull and the lever sprang home (the pull silently
+   cancelled), the wheel grab dropped and re-took. Slow
+   deliberate staged squeezes (0.0 / 1.0, parked) never produce
+   the flicker, which is why four staged fixes missed it.
+2. **Zone tunneling at physics rate — EXONERATED by
+   arithmetic** for the shipped geometry (smallest zone
+   diameter 0.30 m; a full crossing between 60 Hz polls needs
+   an 18 m/s hand). Swept tests still shipped (Item 1) as the
+   permanent guard — and promptly convicted a different
+   mechanism (see the teleport cap, Item 1).
+3. **Rep-vs-pose offset — EXONERATED as a code divergence.**
+   The rendered rep is a child of the same XRController3D
+   whose global_position `_hand_pos()` measures, origin dot
+   exactly at the node origin; one transform source for render
+   and test (stage 46 asserts the equality). Residual: the
+   OpenXR "default" (aim) pose origin sits forward of the
+   physical palm, and the alternative grip pose carries no
+   live data on this VDXR rig — how much that offset
+   contributes is **UNDETERMINED-LIVE**.
+4. **Throw-tracking dropout — CONVICTED, routed through
+   suspect 1.** Once latched, the pull reads the hand's angle
+   about the pivot at ANY distance (no radius condition — the
+   one piece of the old design that was right); the only
+   mid-throw cancel path was the latch dying on a flickered
+   grip frame. Same root, same fix.
+5. **Grip value source — CONVICTED twice.** (a) `grip_force`
+   has NO binding in any of the four interaction profiles
+   (verified programmatically against
+   openxr_action_map.tres): `get_input("grip_force")` returned
+   null → 0.0 forever — the DIAG FRC column's permanent 0.00
+   was expected behaviour on this hardware (Touch Plus has no
+   squeeze/force endpoint), not a bug, and the channel is
+   deleted. (b) `grip_click` is bound to squeeze/value — the
+   SAME analog squeeze read through the runtime's own
+   undocumented press threshold (the OpenXR spec leaves
+   bool-conversion thresholds to the runtime; Godot's docs
+   prescribe Float + your own threshold). It was never an
+   independent rescue channel; it imported VDXR's threshold
+   into every latch. Removed from the latch math; still read
+   for the DIAG block as evidence.
+6. **Feedback absence — CONVICTED (partially).** No haptic
+   confirmation existed on any dash fire or wheel/lever latch
+   (only the detent pulse). A grab could fail with NO signal
+   on any channel; and the visual articulation that did exist
+   keyed off the chattering held state, so even it flickered.
+
+Also from the research: the classic conjunctive-coincidence
+failure (a grab requiring the grip EDGE and zone entry in the
+same sample — humans pre-squeeze 2–5 cm before contact) was
+this codebase's FP9-era bug, already fixed by level-based
+activation; the re-audit confirms no surviving path requires
+a grip edge coincident with zone presence. Claims of a
+VDXR-specific grip bug or per-hand channel asymmetry are
+UNVERIFIED in the research and were not chased; run 10's
+flatlined left channel remains a channel-level zero that only
+live telemetry can classify (Item 5 logs per-hand squeeze
+peaks for exactly this).
+
+### Item 1 — the grab rebuild (commit cc8db14)
+
+`_poll_grab` was rebuilt around the verdicts:
+
+- **Analog-only Schmitt trigger.** Held = the analog squeeze
+  through our own hysteresis: engage above **0.55**, release
+  below **0.30** (before: a single 0.65 cut on the three-way
+  OR). `gripping[]` IS the debounced state, so articulation,
+  the recenter gate and the hang button gates all read the
+  same held value the latches do.
+- **Latch semantics everywhere** (the XR Tools / VTOL
+  pattern: a grab once honestly made ends on grip RELEASE,
+  never on a zone exit or a value dip). One-shot dash latches
+  clear only on release — leave-and-return inside one squeeze
+  can no longer double-toggle. Seat levers trim on the latch,
+  in or out of the zone. The wheel **soft-locks**: the latched
+  hand steers at any radius (its angle is read about the hub);
+  the existing other-hand takeover on release is unchanged.
+  Squeeze-and-sweep across controls still fires each on entry.
+- **Swept zone tests** — the hand's per-frame travel segment
+  against each control's grab segment (segment-segment
+  distance), so a fast pass-through registers. Capped: a
+  sweep longer than **0.25 m is a teleport**, not a
+  pass-through, and falls back to the endpoint test. The cap
+  exists because the uncapped sweep convicted itself in
+  verification: stage 25's latch poll swept from the previous
+  stage's parked pose across RESTART, resetting the race
+  mid-sequence (hang phase back to "attach", the detent fire
+  gated — the stage failed for a day under three wrong
+  theories before an instrumented run printed
+  `phase=attach`). A live tracking dropout + reacquisition
+  across the cockpit would have done the same to the owner.
+- **Witnesses, not silence.** The hand rep's origin dot swells
+  with state (×1.5 with a CANDIDATE in reach, ×2.1 latched);
+  a new candidate while ungripped earns a faint tick
+  (0.18 amp / 0.04 s, rate-limited) — acquisition feedback
+  BEFORE the squeeze, per XR Tools; latch and fire pulse
+  0.35 / 0.06 s; an early lever release after a real pull
+  (> 0.15 rad) gets its own tick (0.30 / 0.08) plus a
+  telemetry event — a dropped pull is announced, never
+  silent. The detent pulse (0.7 / 0.12) is unchanged. Whether
+  any of these pulses are perceptible on the live rig is the
+  owner's verdict, unverifiable headless.
+- **Chatter accounting.** A held grab whose squeeze dips
+  below the old 0.65 cut without reaching the 0.30 release is
+  a grab FP15 would have dropped; each episode increments the
+  counter Item 5 reports.
+- DIAG: the dead FRC column is replaced by **HLD**, the
+  Schmitt latch state.
+
+Staged in the new stage 46: hysteresis holds a toggle's latch
+through a dip to 0.45 with no re-fire on recovery (and the
+rescue is counted); the drop lever's pull survives the same
+dip mid-throw and still fires; the wheel tracks its hand at
+0.55 m radius, past the 0.40 grab zone; a grazing chord whose
+two endpoint samples both sit outside the zone still fires
+its control via the swept segment; the rep-source equality
+(suspect 3) is asserted for both hands.
+
+### Item 2 — smaller levers, decoupled volumes (commit 2b71436)
+
+The amendment is a pair: the furniture shrinks, the grab
+volumes stay or grow — visual and interaction size are now
+independent numbers, and the zone audit's rule inverts to
+match (below).
+
+| control | mesh before | mesh after | grab volume |
+|---|---|---|---|
+| drop lever shaft | 0.05 thick × 0.34 | 0.028 × 0.30 | radius 0.16 → **0.20** |
+| drop lever knob | 0.10 cube @ 0.36 | 0.055 cube @ 0.315 | segment 0.18–0.37 → 0.13–0.32 (span kept 0.19) |
+| seat lever shaft | 0.055 × 0.20 | 0.030 × 0.15 | segment 0.02–0.19 **unchanged** |
+| seat lever cap | 0.085 × 0.06 @ 0.19 | 0.052 × 0.05 @ 0.145 | radius → **0.19** (seat-only) |
+| dash buttons | r 0.045 (restart 0.05) | r 0.036 (restart 0.040) | radius 0.15 unchanged |
+
+The audit (`debug_dash_ctl_audit`) previously kept zones ON
+their meshes (no segment sample farther than 0.035 from its
+own mesh). Inverted: every control's volume must **contain**
+its mesh with margin — worst (mesh-point distance − radius)
+over every mesh's AABB corners+centre must read
+≤ −0.03 m — and no mesh point may sit > 1 cm inside foreign
+bodywork (a base seated in its mount is not burial; the
+run-11 buried buttons were centimetres deep). Final tree:
+**worst slack −0.068 m**, zero violations, asserted in smoke
+stage 23 and in the render proof's pose.
+
+### Item 3 — both hands on the wheel (commit a8124df)
+
+The defect had two halves. In the latch: FP15's wheel branch
+let a second gripping hand STEAL the wheel (re-basing
+`grab_prev_ang` to its own angle), so two held hands fought
+over `grab_hand` every frame. The latch now takes only a FREE
+wheel. In the render: the driving hand's rim point is glued
+by construction (wheel deltas come from its own motion), but
+a passenger hand's rep hung at the raw controller pose while
+the rim turned under it. Now a gripping hand on an owned
+wheel **attaches**: its grab point is stored in wheel-spin
+local space (`rim_local`), and `_refresh_car_visuals` poses
+its rep from the spin node each frame — the rep rides the rim
+(orientation and position), detaching on release, on becoming
+the driver, or when the wheel goes non-live.
+
+Proof: the render proof stages it in the settled dangle
+through the production grab path and measures the REP's
+transform: attaches, sits at its grab point (0.60 rad), rides
+to 1.10 rad when the driver turns 0.5 rad, radius constant,
+driver rep identical to its controller pose throughout.
+Frame: `tests/both_hands_wheel.png`. Stated plainly, per the
+brief: **the headless smoke cannot see this layer** — it
+exercises the grab path with simulated hands and no
+controller reps under test; the defect survived four
+staged-green passes for exactly that reason. The render proof
+(fake trackers, real scene graph) is the only staged witness,
+and the owner's eyes in the headset are the verdict.
+
+### Item 4 — SIDE flips are deliberate (commit 503b453)
+
+Run 15's flip was silent and self-inflicted (the button sits
+in the grab playground; a brush during other work latched it
+and the setting persisted). Now: entry starts a hold clock;
+the flip fires only on a **sustained 0.6 s in-zone hold**, and
+firing ANNOUNCES itself on the touchdown readout
+("LEVER SIDE: LEFT/RIGHT", 2.5 s) — the DIAG DRP line and the
+persisted setting already named the side; now the moment does
+too. The M key stays instant (a keypress is deliberate by
+nature). Staged in 46(f): a 0.2 s brush does not flip; a
+sustained hold does, with the announcement on the label. The
+owner's current setting (left, from run 15 — "where I
+actually kind of like it") is untouched: the default remains
+right, his persisted choice remains his.
+
+### Item 5 — telemetry that ships (commit ceb19dc)
+
+If a grab fails live again, it will not fail silently or
+anecdotally. Every latch, fire, early release, zone entry
+without a latch, rim attach and release writes an event
+(`T<racetime> <hand> <WHAT> g<grip at the moment>`) to three
+places: the DIAG block's new **GRAB** line (the last event,
+in the driver's face), an in-memory ring, and a per-session
+log file at **user://grab_log.txt** (truncated at launch;
+next to settings.cfg — on the owner's machine under
+%APPDATA%\Godot\app_userdata\Stunt Car VR - DE Test 1\).
+At each
+race start the previous race's account closes into the log as
+a SUMMARY: fires, wheel latches, lever latches, early
+releases, chatter rescues, and **each hand's session squeeze
+peak**. The signatures separate: zone entries with NOLAT at a
+low value = the hand arrived and the squeeze never read (or
+peaked low — see the peak); NO zone entries = the hand never
+arrived (aim/pose); EARLY lines = pulls dropped mid-throw,
+with the angle reached; a rising chatter count with no
+complaints = the hysteresis earning its keep. Staged in
+46(g): the ring carries the stage's own DRP FIRE and WHEEL
+LAT events, the DIAG block carries GRAB, the log is open.
+
+### Honest residuals
+
+- **UNDETERMINED-LIVE, first:** what VDXR actually delivers
+  per hand in the headset — the analog squeeze's shape and
+  noise at partial press, and any per-hand difference. Every
+  threshold above (0.55 / 0.30) is set from the research
+  pattern and staged values, not from the owner's live
+  signal; the grab log's peaks and NOLAT values are the
+  instrument that will convict or clear this, and the engage
+  point can move on that evidence.
+- **UNDETERMINED-LIVE:** the aim-pose-vs-palm offset
+  (suspect 3's residue) — the measured point is the
+  controller's "default" pose origin, which sits forward of
+  the physical palm; if the owner consistently lands long or
+  short of the furniture, this is the remaining suspect and
+  the volumes (0.15–0.20 m) are the current allowance for it.
+- Haptic perceptibility (candidate tick, latch pulses,
+  early-release tick) is unverifiable headless, as with every
+  pulse since FP11.
+- The research-flagged **Toggle Grip** option (VTOL ships
+  one: tap to latch, tap to release) is an owner decision,
+  NOT shipped here — it changes what a squeeze means and is
+  his call, not a fix.
+- The grey throbbing circle from run 15 is untouched by this
+  pass (unidentified; it is not a grab-path feature and no
+  staged surface reproduces it).
+
+### Yardsticks held
+
+No drive numbers moved: the grab rebuild touches only the
+input path, and stage 19's autopilot census runs 19,355
+frames on this tree — frame-identical to the FP15 code
+(84d0922) run in the same environment before the pass began
+(FP15's README reports 19,204 from its own builder's
+environment; the number is environment-consistent, and it
+did not move). All FP15 stages re-pass unmodified except
+stage 44's SIDE presses, which now run through the deliberate
+hold (the helper polls the hold out — the assertions are
+unchanged), and stage 23, whose audit assertion is Item 2's
+inverted rule.
+
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
