@@ -476,6 +476,31 @@ const AUDIO_SKID_FLOOR_DB: float = -34.0 # skid level at the onset of slip
 const AUDIO_SLIP_ONSET: float = 1.2 # |lateral velocity| (m/s) where tires start to sing
 const AUDIO_SLIP_SPAN: float = 3.8 # lateral-velocity range from onset to full slip
 const AUDIO_STALL_MS: int = 600 # physics-tick gap that counts as a stall
+# Fix Pass 15 (Item 1) - THE TELEGRAPHED LIMIT. The skid speaks
+# only once the tires are already sliding (slip_state derives
+# from the lateral velocity that SURVIVED the bleed), so the
+# limit arrived unannounced (the owner's run-14 verdict: losing
+# traction "just of happens and feels too late"). The telegraph
+# is a demand-vs-capacity ratio computed in _update_drive from
+# the steering demand itself: lateral acceleration the driven
+# yaw asks for (|vf * omega_target|) against the lateral grip
+# cap the bleed actually enforces at each axle (GRIP_LAT_ACCEL
+# x grip_mult x that axle's load factor - the FP14 Item 5
+# carrier, same exponent/floor/cap). The ratio exists BEFORE
+# any slide does, and every cue in this item (the tire song's
+# pre-limit band, the contact-patch dust, the controller
+# rumble) hangs off it, so ear, eye, hand and physics agree by
+# construction. The edge family (off-road rumble, edge scrape)
+# hangs off the per-wheel support state in _update_suspension
+# for the same reason: a cue that can play when its state says
+# otherwise is a lie, and lies are worse than silence.
+const TIRE_BAND_LO: float = 0.70 # ratio where the song/dust start (the band's lower edge)
+const TIRE_BAND_HI: float = 1.00 # ratio at the bleed's cap (breakaway)
+const TIRE_HAPTIC_EDGE: float = 0.90 # ratio where the controller rumble joins (final stretch)
+const AUDIO_SONG_MAX_DB: float = -19.0 # the tire song at full band (under the skid's -13 peak)
+const AUDIO_SONG_FLOOR_DB: float = -34.0 # the song at the band's lower edge
+const AUDIO_RUMBLE_MAX_DB: float = -16.0 # off-road rumble with a full side off the ribbon
+const AUDIO_SCRAPE_MAX_DB: float = -17.0 # edge scrape at full straddle slide
 # Fix Pass 13 (Item 1) - touchdown connection grading. The
 # grade is read off the measured contact state (see _land):
 # lateral speed at contact and heading error vs the road
@@ -792,6 +817,26 @@ var audio_rpm: float = 0.8 # smoothed engine speed factor (pitch scale)
 var audio_skid_now: float = 0.0 # smoothed skid gain, 0..1
 var engine_player: AudioStreamPlayer
 var skid_player: AudioStreamPlayer
+# Fix Pass 15 (Item 1): the telegraph state. tire_ratio is the
+# demand-vs-capacity max over the two axles (0 outside DRIVE);
+# tire_ratio_axle names the axle nearer its limit (0 front,
+# 1 rear, -1 = both, the spur's form); tire_band is the ratio
+# mapped through the band edges. edge_rumble_now / edge_scrape_now
+# are the support-state strengths from _update_suspension.
+var tire_ratio: float = 0.0
+var tire_ratio_axle: int = 0
+var tire_band: float = 0.0
+var edge_rumble_now: float = 0.0
+var edge_scrape_now: float = 0.0
+var sup_over: Array[float] = [0.0, 0.0, 0.0, 0.0] # per-wheel overshoot past the rim, m
+var audio_song_now: float = 0.0 # smoothed song gain (the band fraction), 0..1
+var audio_rumble_now: float = 0.0 # smoothed off-road rumble gain, 0..1
+var audio_scrape_now: float = 0.0 # smoothed edge scrape gain, 0..1
+var rumble_haptic_now: float = 0.0 # controller rumble strength, 0..1 (final-stretch warning)
+var song_player: AudioStreamPlayer
+var rumble_player: AudioStreamPlayer
+var scrape_player: AudioStreamPlayer
+var dust_emitters: Array[GPUParticles3D] = [] # per-wheel contact-patch dust (FL, FR, RL, RR)
 
 # --- nodes ---
 var car: Node3D
@@ -1926,6 +1971,16 @@ func _update_drive_spur(delta: float) -> void:
 	var bleed: float = clampf(-GRIP_BITE_RATE * vl * grip_mult,
 		-GRIP_LAT_ACCEL * grip_mult, GRIP_LAT_ACCEL * grip_mult)
 	vl += bleed * delta
+	# Fix Pass 15 (Item 1): the telegraph on the spur, in the
+	# spur bleed's own terms (its cap carries no load factor -
+	# the spur's sibling suspension owns its loads). Axle -1:
+	# the dust treats both axles as the working end.
+	if absf(speed) > 2.0:
+		tire_ratio = absf(speed * omega_target) / maxf(GRIP_LAT_ACCEL * grip_mult, 0.01)
+		tire_ratio_axle = -1
+	else:
+		tire_ratio = 0.0
+	tire_band = clampf((tire_ratio - TIRE_BAND_LO) / (TIRE_BAND_HI - TIRE_BAND_LO), 0.0, 1.0)
 	slip_state = clampf((absf(vl) - AUDIO_SLIP_ONSET) / AUDIO_SLIP_SPAN, 0.0, 1.0)
 	lat_vel = vl
 	var psi: float = wrapf(car_heading - _spur_frame_yaw(fr), -PI, PI)
@@ -1971,6 +2026,12 @@ func _update_suspension_spur(delta: float) -> void:
 	var fr_c: Dictionary = _spur_frame_at(spur_s)
 	var fr_f: Dictionary = _spur_frame_at(spur_s + WHEELBASE * 0.5)
 	var fr_r: Dictionary = _spur_frame_at(spur_s - WHEELBASE * 0.5)
+	# Fix Pass 15 (Item 1): the edge family belongs to the main
+	# ribbon's straddle state; the spur's support is all-or-
+	# nothing here, so the voices are silent on the chute.
+	edge_rumble_now = 0.0
+	edge_scrape_now = 0.0
+	sup_over = [0.0, 0.0, 0.0, 0.0]
 	geom_f = (Vector3(fr_f["pos"]) - Vector3(fr_c["pos"])).dot(Vector3(fr_c["up"]))
 	geom_r = (Vector3(fr_r["pos"]) - Vector3(fr_c["pos"])).dot(Vector3(fr_c["up"]))
 	load_f = clampf(Vector3(fr_f["up"]).y - speed * speed * float(fr_f["kv"]) / GRAV, 0.0, 1.25)
@@ -2561,6 +2622,53 @@ func _build_car() -> void:
 		car_body.add_child(w)
 		wheel_mis.append(w)
 		wheel_axle.append(0 if wl.y < 0.0 else 1)
+	# Fix Pass 15 (Item 1): contact-patch DUST - one small
+	# GPUParticles3D per wheel at its patch, driven by the
+	# telegraph (see _update_telegraph). Flat unshaded puffs,
+	# tan like the desert the tires are worrying at; emitted
+	# in world space (local_coords off) so the dust stays
+	# where the tire shed it.
+	for wi2: int in WHEEL_LOCALS.size():
+		var wl2: Vector2 = WHEEL_LOCALS[wi2]
+		var em := GPUParticles3D.new()
+		em.name = "Dust%d" % wi2
+		em.amount = 18
+		em.lifetime = 0.8
+		em.local_coords = false
+		em.emitting = false
+		em.amount_ratio = 0.0
+		em.visibility_aabb = AABB(Vector3(-40.0, -15.0, -40.0), Vector3(80.0, 30.0, 80.0))
+		em.position = Vector3(wl2.x, 0.06 if wl2.y < 0.0 else -0.08, wl2.y)
+		var pm := ParticleProcessMaterial.new()
+		pm.direction = Vector3(0.0, 1.0, 0.45)
+		pm.spread = 32.0
+		pm.initial_velocity_min = 0.7
+		pm.initial_velocity_max = 1.6
+		pm.gravity = Vector3(0.0, -0.5, 0.0)
+		pm.damping_min = 0.8
+		pm.damping_max = 1.4
+		pm.scale_min = 0.10
+		pm.scale_max = 0.24
+		var grad := Gradient.new()
+		grad.set_color(0, Color(0.80, 0.72, 0.55, 0.50))
+		grad.set_color(1, Color(0.80, 0.72, 0.55, 0.0))
+		var gtex := GradientTexture1D.new()
+		gtex.gradient = grad
+		pm.color_ramp = gtex
+		em.process_material = pm
+		var puff := SphereMesh.new()
+		puff.radius = 0.16
+		puff.height = 0.32
+		puff.radial_segments = 6
+		puff.rings = 3
+		var pmat := StandardMaterial3D.new()
+		pmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		pmat.albedo_color = Color(0.80, 0.72, 0.55)
+		pmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		puff.material = pmat
+		em.draw_pass_1 = puff
+		car_body.add_child(em)
+		dust_emitters.append(em)
 	# Smoke puff (basic dent carnage placeholder)
 	smoke_mi = MeshInstance3D.new()
 	var sph := SphereMesh.new()
@@ -4006,6 +4114,11 @@ func _reset_suspension() -> void:
 	sup_rise = [0.0, 0.0, 0.0, 0.0]
 	sup_ok = [true, true, true, true]
 	sup_s = [0.0, 0.0, 0.0, 0.0]
+	sup_over = [0.0, 0.0, 0.0, 0.0] # Fix Pass 15 (Item 1)
+	edge_rumble_now = 0.0
+	edge_scrape_now = 0.0
+	tire_ratio = 0.0
+	tire_band = 0.0
 	edge_roll = 0.0
 
 
@@ -4285,6 +4398,8 @@ func _physics_process(delta: float) -> void:
 			speed = move_toward(speed, 0.0, 8.0 * delta)
 	if mode != MODE_DRIVE:
 		slip_state = 0.0 # tires unloaded: no slip, no skid
+		tire_ratio = 0.0 # Fix Pass 15 (Item 1): and no telegraph either
+		tire_band = 0.0
 	_update_drop_lever(delta) # Fix Pass 11 (Item 4): spring + pose
 	_update_ctl_articulation(delta) # Fix Pass 13 (Item 5): seat levers + button dips
 	_update_lean_reading()
@@ -4292,6 +4407,7 @@ func _physics_process(delta: float) -> void:
 	_update_body_spring(delta)
 	_refresh_car_visuals()
 	_update_audio(delta)
+	_update_telegraph(delta) # Fix Pass 15 (Item 1): dust + controller rumble off the same signal
 	_update_drone_visual(delta)
 	if step_log_on:
 		_step_log_row()
@@ -4311,6 +4427,9 @@ func _process(_delta: float) -> void:
 			audio_stalled = true
 			engine_player.volume_db = -60.0
 			skid_player.volume_db = -60.0
+			song_player.volume_db = -60.0 # Fix Pass 15 (Item 1): the watchdog covers every voice
+			rumble_player.volume_db = -60.0
+			scrape_player.volume_db = -60.0
 
 
 ## Fix Pass 11 (Item 5): the steering lock scale, shared by
@@ -4457,6 +4576,37 @@ func _update_drive(delta: float) -> void:
 	if contact_transient_t > 0.0:
 		bleed *= _contact_load_factor()
 	vl += bleed * delta
+	# Fix Pass 15 (Item 1): THE TELEGRAPH SIGNAL. The bleed
+	# above is the tire's capacity being spent; this ratio
+	# measures the DEMAND against that capacity before any of
+	# it is spent: the lateral acceleration the current yaw
+	# asks the velocity to curve through (|vf * omega_target|)
+	# over the cap the bleed enforces at each axle - the same
+	# GRIP_LAT_ACCEL x grip_mult, with each axle's own FP14
+	# load factor (during the contact transient the bleed's cap
+	# drops the load factor, so the ratio does too - one rule).
+	# Per-AXLE, deliberately: FP14 tried per-corner carriers
+	# for the bleed itself and corner compression "sags under
+	# slide geometry while the true load factor stays 1.00" -
+	# the axle load is the honest grain here, and the max over
+	# the axles names the end that lets go first. The signal
+	# only speaks while the road holds the car (both axles
+	# meaningfully loaded, real speed): an unloading crest is
+	# the drumbeat's territory, not the tire song's.
+	var lgf15: float = 1.0
+	var lgr15: float = 1.0
+	if contact_transient_t <= 0.0:
+		lgf15 = clampf(pow(maxf(load_f, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
+		lgr15 = clampf(pow(maxf(load_r, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
+	if load_f > 0.05 and load_r > 0.05 and absf(vf) > 2.0:
+		var dem15: float = absf(vf * omega_target)
+		var rf15: float = dem15 / maxf(GRIP_LAT_ACCEL * grip_mult * lgf15, 0.01)
+		var rr15: float = dem15 / maxf(GRIP_LAT_ACCEL * grip_mult * lgr15, 0.01)
+		tire_ratio = maxf(rf15, rr15)
+		tire_ratio_axle = 0 if rf15 >= rr15 else 1
+	else:
+		tire_ratio = 0.0
+	tire_band = clampf((tire_ratio - TIRE_BAND_LO) / (TIRE_BAND_HI - TIRE_BAND_LO), 0.0, 1.0)
 	# Mild scrub: sliding sideways scrubs forward speed.
 	vf -= vf * 0.015 * absf(vl) * delta
 	# Fix Pass 9: the tire slip state is the REAL lateral velocity
@@ -5336,6 +5486,7 @@ func _update_suspension(delta: float) -> void:
 			var wfr: Dictionary = _frame_at(sup_s[wi])
 			var rise: float = (Vector3(wfr["pos"]) - pos_c).dot(up_c)
 			var over: float = absf(wlat) - HALF_WIDTH
+			sup_over[wi] = over # Fix Pass 15 (Item 1): the edge family's raw fact
 			if over > EDGE_CUTOFF:
 				sup_ok[wi] = false
 				sup_rise[wi] = rise - EDGE_CUTOFF * EDGE_SLOPE - 0.30
@@ -5412,6 +5563,30 @@ func _update_suspension(delta: float) -> void:
 		# it). Feeds the lateral bleed in _update_drive (one
 		# frame stale, like bounce_pending).
 		load_grip = clampf(pow(maxf((load_f + load_r) * 0.5, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
+		# Fix Pass 15 (Item 1): THE EDGE FAMILY's strengths, read
+		# straight off the support state this loop just computed -
+		# the original's contact layer (Crammond had no skid, but
+		# his surfaces were audible: an off-road rumble, a scrape
+		# on hard contact). A wheel fully past the cutoff is OFF
+		# (rumble, strength by how much of the car is off, and
+		# only while the car is actually moving); a wheel in the
+		# straddle band (on the shoulder, not off) with the car
+		# running along the rim GRINDS (scrape, strength by
+		# penetration and speed, sharpened by lateral slide).
+		# Both are zero by construction the frame the state says
+		# otherwise: fully-on wheels are silent, a fully-off
+		# wheel rumbles but never scrapes.
+		var off_n15: float = 0.0
+		var scr15: float = 0.0
+		for wi4: int in 4:
+			if not sup_ok[wi4]:
+				off_n15 += 1.0
+			elif sup_over[wi4] > 0.0:
+				scr15 = maxf(scr15, clampf(sup_over[wi4] / EDGE_CUTOFF, 0.0, 1.0)
+					* clampf(absf(speed) / 14.0, 0.0, 1.0)
+					* clampf(0.45 + absf(lat_vel) / 2.0, 0.0, 1.0))
+		edge_rumble_now = clampf(off_n15 * 0.5, 0.0, 1.0) * clampf(absf(speed) / 4.0, 0.0, 1.0)
+		edge_scrape_now = scr15
 		# The straddle wobble is now INSIDE the corner
 		# derivation: edge_roll comes from the corner attach
 		# heights (an unsupported side's corners droop, its
@@ -5501,6 +5676,8 @@ func _update_suspension(delta: float) -> void:
 		load_r = 1.0
 		air_load_frames = 0
 		edge_roll = lerpf(edge_roll, 0.0, clampf(EDGE_ROLL_LAG * delta, 0.0, 1.0))
+		edge_rumble_now = 0.0 # Fix Pass 15 (Item 1): no road contact, no edge voice
+		edge_scrape_now = 0.0
 		_susp_integrate(SUSP_REST, SUSP_REST, delta)
 	else:
 		# AIR / HANG: no road contact - springs extend to full droop
@@ -5511,6 +5688,8 @@ func _update_suspension(delta: float) -> void:
 		load_r = 1.0
 		air_load_frames = 0
 		edge_roll = lerpf(edge_roll, 0.0, clampf(EDGE_ROLL_LAG * delta, 0.0, 1.0))
+		edge_rumble_now = 0.0 # Fix Pass 15 (Item 1): airborne/hanging - the edge family is silent
+		edge_scrape_now = 0.0
 		_susp_integrate(0.0, 0.0, delta)
 
 
@@ -5680,6 +5859,27 @@ func _build_audio() -> void:
 	skid_player.stream = _make_skid_stream()
 	skid_player.volume_db = -60.0
 	add_child(skid_player)
+	# Fix Pass 15 (Item 1): the telegraph's three voices - the
+	# tire SONG (pre-limit band), the off-road RUMBLE and the
+	# edge SCRAPE. Same discipline as the first two players:
+	# synthesized loops, started only in a live race, stopped
+	# (not faded) by the teardown latch, gains cut by the
+	# stall watchdog.
+	song_player = AudioStreamPlayer.new()
+	song_player.name = "TireSongAudio"
+	song_player.stream = _make_song_stream()
+	song_player.volume_db = -60.0
+	add_child(song_player)
+	rumble_player = AudioStreamPlayer.new()
+	rumble_player.name = "OffroadRumbleAudio"
+	rumble_player.stream = _make_rumble_stream()
+	rumble_player.volume_db = -60.0
+	add_child(rumble_player)
+	scrape_player = AudioStreamPlayer.new()
+	scrape_player.name = "EdgeScrapeAudio"
+	scrape_player.stream = _make_scrape_stream()
+	scrape_player.volume_db = -60.0
+	add_child(scrape_player)
 
 
 func _make_engine_stream() -> AudioStreamWAV:
@@ -5747,16 +5947,129 @@ func _make_skid_stream() -> AudioStreamWAV:
 	return stream
 
 
+func _make_song_stream() -> AudioStreamWAV:
+	# Fix Pass 15 (Item 1): the tire song - 1 s at 22050 Hz
+	# holding exactly 110 cycles of a 110 Hz fundamental with
+	# a harmonic stack that thins upward (a tire's hum has a
+	# clear tone where the skid's hiss has none). pitch_scale
+	# carries the strain: as the band fraction climbs the
+	# whole stack rises, the way a real tire's note climbs
+	# toward the squeal. The skid stream stays the noise; this
+	# one is deliberately its tonal opposite.
+	var rate: int = 22050
+	var frames: int = rate
+	var data := PackedByteArray()
+	data.resize(frames * 2)
+	for i: int in frames:
+		var ph: float = TAU * 110.0 * float(i) / float(rate)
+		var v: float = sin(ph) + 0.52 * sin(ph * 2.0) + 0.26 * sin(ph * 3.0) \
+			+ 0.12 * sin(ph * 5.0)
+		v = clampf(v * 0.40, -0.85, 0.85)
+		var s16: int = int(round(v * 32767.0))
+		if s16 < 0:
+			s16 += 65536
+		data[i * 2] = s16 & 0xFF
+		data[i * 2 + 1] = (s16 >> 8) & 0xFF
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = rate
+	stream.data = data
+	stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	stream.loop_begin = 0
+	stream.loop_end = frames
+	return stream
+
+
+func _make_rumble_stream() -> AudioStreamWAV:
+	# Fix Pass 15 (Item 1): the off-road rumble - the skid's
+	# noise pushed through a much harder one-pole low-pass
+	# (0.35 -> 0.06) until only the bottom is left: dirt and
+	# stone under the tires, felt as much as heard. Same loop
+	# seam treatment as the skid (tail crossfaded into head).
+	var rate: int = 22050
+	var frames: int = rate
+	var raw: Array[float] = []
+	raw.resize(frames)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	var lp: float = 0.0
+	for i: int in frames:
+		var wht: float = rng.randf_range(-1.0, 1.0)
+		lp = lerpf(lp, wht, 0.06)
+		raw[i] = lp * 3.2
+	var fade: int = 660
+	for i2: int in fade:
+		var t: float = float(i2) / float(fade)
+		raw[frames - fade + i2] = lerpf(raw[frames - fade + i2], raw[i2], t)
+	var data := PackedByteArray()
+	data.resize(frames * 2)
+	for j: int in frames:
+		var s16b: int = int(round(clampf(raw[j], -0.8, 0.8) * 32767.0))
+		if s16b < 0:
+			s16b += 65536
+		data[j * 2] = s16b & 0xFF
+		data[j * 2 + 1] = (s16b >> 8) & 0xFF
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = rate
+	stream.data = data
+	stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	stream.loop_begin = 0
+	stream.loop_end = frames
+	return stream
+
+
+func _make_scrape_stream() -> AudioStreamWAV:
+	# Fix Pass 15 (Item 1): the edge scrape - high-passed
+	# noise (the skid's hiss with the body removed) plus two
+	# exact-cycle metallic partials (523 and 1046 Hz, integer
+	# cycles in the 1 s loop so the seam is silent): metal
+	# and stone grinding along the rim. Distinct from the
+	# rumble (all bottom) and the song (all tone) by
+	# construction.
+	var rate: int = 22050
+	var frames: int = rate
+	var raw: Array[float] = []
+	raw.resize(frames)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 9182
+	var lp: float = 0.0
+	for i: int in frames:
+		var wht: float = rng.randf_range(-1.0, 1.0)
+		lp = lerpf(lp, wht, 0.30)
+		var ph: float = TAU * float(i) / float(rate)
+		raw[i] = (wht - lp) * 0.9 + 0.13 * sin(ph * 523.0) + 0.08 * sin(ph * 1046.0)
+	var fade: int = 660
+	for i2: int in fade:
+		var t: float = float(i2) / float(fade)
+		raw[frames - fade + i2] = lerpf(raw[frames - fade + i2], raw[i2], t)
+	var data := PackedByteArray()
+	data.resize(frames * 2)
+	for j: int in frames:
+		var s16b: int = int(round(clampf(raw[j], -0.8, 0.8) * 32767.0))
+		if s16b < 0:
+			s16b += 65536
+		data[j * 2] = s16b & 0xFF
+		data[j * 2 + 1] = (s16b >> 8) & 0xFF
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = rate
+	stream.data = data
+	stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	stream.loop_begin = 0
+	stream.loop_end = frames
+	return stream
+
+
 func _set_audio_latched(on: bool) -> void:
 	# The single door for the teardown latch (called from
-	# _notification and the smoke). Latching STOPS both players -
+	# _notification and the smoke). Latching STOPS all players -
 	# not just gains down - so nothing can sound while latched.
 	audio_latched = on
 	if on:
-		if engine_player != null and engine_player.playing:
-			engine_player.stop()
-		if skid_player != null and skid_player.playing:
-			skid_player.stop()
+		for pl: AudioStreamPlayer in [engine_player, skid_player, song_player, rumble_player, scrape_player]:
+			if pl != null and pl.playing:
+				pl.stop()
 
 
 func _update_audio(delta: float) -> void:
@@ -5768,15 +6081,16 @@ func _update_audio(delta: float) -> void:
 		return
 	var running: bool = race_started and not audio_latched
 	if not running:
-		if engine_player.playing:
-			engine_player.stop()
-		if skid_player.playing:
-			skid_player.stop()
+		for pl2: AudioStreamPlayer in [engine_player, skid_player, song_player, rumble_player, scrape_player]:
+			if pl2 != null and pl2.playing:
+				pl2.stop()
+		audio_song_now = 0.0 # Fix Pass 15 (Item 1): the smoothed drives die with the race
+		audio_rumble_now = 0.0
+		audio_scrape_now = 0.0
 		return
-	if not engine_player.playing:
-		engine_player.play()
-	if not skid_player.playing:
-		skid_player.play()
+	for pl3: AudioStreamPlayer in [engine_player, skid_player, song_player, rumble_player, scrape_player]:
+		if pl3 != null and not pl3.playing:
+			pl3.play()
 	# Engine: the rev target follows speed first; throttle flares
 	# it, boost lifts it further, and AIRBORNE unloads it - with
 	# the throttle open the revs climb free of the road.
@@ -5804,6 +6118,42 @@ func _update_audio(delta: float) -> void:
 		skid_player.volume_db = -60.0
 	else:
 		skid_player.volume_db = lerpf(AUDIO_SKID_FLOOR_DB, AUDIO_SKID_MAX_DB, audio_skid_now)
+	# Fix Pass 15 (Item 1): the SONG - the band fraction,
+	# smoothed a touch slower than the skid (the warning should
+	# feel like strain building, not a switch). Gain rides the
+	# band edges; pitch climbs 0.85 -> 1.75 across the band, so
+	# the note itself leans toward the squeal it precedes. The
+	# post-limit skid above is untouched: below its own onset
+	# the song owns the tire voice, past it the two overlap for
+	# the stretch where the tires sing AND slip at once.
+	var song_k: float = 10.0 if tire_band > audio_song_now else 7.0
+	audio_song_now = lerpf(audio_song_now, tire_band, clampf(delta * song_k, 0.0, 1.0))
+	if audio_song_now < 0.01:
+		song_player.volume_db = -60.0
+	else:
+		song_player.volume_db = lerpf(AUDIO_SONG_FLOOR_DB, AUDIO_SONG_MAX_DB, audio_song_now)
+	song_player.pitch_scale = 0.85 + 0.90 * audio_song_now
+	# The RUMBLE: strength straight from the support state;
+	# pitch wanders slowly (the original's randomised-pitch
+	# rumble) on a half-second hash cadence, independent of
+	# everything else in the car.
+	var rum_k: float = 12.0 if edge_rumble_now > audio_rumble_now else 8.0
+	audio_rumble_now = lerpf(audio_rumble_now, edge_rumble_now, clampf(delta * rum_k, 0.0, 1.0))
+	if audio_rumble_now < 0.01:
+		rumble_player.volume_db = -60.0
+	else:
+		rumble_player.volume_db = lerpf(-34.0, AUDIO_RUMBLE_MAX_DB, audio_rumble_now)
+	var hw15: float = sin(float(int(race_time * 2.0)) * 12.9898) * 43758.5453
+	rumble_player.pitch_scale = 0.72 + 0.30 * (hw15 - floor(hw15))
+	# The SCRAPE: same smoothing family; its pitch rises with
+	# the grind's strength (deeper penetration, harder grind).
+	var scr_k: float = 14.0 if edge_scrape_now > audio_scrape_now else 10.0
+	audio_scrape_now = lerpf(audio_scrape_now, edge_scrape_now, clampf(delta * scr_k, 0.0, 1.0))
+	if audio_scrape_now < 0.01:
+		scrape_player.volume_db = -60.0
+	else:
+		scrape_player.volume_db = lerpf(-32.0, AUDIO_SCRAPE_MAX_DB, audio_scrape_now)
+	scrape_player.pitch_scale = 0.90 + 0.35 * audio_scrape_now
 
 
 func audio_engine_pitch() -> float:
@@ -5814,6 +6164,63 @@ func audio_engine_pitch() -> float:
 func audio_skid_gain() -> float:
 	# Test accessor: the skid's current gain, 0..1 of full slip.
 	return audio_skid_now
+
+
+func audio_song_gain() -> float:
+	# Fix Pass 15 (Item 1) test accessor: the tire song's gain
+	# (the smoothed band fraction), 0..1.
+	return audio_song_now
+
+
+func audio_rumble_gain() -> float:
+	# Fix Pass 15 (Item 1) test accessor: the off-road rumble's
+	# smoothed gain, 0..1.
+	return audio_rumble_now
+
+
+func audio_scrape_gain() -> float:
+	# Fix Pass 15 (Item 1) test accessor: the edge scrape's
+	# smoothed gain, 0..1.
+	return audio_scrape_now
+
+
+func telegraph_rumble_now() -> float:
+	# Fix Pass 15 (Item 1) test accessor: the controller
+	# rumble's current strength, 0..1.
+	return rumble_haptic_now
+
+
+func _update_telegraph(_delta: float) -> void:
+	# Fix Pass 15 (Item 1): the non-audio voices of the one
+	# signal. DUST: each wheel's emitter speaks for its axle -
+	# the end nearer its limit sheds dust at its contact
+	# patches, from the band's lower edge, thickening toward
+	# breakaway (amount_ratio IS the band fraction). Cost,
+	# stated: 4 GPUParticles3D x 18 particles of 6x3-segment
+	# spheres - 72 particles worst case, a rounding error next
+	# to the ribbon; the emitters exist from build and idle at
+	# emitting=false. RUMBLE: the controller buzz joins only in
+	# the final stretch (ratio past TIRE_HAPTIC_EDGE), light
+	# (0.30 amplitude at full stretch) and scaling; it is
+	# derived from the same ratio in the same frame, and the
+	# ratio is 0 on a centred straight by construction, so it
+	# cannot fire there.
+	for wi: int in dust_emitters.size():
+		var em: GPUParticles3D = dust_emitters[wi]
+		var axle_w: int = wheel_axle[wi]
+		var amt: float = 0.0
+		if mode == MODE_DRIVE and tire_band > 0.0:
+			if tire_ratio_axle < 0 or tire_ratio_axle == axle_w:
+				amt = tire_band
+		em.emitting = amt > 0.02
+		em.amount_ratio = amt
+	rumble_haptic_now = 0.0
+	if mode == MODE_DRIVE:
+		rumble_haptic_now = clampf((tire_ratio - TIRE_HAPTIC_EDGE) / (1.0 - TIRE_HAPTIC_EDGE), 0.0, 1.0)
+	if xr_ok and xr_iface != null and rumble_haptic_now > 0.0:
+		for trk15: StringName in [&"left_hand", &"right_hand"]:
+			xr_iface.trigger_haptic_pulse(&"haptic", trk15, 0.0,
+				0.08 + 0.22 * rumble_haptic_now, 0.09, 0.0)
 
 
 func _update_drone_visual(_delta: float) -> void:

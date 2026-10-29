@@ -4200,6 +4200,217 @@ func _run() -> void:
 	check(float(fd42) / 90.0 >= 0.30 and float(fd42) / 90.0 <= 0.50,
 		"stage42: the short drop stays short (%.2f s in the film's 0.3-0.5 s band)" % (float(fd42) / 90.0))
 
+	# ---------- stage 43: Fix Pass 15 (Item 1) - THE TELEGRAPHED LIMIT ----
+	# One signal (demand-vs-capacity per axle, computed in
+	# _update_drive), several honest voices. (a) Negative
+	# control: a centred straight must be silent on every
+	# channel. (b) The sweeper: a throttle-held 16 m/s run
+	# LIVES in the band without breaking away; a full-throttle
+	# progressive entry opens the band measurably BEFORE
+	# slip_state first rises - the lead is the item, printed
+	# in seconds and metres. (c) The edge family on the home
+	# straight (stage 13's lane law): a straddle ride grinds
+	# (scrape) without rumbling; a wheel fully off rumbles
+	# without scraping. (d) The teardown latch stops all five
+	# audio players.
+	# (a) negative control
+	main._set_track("ribbon")
+	main.test_brake = 0.0 # the speed-managed autopilot stages leave brake behind (see stage 25's note)
+	main.test_throttle = 0.0
+	main.debug_warp_to_s(main.track_len - 190.0)
+	for ia43: int in 90:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(20.0)
+		await physics_frame
+	var neg_ratio43: float = 0.0
+	var neg_dust43: float = 0.0
+	for ib43: int in 240:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(20.0)
+		await physics_frame
+		neg_ratio43 = maxf(neg_ratio43, main.tire_ratio)
+		for em43: GPUParticles3D in main.dust_emitters:
+			neg_dust43 = maxf(neg_dust43, em43.amount_ratio)
+	check(neg_ratio43 < 0.35,
+		"stage43: a centred straight at 20 m/s stays out of the band (peak ratio %.2f, band opens at %.2f)" % [neg_ratio43, main.TIRE_BAND_LO])
+	check(main.audio_song_gain() < 0.02 and main.telegraph_rumble_now() == 0.0
+		and main.edge_rumble_now == 0.0 and main.edge_scrape_now == 0.0 and neg_dust43 == 0.0,
+		"stage43: negative control - no song, no rumble, no scrape, no haptic, no dust on a clean straight")
+	# (b) the sweeper: living in the band at a held 16
+	main.debug_warp_to_s(main.sweeper_s0 - 150.0)
+	for ic43: int in 50:
+		main.debug_pin_speed(16.0)
+		_autopilot_drive(0.0, false)
+		await physics_frame
+	var band_frames43: int = 0
+	var slip_peak43: float = 0.0
+	var ratio_peak43: float = 0.0
+	var f43: int = 0
+	while f43 < 1500:
+		_autopilot_drive(0.0, false)
+		main.test_throttle = 0.9 if main.speed < 16.0 else 0.0
+		await physics_frame
+		f43 += 1
+		if main.tire_band > 0.0:
+			band_frames43 += 1
+		slip_peak43 = maxf(slip_peak43, main.slip_state)
+		ratio_peak43 = maxf(ratio_peak43, main.tire_ratio)
+		if main.car_s > main.sweeper_s1 + 30.0:
+			break
+	main.test_throttle = 0.0
+	print("stage43: sweeper held-16 run: band frames %d, ratio peak %.2f, slip peak %.2f, end mode %d" % [
+		band_frames43, ratio_peak43, slip_peak43, main.mode])
+	check(band_frames43 >= 60,
+		"stage43: honest cornering LIVES in the band (%d frames at a held 16 m/s)" % band_frames43)
+	check(slip_peak43 <= 0.35 and main.mode == main.MODE_DRIVE,
+		"stage43: living in the band is not breaking away (slip peak %.2f, still driving)" % slip_peak43)
+	# (b2) progressive entry: the band must open before the
+	# slide exists. Calibrated by probe (the first staging -
+	# full throttle from a short approach - arrived at 28+
+	# m/s and left the road before either signal could be
+	# read): pin 13 down the approach, then a 0.45 throttle
+	# step 60 m out, so entry speed builds through the band
+	# (~22 m/s at the arc) and saturation follows it.
+	main.debug_warp_to_s(main.sweeper_s0 - 170.0)
+	var pre43: int = 0
+	while main.car_s < main.sweeper_s0 - 60.0 and pre43 < 2000:
+		main.debug_pin_speed(13.0)
+		_autopilot_drive(0.0, false)
+		await physics_frame
+		pre43 += 1
+	main.test_throttle = 0.45
+	var band_f43: int = -1
+	var slip_f43: int = -1
+	var slip_run43: int = 0
+	var lead_m43: float = 0.0
+	var song_peak43: float = 0.0
+	var hap_peak43: float = 0.0
+	var dust_peak43: float = 0.0
+	var g43: int = 0
+	while g43 < 1600:
+		_autopilot_drive(0.0, false)
+		await physics_frame
+		g43 += 1
+		song_peak43 = maxf(song_peak43, main.audio_song_gain())
+		hap_peak43 = maxf(hap_peak43, main.telegraph_rumble_now())
+		for em43b: GPUParticles3D in main.dust_emitters:
+			dust_peak43 = maxf(dust_peak43, em43b.amount_ratio)
+		if band_f43 < 0 and main.tire_band > 0.0:
+			band_f43 = g43
+		if band_f43 >= 0 and slip_f43 < 0:
+			lead_m43 += main.speed / 90.0
+		if main.slip_state > 0.05:
+			slip_run43 += 1
+			if slip_run43 >= 3 and slip_f43 < 0:
+				slip_f43 = g43
+		else:
+			slip_run43 = 0
+		if slip_f43 >= 0 and g43 > slip_f43 + 30:
+			break
+		if main.mode != main.MODE_DRIVE:
+			break
+	main.test_throttle = 0.0
+	print("stage43: progressive entry: band frame %d, slip frame %d, lead %.2f s / %.1f m; song peak %.2f, haptic peak %.2f, dust peak %.2f" % [
+		band_f43, slip_f43, float(maxi(slip_f43 - band_f43, 0)) / 90.0, lead_m43,
+		song_peak43, hap_peak43, dust_peak43])
+	check(band_f43 >= 0 and slip_f43 > band_f43,
+		"stage43: the band opens BEFORE the slide exists (band frame %d, slip frame %d)" % [band_f43, slip_f43])
+	check(float(maxi(slip_f43 - band_f43, 0)) / 90.0 >= 0.20 and lead_m43 >= 3.0,
+		"stage43: the warning lead is material (%.2f s / %.1f m at the sweeper's entry)" % [
+			float(maxi(slip_f43 - band_f43, 0)) / 90.0, lead_m43])
+	check(song_peak43 >= 0.25,
+		"stage43: the tire SINGS in the band (song gain peak %.2f)" % song_peak43)
+	check(hap_peak43 > 0.0,
+		"stage43: the controller rumble joins in the final stretch (peak %.2f)" % hap_peak43)
+	check(dust_peak43 >= 0.30,
+		"stage43: the loaded contact patches shed dust in the band (peak amount_ratio %.2f)" % dust_peak43)
+	# (c) the edge family, stage 13's lane law - staged on
+	# the CIRCUIT's home straight (350+ m): the ribbon's
+	# 190 m tail is too short for two measured rides (the
+	# first staging ran off the end mid-ride). Speed PINNED
+	# at 14. The law converges slowly (an 8-degree approach
+	# across ~6 m of lateral takes ~3 s) and its held offset
+	# wanders with the shoulder's geometry, so each ride is
+	# staged in two phases: hold the raw target until the
+	# lateral settles and MEASURE it, then shift the target
+	# by the error and hold at the WANTED lateral - the
+	# geometry asserted is the car's own, not the law's aim.
+	# Straddle: centreline at 6.10, off-side wheels in the
+	# shoulder band (over ~0.9). Deep: centreline at 6.85,
+	# off-side wheels fully past the cutoff (over ~1.6),
+	# centre ~1.1 m inside the fall line.
+	main._set_track("circuit")
+	main.debug_warp_to_s(40.0)
+	main.test_throttle = 0.0
+	for ie43: int in 120:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(14.0)
+		await physics_frame
+	var ride43 = func(target_lat: float, wanted_lat: float) -> Array:
+		for i1: int in 340:
+			autopilot_steer(target_lat)
+			main.debug_pin_speed(14.0)
+			await physics_frame
+		var held1: float = 0.0
+		for i2: int in 80:
+			autopilot_steer(target_lat)
+			main.debug_pin_speed(14.0)
+			await physics_frame
+			held1 += main.car_lat
+		held1 /= 80.0
+		var tgt2: float = target_lat + (wanted_lat - held1)
+		var pk_scr: float = 0.0
+		var pk_ascr: float = 0.0
+		var pk_rum: float = 0.0
+		var pk_arum: float = 0.0
+		var held2: float = 0.0
+		for i3: int in 300:
+			autopilot_steer(tgt2)
+			main.debug_pin_speed(14.0)
+			await physics_frame
+			if i3 >= 220:
+				held2 += main.car_lat
+				pk_scr = maxf(pk_scr, main.edge_scrape_now)
+				pk_ascr = maxf(pk_ascr, main.audio_scrape_gain())
+				pk_rum = maxf(pk_rum, main.edge_rumble_now)
+				pk_arum = maxf(pk_arum, main.audio_rumble_gain())
+		held2 /= 80.0
+		return [held2, pk_scr, pk_ascr, pk_rum, pk_arum]
+	var str43: Array = await ride43.call(main.HALF_WIDTH - 0.10, 6.10)
+	var scr_hold43: float = float(str43[1])
+	var ascr_hold43: float = float(str43[2])
+	var rum_in_scr43: float = float(str43[3])
+	print("stage43: straddle ride: held lat %.2f at %.1f m/s - scrape %.2f (audio %.2f), rumble %.2f" % [
+		float(str43[0]), main.speed, scr_hold43, ascr_hold43, rum_in_scr43])
+	check(scr_hold43 >= 0.25 and ascr_hold43 >= 0.15,
+		"stage43: running along the rim GRINDS (scrape %.2f, audio %.2f)" % [scr_hold43, ascr_hold43])
+	check(rum_in_scr43 == 0.0,
+		"stage43: a straddling wheel is not OFF - no rumble on the shoulder (%.2f)" % rum_in_scr43)
+	var deep43: Array = await ride43.call(main.HALF_WIDTH + 0.90, 6.85)
+	var rum_hold43: float = float(deep43[3])
+	var arum_hold43: float = float(deep43[4])
+	var scr_in_rum43: float = float(deep43[1])
+	print("stage43: off-wheel ride: held lat %.2f at %.1f m/s - rumble %.2f (audio %.2f), scrape %.2f" % [
+		float(deep43[0]), main.speed, rum_hold43, arum_hold43, scr_in_rum43])
+	check(rum_hold43 >= 0.40 and arum_hold43 >= 0.25,
+		"stage43: wheels fully off the ribbon RUMBLE (%.2f, audio %.2f)" % [rum_hold43, arum_hold43])
+	check(rum_hold43 > scr_hold43 and scr_in_rum43 < scr_hold43,
+		"stage43: the voice balance flips with the state - rumble %.2f takes over, scrape falls to %.2f (was %.2f)" % [
+			rum_hold43, scr_in_rum43, scr_hold43])
+	for ii43: int in 120:
+		autopilot_steer(0.0)
+		await physics_frame
+	main.test_throttle = 0.0
+	# (d) the latch stops every voice
+	check(main.engine_player.playing or main.skid_player.playing,
+		"stage43: audio is live before the latch (setup sanity)")
+	main._set_audio_latched(true)
+	check(not main.engine_player.playing and not main.skid_player.playing
+		and not main.song_player.playing and not main.rumble_player.playing
+		and not main.scrape_player.playing,
+		"stage43: the teardown latch stops all five players")
+	main._set_audio_latched(false)
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
