@@ -3761,6 +3761,116 @@ func _run() -> void:
 	main.wheel_angle = 0.0
 	main.test_throttle = 0.0
 
+	# ---------- stage 38: Fix Pass 14 (Item 4) - THE DRUMBEAT CENSUS ----
+	# The brief asked for the film's 0.1-0.4 s drumbeat at a
+	# pinned 48 m/s, fixing the mechanism if it was absent.
+	# The census says the mechanism (load separation) is
+	# honest and the GEOMETRY forbids the band: the hump
+	# row's vertical curvature peaks at kv 0.021/m with
+	# +-15 deg slopes, so separation (v^2.kv crossing g on
+	# the hump's face, where the slope is already near its
+	# peak) launches at vy0 = v.sin(phi_sep) ~ 5-11 m/s at
+	# any speed where the row separates at all. Measured:
+	# @48 flights 1.67 s and 2.16 s; @32 five flights of
+	# 1.19-1.29 s (vy0 ~5.0); @20 the load never reaches
+	# the threshold (min load 0.14) - the row steps from
+	# no air straight to jumps, skipping the band at every
+	# speed. A 0.1-0.4 s hop at 48 needs vy0 <= 2 m/s,
+	# i.e. slopes <= ~2.4 deg at separation - humps some
+	# 6x gentler (kv ~ 0.006). That is a track re-profile,
+	# not a tune number, and no hops are scripted. This
+	# stage locks the measured behaviour so a future
+	# re-profile trips it deliberately.
+	var flights38: Array = []
+	main.debug_warp_to_s(380.0)
+	main.test_throttle = 0.0
+	main.wheel_angle = 0.0
+	var inflight38: bool = false
+	var fstart38: int = 0
+	var vy38: float = 0.0
+	for i38: int in 1600:
+		main.wheel_angle = 0.0
+		main.debug_pin_speed(48.0)
+		await physics_frame
+		if main.car_s > 640.0:
+			break
+		if main.mode == main.MODE_AIR and not inflight38:
+			inflight38 = true
+			fstart38 = i38
+			vy38 = main.air_vel.y
+		elif main.mode != main.MODE_AIR and inflight38:
+			inflight38 = false
+			flights38.append([float(i38 - fstart38) / 90.0, vy38])
+	var real38: Array = []
+	for fl38: Array in flights38:
+		if float(fl38[0]) >= 0.25:
+			real38.append(fl38)
+	var inband38: int = 0
+	var alljump38: bool = true
+	for fl38b: Array in real38:
+		if float(fl38b[0]) >= 0.1 and float(fl38b[0]) <= 0.4:
+			inband38 += 1
+		if float(fl38b[0]) <= 0.4:
+			alljump38 = false
+	print("stage38: hump row @48 - flights %s (durations s / vy0 m/s); in the 0.1-0.4 s drumbeat band: %d" % [str(real38), inband38])
+	check(real38.size() >= 2 and alljump38 and inband38 == 0,
+		"stage38: at 48 the hump row JUMPS (every flight > 0.4 s, none in the drumbeat band - kv 0.021 geometry, see stage comment)")
+	flights38.clear()
+	main.debug_warp_to_s(380.0)
+	main.wheel_angle = 0.0
+	inflight38 = false
+	for i38b: int in 2400:
+		main.wheel_angle = 0.0
+		main.debug_pin_speed(20.0)
+		await physics_frame
+		if main.car_s > 640.0:
+			break
+		if main.mode == main.MODE_AIR and not inflight38:
+			inflight38 = true
+			fstart38 = i38b
+		elif main.mode != main.MODE_AIR and inflight38:
+			inflight38 = false
+			flights38.append(float(i38b - fstart38) / 90.0)
+	var real38b: int = 0
+	for d38: float in flights38:
+		if d38 >= 0.25:
+			real38b += 1
+	check(real38b == 0,
+		"stage38: at 20 m/s the row never separates (min load 0.14 > threshold) - the band is skipped from below too (%d flights)" % real38b)
+	# The sweeper exit: per-corner load traces at the exit
+	# crest. The front axle lets go ~20 frames before the
+	# rear (the wheelbase phase), but LEFT and RIGHT go
+	# together: the crest load is a per-axle scalar from
+	# the centreline kv - the ribbon frame carries no
+	# per-side vertical curvature, so the film's downhill-
+	# side-first unload is NOT EXPRESSIBLE in this model
+	# (the identified extension is per-wheel kv sampled at
+	# each wheel's own (s, lat)). The stage locks the
+	# symmetry as the documented limit.
+	main.debug_warp_to_s(main.sweeper_s0 - 30.0)
+	main.test_throttle = 0.0
+	var first38: Array = [-1, -1, -1, -1]
+	for i38c: int in 1500:
+		autopilot()
+		main.debug_pin_speed(30.0)
+		await physics_frame
+		if main.car_s < main.sweeper_s0 - 20.0:
+			continue
+		for w38: int in 4:
+			var lw38: float = clampf(main.susp_c[w38] / main.SUSP_REST, 0.0, 1.5) if main.sup_ok[w38] else 0.0
+			if first38[w38] < 0 and lw38 < 0.35:
+				first38[w38] = i38c
+		if main.car_s > main.sweeper_s0 + 130.0:
+			break
+	print("stage38: sweeper exit - first unload (load < 0.35) frames FL %d FR %d RL %d RR %d" % [
+		int(first38[0]), int(first38[1]), int(first38[2]), int(first38[3])])
+	check(first38[0] > 0 and abs(int(first38[1]) - int(first38[0])) <= 3 and abs(int(first38[3]) - int(first38[2])) <= 3,
+		"stage38: the exit unload is left/right symmetric in this model (documented limit - per-axle load channel)")
+	check(int(first38[2]) > int(first38[0]) and int(first38[3]) > int(first38[1]),
+		"stage38: the front axle unloads before the rear at the exit crest (wheelbase phase)")
+	main.wheel_angle = 0.0
+	main.test_throttle = 0.0
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
