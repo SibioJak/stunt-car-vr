@@ -150,6 +150,39 @@ const YAW_TAU: float = 0.16 # s, yaw-rate lag (inertia)
 # (~18 m/s, ~6 m/s^2 of tire work) the car runs clean.
 const GRIP_BITE_RATE: float = 7.0 # 1/s, proportional lateral bleed
 const GRIP_LAT_ACCEL: float = 11.0 # m/s^2, lateral grip limit (~1.1 g)
+# Fix Pass 14 (Item 5): grip follows LOAD. The bleed above ran
+# at full strength whenever the car was in DRIVE - including
+# across a crest at the moment the road had unloaded the
+# car - so a slide started on a crest was killed at full-grip
+# rate while the car was still light (the FP9-era crest flick
+# measured its slide dead at the landing). The bleed rate
+# and cap now scale by load_grip: the car's mean road
+# load - the two axles' load factors (the v^2.kv channel
+# that also decides separation) averaged - raised to
+# GRIP_LOAD_EXP and clamped to [GRIP_LOAD_MIN,
+# GRIP_LOAD_MAX]. The power is tire load sensitivity:
+# real grip grows sublinearly with load, so the factor
+# holds ~1.0 near full load and falls away as the road
+# truly unloads the car. It needs the help: the "flat"
+# home straight is a shallow crest (kv 0.006 - at 20 m/s
+# its load is already 0.75), and a LINEAR factor moved
+# the flat flick from 28 / 59 to 34 / 79 on that alone;
+# exponent 0.5 read 31 / 69, 0.35 reads 30 / 66 (the
+# tuning record is in the FP14 README section). Per-wheel
+# load variation enters through the axles' independent
+# channels (the front unloads ~20 frames before the rear
+# at a crest - stage 38); full per-wheel kv is the
+# extension Item 4 recorded.
+# (One carrier was tried and rejected on measurements,
+# in the FP14 README section: corner COMPRESSION - it
+# sags under slide geometry and pitch transfer while the
+# true load factor stays 1.00, moving the flat flick to
+# 36 / 87. A wheel off the edge is the straddle/fall
+# system's story, not the bleed's, so support does not
+# weight the factor either.)
+const GRIP_LOAD_MIN: float = 0.15
+const GRIP_LOAD_MAX: float = 1.15
+const GRIP_LOAD_EXP: float = 0.35
 # Fix Pass 9 (Item 2, scope addition) - the edge-straddle save.
 # Chris recalls the original's tires running off the ribbon
 # edge: "they'd really wobble but you could save it and get
@@ -592,6 +625,7 @@ var jitter_on: bool = true # Fix Pass 7 (Item 2): jitter experiment toggle, defa
 var lean_neutral_x: float = 0.0
 var lean_value: float = 0.0
 var grip_mult: float = 1.0
+var load_grip: float = 1.0 # FP14 (Item 5): mean road-load factor on the bleed (see GRIP_LOAD_MIN)
 var test_lean: float = -99.0 # smoke/render override; -99 = off
 
 # inputs (merged XR + desktop + test overrides)
@@ -4342,8 +4376,18 @@ func _update_drive(delta: float) -> void:
 	var side_align: float = Vector3(fr["side"]).dot(r1)
 	vl += -GRAV * sin(float(fr["bank"])) * side_align * delta
 	grip_mult = _grip_for(yaw_rate / maxf(absf(vf), 2.0))
-	var bleed: float = clampf(-GRIP_BITE_RATE * vl * grip_mult,
-		-GRIP_LAT_ACCEL * grip_mult, GRIP_LAT_ACCEL * grip_mult)
+	# Fix Pass 14 (Item 5): the bleed scales by the load the
+	# corners carry (load_grip, from _update_suspension). A
+	# slide across an unloading crest keeps most of its
+	# lateral velocity until the car is weighted again -
+	# the fight the film shows. During the FP13 contact
+	# transient the factor is NOT applied: the transient's
+	# own ramp already owns the load story there, and the
+	# corners read deep at a touchdown (factor > 1), which
+	# would double-count.
+	var lg5: float = load_grip if contact_transient_t <= 0.0 else 1.0
+	var bleed: float = clampf(-GRIP_BITE_RATE * vl * grip_mult * lg5,
+		-GRIP_LAT_ACCEL * grip_mult * lg5, GRIP_LAT_ACCEL * grip_mult * lg5)
 	# Fix Pass 13 (Item 1): during the contact transient the
 	# bleed itself is load-limited - a tire still taking the
 	# car's weight cannot bite at full rate yet (the same ramp
@@ -5263,6 +5307,12 @@ func _update_suspension(delta: float) -> void:
 		for wi3: int in 4:
 			susp_geom[wi3] = sup_rise[wi3] + (jit_f if wi3 < 2 else jit_r)
 		_susp_integrate_corners(tw, delta)
+		# Fix Pass 14 (Item 5): the load the tires actually
+		# carry this frame - the mean axle road load raised
+		# to GRIP_LOAD_EXP (a crest at full unload floors
+		# it). Feeds the lateral bleed in _update_drive (one
+		# frame stale, like bounce_pending).
+		load_grip = clampf(pow(maxf((load_f + load_r) * 0.5, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
 		# The straddle wobble is now INSIDE the corner
 		# derivation: edge_roll comes from the corner attach
 		# heights (an unsupported side's corners droop, its

@@ -3871,6 +3871,94 @@ func _run() -> void:
 	main.wheel_angle = 0.0
 	main.test_throttle = 0.0
 
+	# ---------- stage 39: Fix Pass 14 (Item 5) - GRIP FOLLOWS LOAD ----
+	# The lateral bleed (the slide's self-healing) now scales
+	# with the crest load factor: bleed rate and cap x
+	# load_grip (Item 5). On the flat at full load the flick
+	# bleeds out in the stage-12b family of counts; over the
+	# hump row the factor falls (min 0.15 in the harness
+	# protocol) and the same flick's slide PERSISTS - the
+	# brief's crest behaviour. Flat control arm first (start
+	# straight, kv ~ 0, factor ~ 1), then the crest arm.
+	main._set_track("ribbon")
+	main.jitter_on = true # the shipped default - stage 19 turned it off for the seam census and nothing turns it back
+	main.debug_warp_to_s(15.0)
+	main.test_throttle = 0.0
+	for f39: int in 200:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(24.0)
+		await physics_frame
+	for i39: int in 36:
+		main.wheel_angle = 0.9 * PI
+		await physics_frame
+	var flat_vl39: float = main.lat_vel
+	main.wheel_angle = 0.0
+	var flat_rec39: int = 0
+	var calm39: int = 0
+	while flat_rec39 < 900 and calm39 < 5:
+		await physics_frame
+		flat_rec39 += 1
+		if absf(main.lat_vel) < 0.3:
+			calm39 += 1
+		else:
+			calm39 = 0
+	# Crest arm. Staging notes (both found the hard way):
+	# the approach starts 60 m back on the descent - from
+	# ext_s0 + 2 the previous stage's entry transients were
+	# still alive at the trigger hump; and the flick fires
+	# on the FIRST load dip, not a committed one: staged
+	# from the suite's history the car stays grounded
+	# through the flick (the flick's own scrub and the
+	# hump-face slope gravity pull the speed ~0.5 m/s under
+	# the separation line mid-flick - traced: both axle
+	# loads hover at 0.07, never under 0.06 together),
+	# which is the grounded face of the same phenomenon:
+	# the slide builds to full size and then cannot heal
+	# at low grip. (The harness protocol, entering settled,
+	# separates mid-flick and lands with the slide aboard:
+	# contact_lat 2.32 m/s vs the base model's 1.81.)
+	main.debug_warp_to_s(340.0)
+	main.test_throttle = 0.0
+	var trig39: bool = false
+	var lgmin39: float = 9.0
+	for a39: int in 1200:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(24.0)
+		await physics_frame
+		if main.mode != main.MODE_HANG and main.load_f < 0.35:
+			trig39 = true
+			for i39b: int in 36:
+				main.wheel_angle = 0.9 * PI
+				await physics_frame
+				lgmin39 = minf(lgmin39, main.load_grip)
+			break
+	var crest_vl39: float = main.lat_vel
+	main.wheel_angle = 0.0
+	var crest_rec39: int = 0
+	calm39 = 0
+	while crest_rec39 < 900 and calm39 < 5:
+		await physics_frame
+		crest_rec39 += 1
+		if absf(main.lat_vel) < 0.3:
+			calm39 += 1
+		else:
+			calm39 = 0
+	print("stage39: flat flick@24 - end vl %.2f, bleed-out %d frames; crest flick - min load_grip %.2f, end vl %.2f, bleed-out %d frames (harness pair: flat 89, crest 170 incl. a recovery flight)" % [flat_vl39, flat_rec39, lgmin39, crest_vl39, crest_rec39])
+	check(trig39, "stage39: the crest flick triggers on the first load dip (front axle load < 0.35)")
+	check(lgmin39 <= 0.45, "stage39: the grip factor falls with the load across the crest (min %.2f)" % lgmin39)
+	check(absf(crest_vl39) >= 4.0, "stage39: the crest slide builds to full size at flick end (%.2f m/s)" % crest_vl39)
+	# Persistence, stated at the size the physics gives:
+	# the grounded crest recovery runs at load_grip
+	# 0.66-0.8 (not the flick's 0.37 floor - the coasting
+	# car's falling speed hands load back), so the bleed
+	# runs ~1.3x the flat's rate: measured 98 vs 75
+	# frames for a LARGER slide (-6.41 vs -4.75 m/s).
+	# The harness protocol, whose car separates mid-flick,
+	# shows the airborne face of the same law: 170 vs 89
+	# frames, the slide frozen at its landing value
+	# (2.32 m/s vs the base model's 1.81).
+	check(crest_rec39 >= flat_rec39 + 20 and crest_rec39 >= int(1.25 * float(flat_rec39)), "stage39: the crest slide PERSISTS - bleed-out %d frames vs the flat's %d (low grip cannot heal it)" % [crest_rec39, flat_rec39])
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
