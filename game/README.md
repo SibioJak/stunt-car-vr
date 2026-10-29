@@ -2233,6 +2233,155 @@ T0.0 R DRP REL g0.00
   delivery commit, which cannot know its own hash.
 
 
+## Fix Pass 18 (micro) — Asphalt, and the winding conviction
+
+Base: FP17 final (8288719). Ordered as a colour-only micro-pass
+("can we get the track more road colored, not brown" — placement
+delegated). It did not stay colour-only, and this section says
+why, plainly: halfway through verification the colour change
+proved INVISIBLE — not subtle, not renderer-dependent, but
+absent under every material, including a diagnostic pure-green
+surface that rendered nowhere on the road. The bisect convicted
+the ribbon's box sections of inverted triangle winding: the
+road's top has been back-face culled from above since the box
+section was built, and what every run has shown as "the road"
+is the box's underside (bot_c brown) seen through the culled
+top. The FP15 centre band has been present in the mesh data
+the whole time (stage 45 verifies it) and has never rendered.
+The pass therefore ships two things: the winding mirror that
+makes the surface exist, and the asphalt colour the owner
+asked for. Tallies on the final tree: SMOKE 421/421,
+API GUARD 70/70, RENDER PROOF 146/146. Controls list
+untouched; no drive numbers, geometry, fog, or lighting moved.
+Everything below is probe-verified only — the verdict is the
+owner's in the headset, and it now includes seeing the road's
+actual surface (grey field, amber band, dashed amber edges)
+for the first time.
+
+### Item 1 — the winding mirror (scope deviation, evidence-led)
+
+`_add_quad`'s corner walk (a-b-c / a-c-d) is back-facing from
+the stated normal's side in this renderer. FP12 convicted the
+same bug on the spur's guide strip and chevrons and mirrored
+those two locally ("as first built these faced DOWN... the
+mirrored corner order"); the box sections in
+`_build_track_meshes` and `_build_spur` — surface strips,
+skirt sides, underside, edge strips — kept the naive order.
+Proof, in order: (1) the built mesh's arrays carry the new
+colours verbatim (surface, band, spur all sampled); (2) the
+material is exactly as designed (vertex colour as albedo, no
+texture, nothing overriding it at render time); (3) a test
+quad built through the same path renders its colour
+correctly in the same frame where the road renders brown;
+(4) isolating TrackSurface alone renders nothing from above
+(the frame is pure desert — the brown band in full views is
+the skirt/underside); (5) forcing an unshaded pure-green
+material onto TrackSurface changes nothing at the road's
+pixels; (6) the same mesh with each triangle's winding
+flipped renders the amber band at the centreline from above,
+exactly where the data says it is. The fix is a mirrored
+helper, `_add_quad_m` (a-d-c-b), applied to the box-section
+and edge-strip call sites in both builders — the same remedy
+FP12 applied, generalised. NOT touched: the spur's guide
+strip and chevrons (already mirrored in FP12), the stilt
+blades (their stated normal points down-track and they render
+toward the approaching driver under the same inversion —
+flipping them would hide them; unaudited beyond that, and the
+stilt family belongs to the tracks pass anyway), gantry and
+desert meshes (engine geometry). The stated normals were
+always correct; only the winding was inverted. Physics never
+reads the mesh, and the full suite re-passes.
+
+### Item 2 — asphalt grey (the briefed change)
+
+Main field, both builders (`surf_c` in `_build_track_meshes`,
+which serves circuit and test ribbon, and in `_build_spur`):
+
+- before: Color(0.07, 0.07, 0.09) — near-black slate
+- after: Color(0.30, 0.30, 0.33) — asphalt grey, cool neutral
+
+The grey is a clear luminance step down from the tan desert
+(0.76, 0.62, 0.42) and up from the old field, so the ribbon
+separates from the terrain by value as well as by family.
+Markings report, as the brief asked: the amber edge strips
+(1.0, 0.72, 0.10) and centre band (1.0, 0.60, 0.04) keep their
+identity on the grey — hue separation is strong (warm amber on
+cool grey) — but the band's luminance step over the field
+drops from ~8x (against near-black) to ~2x. Within colour
+only, no remedy was applied: in the sandbox captures the band
+reads clearly, and raising the band's brightness would push
+it toward the guides' unshaded punch it deliberately doesn't
+have. If it reads weak on device, the colour-only lever is
+band albedo up; the sections/markings design that would
+settle it properly belongs to the tracks pass. (The band is
+in any case rendered for the first time — see Item 1.)
+
+### Measurement — FP12 wash instrument, three states
+
+FP12's instrument (ID-pass swap; low-contrast fraction =
+ribbon pixels within 0.10 RGB of the row-band background mean;
+frozen warp protocol, 1280x800, this sandbox's renderer).
+Three columns because two changes shipped: BEFORE is the
+base build (culled top, dark field), WINDING is the mirror
+alone on the old field, AFTER is the final tree.
+
+| station | before | winding only | after (asphalt) |
+|---|---|---|---|
+| home_straight | 0.0% | 0.0% | 9.5% |
+| climb_mid | 6.5% | 0.0% | 0.0% |
+| before_dip | 3.7% | 2.4% | 2.4% |
+| dip_floor | 0.0% | 0.0% | 0.0% |
+| climb_top | 8.0% | 0.0% | 0.0% |
+| mid_straight | 15.2% | 20.1% | 20.1% |
+| loop_approach | 0.0% | 0.2% | 0.2% |
+
+Read honestly: the winding fix is the mover (climb stations
+to zero; ribbon pixel counts rise ~15% because the top now
+renders at distance). mid_straight's fraction RISES under the
+fix and stays — in the culled state much of the far ribbon
+simply wasn't drawn to be counted; drawn, the far straight
+still washes in this renderer, and neither colour moves it.
+That residual belongs to the tracks pass (sections/geometry),
+as already filed. home_straight moves 0.0% -> 9.5% on the
+colour change alone: mid-grey sits closer to that station's
+sky-dominated background mean than near-black did — a
+luminance-distance artefact of the metric, reported rather
+than tuned away; on device the road there now also carries
+the band and edge dashes it never had. Standing caveat
+(FP15): the sandbox renderer does not reproduce the owner's
+device colours at driving angles — these fractions show
+direction only; his headset gives the verdict.
+
+### Verification notes
+
+Two, for the record. The render proof's first run here
+failed the wheel-hub reach check at 0.31 m (band 0.22-0.30):
+the smoke suite had persisted a seat trim of 0.024 into
+`settings.cfg`, and the proof's precondition is trim 0.
+Trim zeroed, the proof re-ran 146/146 (hub 0.29 m) — an
+environment artefact, not a regression; no seat code moved.
+And the wires_view colour-count check (>25 sampled colours)
+is now MARGINAL: 11 in one run, 32 in the next, against a
+bar calibrated on the see-through frame. From below, that
+frame is now legitimately dominated by the flat underside;
+whether it passes depends on the hang phase at capture.
+It passes on the delivery tree, but the margin is a
+tracks-pass note (underside treatment), not a number to
+trust blindly — the check itself was left untouched.
+
+### What you're judging (run 18)
+
+- The road's surface itself, for the first time: asphalt grey
+  field, the continuous amber centre band, dashed amber edges
+  — all previously culled or, in the band's case, never seen.
+- Whether the grey reads as road against the desert on device,
+  and whether the band still carries at dip ranges at ~2x
+  luminance step + hue.
+- NOT in this pass: sections/markings, the speed-envelope
+  decision, dip re-profile, stilt tops, the loop entry — the
+  tracks pass, still gated on the owner's word.
+
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
