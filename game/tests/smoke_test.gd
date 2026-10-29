@@ -4920,6 +4920,61 @@ func _run() -> void:
 		"stage47: (e) a dash-latched hand cannot take the wheel mid-squeeze")
 	main.test_grip["L"] = 0.0
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(ev47.call(mark47e).contains("SEATUP REL"),
+		"stage47: (e) the seat lever's release is logged (SEATUP REL - Item 2)")
+	# (d) Item 2 - throw telemetry: a partial pull leaves its
+	# trace, a fired pull carries its duration.
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await frames(4)
+	main.dip_timer = 1000.0
+	main.test_hand_pos["L"] = far47
+	main.test_grip["L"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	var mark47f: int = main.grab_events.size()
+	main.test_hand_pos["R"] = lever_at47.call(0.0)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_pos["R"] = lever_at47.call(0.20)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_pos["R"] = lever_at47.call(0.30)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	var eva47f: String = ev47.call(mark47f)
+	check(eva47f.contains("DRP PULL 0.25") and eva47f.contains("DRP PULL 0.50") and not eva47f.contains("DRP PULL 0.75"),
+		"stage47: (d) the partial pull logs its quarter crossings (0.25, 0.50 - never 0.75)")
+	check(eva47f.contains("DRP ORPHAN peak 0.60") and eva47f.contains("R DRP REL"),
+		"stage47: (d) the stalled pull leaves its trace - ORPHAN at peak 0.60 + DRP REL")
+	await frames(12)
+	var mark47g: int = main.grab_events.size()
+	main.test_hand_pos["R"] = lever_at47.call(main.drop_lever_angle)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_pos["R"] = lever_at47.call(0.55)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	var eva47g: String = ev47.call(mark47g)
+	check(eva47g.contains("DRP FIRE") and eva47g.contains(" dt"),
+		"stage47: (d) the fired pull carries its duration (DRP FIRE ... dt)")
+	check(eva47g.contains("R DRP REL") and not eva47g.contains("ORPHAN"),
+		"stage47: (d) a fired latch ends in REL, never ORPHAN")
+	var drv47d: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv47d, "stage47: (d) the fired drop lands into DRIVE")
+	# (f) Item 2 - the file itself: this launch's session
+	# header, and the throw lines on disk, not just in the ring.
+	var f47: FileAccess = FileAccess.open("user://grab_log.txt", FileAccess.READ)
+	check(f47 != null, "stage47: (f) the grab log file exists")
+	if f47 != null:
+		var txt47: String = f47.get_as_text()
+		f47.close()
+		check(txt47.contains("=== SESSION") and txt47.contains(main.GRAB_LOG_BUILD),
+			"stage47: (f) the log carries this launch's session header (build tag + wall clock)")
+		check(txt47.contains("DRP ORPHAN") and txt47.contains("DRP PULL"),
+			"stage47: (f) the file itself carries the throw telemetry, not just the ring")
 	main.test_hand_set = false
 
 	print("---")

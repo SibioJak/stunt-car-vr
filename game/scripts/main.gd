@@ -1070,6 +1070,21 @@ var grab_chatter_count: int = 0
 var grab_peak: Dictionary = {"L": 0.0, "R": 0.0}
 var grab_log_file: FileAccess = null
 var prev_zone: Dictionary = {"L": -1, "R": -1}
+# Fix Pass 17 (Item 2): throw telemetry for the drop lever -
+# when the current latch began, the peak pull fraction it has
+# reached, and which fraction crossings have been logged for
+# it (bitmask: 1 / 2 / 4 = crossed 0.25 / 0.50 / 0.75). Pull
+# fraction is progress toward the DETENT (REST -> DETENT rad),
+# the point that fires - a pull that stalls short of it is
+# exactly what FP16's log could not see.
+var drop_pull_t0: float = 0.0
+var drop_pull_peak: float = 0.0
+var drop_pull_marks: int = 0
+# Fix Pass 17 (Item 2): the grab log's build tag, stamped into
+# each launch's session header next to the wall-clock time.
+# Updated per pass, like the README's own accounting.
+const GRAB_LOG_BUILD: String = "FP17 (base ddf0612)"
+const GRAB_LOG_MAX_BYTES: int = 262144 # 256 KB tail kept across launches
 
 
 func _mat(c: Color) -> StandardMaterial3D:
@@ -1102,13 +1117,36 @@ func _box(parent: Node, size: Vector3, pos: Vector3, mat: Material, bname: Strin
 
 func _ready() -> void:
 	# Fix Pass 16 (Item 5): the grab session log - one line per
-	# grab event, truncated per session, at user://grab_log.txt
-	# (next to settings.cfg). If a grab ever fails silently in
-	# the headset again, this file is the witness the staged
-	# suite structurally cannot be.
+	# grab event at user://grab_log.txt (next to settings.cfg).
+	# If a grab ever fails silently in the headset again, this
+	# file is the witness the staged suite structurally cannot
+	# be. Fix Pass 17 (Item 2): the log APPENDS across launches -
+	# FP16 truncated per launch, so the run-16 upload carried
+	# only the owner's last short session and the attempts that
+	# failed him were already gone. Each launch stamps a session
+	# header (build tag + wall clock) and the file is tail-
+	# trimmed to GRAB_LOG_MAX_BYTES, oldest lines first, so the
+	# next upload carries every attempt since the build landed.
+	var prior17: String = ""
+	if FileAccess.file_exists("user://grab_log.txt"):
+		var old17: FileAccess = FileAccess.open("user://grab_log.txt", FileAccess.READ)
+		if old17 != null:
+			prior17 = old17.get_as_text()
+			old17.close()
+	while prior17.length() > GRAB_LOG_MAX_BYTES:
+		var nl17: int = prior17.find("\n")
+		if nl17 < 0:
+			prior17 = ""
+			break
+		prior17 = prior17.substr(nl17 + 1)
 	grab_log_file = FileAccess.open("user://grab_log.txt", FileAccess.WRITE)
 	if grab_log_file != null:
-		grab_log_file.store_line("FP16 grab log - events: LAT latch, FIRE activation, EARLY lever release, NOLAT zone entry unlatched, RIM passenger attach")
+		if prior17 != "":
+			grab_log_file.store_string(prior17)
+			if not prior17.ends_with("\n"):
+				grab_log_file.store_line("")
+		grab_log_file.store_line("=== SESSION %s %s ===" % [GRAB_LOG_BUILD, Time.get_datetime_string_from_system()])
+		grab_log_file.store_line("grab log - events: LAT latch, FIRE activation (dt = pull duration), PULL pull-fraction crossings, ORPHAN unfired latch (peak = peak pull fraction), REL latch release, EARLY lever release, NOLAT zone entry unlatched, RIM passenger attach")
 		grab_log_file.flush()
 	_load_settings()
 	_build_environment()
@@ -4122,9 +4160,20 @@ func _update_drop_lever_pull(hand: String) -> void:
 	var v: Vector3 = lp - drop_lever_pivot.position
 	var ang: float = clampf(atan2(v.z, v.y), DROP_LEVER_REST_RAD, DROP_LEVER_MAX_RAD)
 	drop_lever_angle = ang
+	# Fix Pass 17 (Item 2): throw telemetry - the pull's
+	# progress toward the detent, logged at the quarter
+	# crossings; the peak rides along for the ORPHAN line if
+	# this latch never fires.
+	var frac17: float = clampf((ang - DROP_LEVER_REST_RAD) / (DROP_LEVER_DETENT_RAD - DROP_LEVER_REST_RAD), 0.0, 1.0)
+	drop_pull_peak = maxf(drop_pull_peak, frac17)
+	var marks17: Array[float] = [0.25, 0.50, 0.75]
+	for mi17: int in marks17.size():
+		if frac17 >= marks17[mi17] and (drop_pull_marks & (1 << mi17)) == 0:
+			drop_pull_marks |= (1 << mi17)
+			_grab_event("%s DRP PULL %.2f g%.2f" % [hand, marks17[mi17], float(diag_grip[hand])])
 	if ang >= DROP_LEVER_DETENT_RAD and not drop_lever_fired:
 		drop_lever_fired = true
-		_grab_event("%s DRP FIRE g%.2f" % [hand, float(diag_grip[hand])]) # FP16 (Item 5)
+		_grab_event("%s DRP FIRE g%.2f dt%.2f" % [hand, float(diag_grip[hand]), race_time - drop_pull_t0]) # FP16 (Item 5); FP17: the pull's duration
 		_pulse_detent(hand)
 		_do_release() # self-gated: only a dangle lets go
 
@@ -4333,10 +4382,20 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	# spring home in _update_drop_lever - no drop.
 	if drop_lever_hand == hand:
 		if not held:
+			# Fix Pass 17 (Item 2): the latch's end is always on
+			# the record. An unfired latch logs ORPHAN with the
+			# peak pull fraction reached and the grip at release
+			# (a stalled pull leaves a trace now), and every
+			# lever release logs DRP REL. FP16's EARLY witness
+			# (a real pull let go early: event + count + tick)
+			# is unchanged, between the two.
+			if not drop_lever_fired:
+				_grab_event("%s DRP ORPHAN peak %.2f g%.2f" % [hand, drop_pull_peak, grip_v])
 			if not drop_lever_fired and drop_lever_angle > 0.15:
 				grab_early_count += 1
 				_grab_event("%s DRP EARLY g%.2f @%.2f" % [hand, grip_v, drop_lever_angle])
 				_pulse_hand(hand, 0.30, 0.08)
+			_grab_event("%s DRP REL g%.2f" % [hand, grip_v])
 			drop_lever_hand = ""
 		else:
 			_update_drop_lever_pull(hand)
@@ -4351,6 +4410,9 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 			and win17 == "lever": # FP17 (Item 1): arbitration - an owned hand, or a nearer wheel/dash win, never latches the lever
 		drop_lever_hand = hand
 		drop_lever_fired = false
+		drop_pull_t0 = race_time # FP17 (Item 2): the throw clock starts at the latch
+		drop_pull_peak = 0.0
+		drop_pull_marks = 0
 		grab_lever_count += 1
 		_grab_event("%s DRP LAT g%.2f" % [hand, grip_v])
 		_pulse_hand(hand, 0.35, 0.06)
@@ -4366,6 +4428,14 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	# entry starts a deliberate hold (SIDE_HOLD_S), not a fire.
 	var ctl_now: int = _dash_ctl_near_swept(prev, pos) if held else -1
 	if not held:
+		# Fix Pass 17 (Item 2): a seat lever's release is logged
+		# (the lever-class REL - the drop lever's DRP REL twin;
+		# the seat trims share the latch path, so their latch
+		# ends are witnessed the same way). One-shot buttons log
+		# nothing here: their FIRE is the record.
+		var rel17: int = int(dash_ctl_fired[hand])
+		if rel17 >= 0 and rel17 < dash_ctl_kinds.size() and dash_ctl_kinds[rel17].begins_with("seat"):
+			_grab_event("%s %s REL g%.2f" % [hand, dash_ctl_kinds[rel17].to_upper(), grip_v])
 		dash_ctl_fired[hand] = -1
 		side_hold_t[hand] = 0.0
 	elif ctl_now >= 0 and (owner17 == "dash" or win17 == "dash"):
