@@ -275,7 +275,7 @@ func _run() -> void:
 	main.diag_block = main._build_diag_block()
 	main._update_panel()
 	var ptxt: String = main.panel_label.text + "\n" + main.diag_label.text
-	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call drone",
+	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call crane",
 			"restart", "lean", "track", "Recenter", "SPACE", "W/S", "V track",
 			"DIAG", "ANCHOR", "CAMH", "FRC", "Jitter", "JIT", "CONTACT",
 			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP LEVER", "Panels", "TAB",
@@ -472,7 +472,7 @@ func _run() -> void:
 	main.debug_warp_to_s(100.0)
 	for i2: int in 10:
 		await physics_frame
-	main._call_drone()
+	main._call_crane()
 	var t: int = 0
 	while main.mode != main.MODE_HANG and t < 600:
 		await physics_frame
@@ -522,6 +522,17 @@ func _run() -> void:
 	await snap(cam2, "lift_view.png")
 	cam2.queue_free()
 
+	# Fix Pass 15 (Item 2): the crane itself, three-quarter
+	# view - post on its pad, jib out over the road, the car
+	# on its chains. The rig must be VISIBLE in the hang.
+	check(main.crane.visible, "the crane rig is visible in the hang")
+	var cam_cr := Camera3D.new()
+	main.add_child(cam_cr)
+	cam_cr.position = rc_pos + rc_side * 11.0 + rc_up * 2.6 - rc_tan * 7.0
+	cam_cr.look_at(main.pivot_pos + Vector3(0, -1.6, 0), Vector3.UP)
+	await snap(cam_cr, "crane_view.png")
+	cam_cr.queue_free()
+
 	# Fix Pass 6 (Item 4): the lift wires must never cross. Sweep
 	# the running dangle (the car is still hanging diagonally from
 	# the debug pose above, swinging and dipping) and test every
@@ -534,7 +545,7 @@ func _run() -> void:
 		await physics_frame
 		if iw % 8 == 0:
 			samples += 1
-			var dc6: Array = main._drone_corners()
+			var dc6: Array = main._crane_corners()
 			var cc6: Array = main._car_corners()
 			for pa: int in 4:
 				for pb: int in range(pa + 1, 4):
@@ -546,10 +557,10 @@ func _run() -> void:
 	main.add_child(cam7)
 	var fr_w: Dictionary = main._frame_at(main.drop_target_s)
 	var car_pw: Vector3 = main.car.global_position
-	var drone_pw: Vector3 = main.drone.global_position
+	var pivot_pw: Vector3 = main.pivot_pos
 	cam7.position = car_pw + (fr_w["side"] as Vector3) * 5.2 - Vector3.UP * 1.7 \
 		- (fr_w["tan"] as Vector3) * 3.0
-	cam7.look_at((car_pw + drone_pw) * 0.5 + Vector3.UP * 0.8, Vector3.UP)
+	cam7.look_at((car_pw + pivot_pw) * 0.5 + Vector3.UP * 0.8, Vector3.UP)
 	await snap(cam7, "wires_view.png")
 	cam7.queue_free()
 

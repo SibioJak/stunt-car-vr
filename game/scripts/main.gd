@@ -3,8 +3,10 @@ extends Node3D
 ## Stunt Car VR - DE Test 1 "Drop & Dangle"
 ## Throwaway FEEL prototype (Godot 4.7 / OpenXR, Quest-native target).
 ## One ribbon track, one placeholder Odd Rod car, grab-wheel steering,
-## Drop Start + drone recovery while dangling, and the
+## Drop Start + crane recovery while dangling, and the
 ## lean-for-traction experiment. See design-spec.md items 1-16.
+## (Fix Pass 15 retired the drone that stood here from FP5 to
+## FP14 - the crane is the original's rig; see Item 2.)
 ## (Fix Pass 13 deleted the dangle prep sequence entirely: the
 ## hang is sway, wheel and release timing now - see Item 1.)
 ## Fix Pass 6 adds the project's first audio: synthesized engine + skid
@@ -26,7 +28,7 @@ extends Node3D
 ## steer - and slip_state derives from that actual lateral
 ## velocity. The track frame keeps only its proper jobs: road
 ## height/bank under the wheels, off-track/fall detection from
-## (s, lat), gap spanning, lap/feature logic, drone targeting.
+## (s, lat), gap spanning, lap/feature logic, crane targeting.
 ## Still Crammond-flavoured elsewhere: rationed boost, slope
 ## gravity, ballistic gap jumps, touchdown quality from impact
 ## speed + alignment, dent + smoke on hard landings.
@@ -393,32 +395,49 @@ const LEAN_TILT_STEP_DEG: float = 10.0
 const PEND_LEN_F: float = 5.5
 const PEND_LEN_L: float = 3.9
 const PEND_DAMP: float = 0.10
-# Fix Pass 10 (Item 2) - PIVOT-DRIVEN FLIGHT. The Fix Pass 5 dip
-# was a procedural hash schedule moving a virtual pivot offset;
-# the brief retires it: the carrier (drone) now has real flight
-# state - position (anchor_pos), velocity, measured acceleration
-# - and flies an actual path: it brakes to a hover at the catch,
-# retraces the road back to the drop point, and holds station
-# over it. The pendulum integrates the pivot's MEASURED
-# acceleration (lag under acceleration, overshoot on braking
-# and turns, settle at station), the car's yaw seeks the
-# carrier's yaw on a laggy spring (never rigid), and the dips
-# survive as FLOWN manoeuvres: the carrier descends on a smooth
-# profile and climbs back, so line tension, slack and the catch
-# all follow from the carrier's real vertical acceleration.
-const CARRIER_SPEED: float = 26.0 # m/s transport cruise (FP13 item 6: was 15.0 FP12, 9.0 before)
-const CARRIER_ACCEL: float = 10.0 # m/s^2 - flight accel/brake limit (FP13 item 6: was 9.0)
-const CARRIER_YAW_RATE: float = 0.9 # rad/s the carrier turns at speed
-# Fix Pass 12 (Item 3): extra clearance the carry's altitude
-# profile holds over the highest intervening road surface -
-# on top of the hang stack (HANG_LEN + HANG_CLEAR) the drop
-# station itself uses. (0.8 as first shipped measured a
-# 0.17 m graze on the staged s900 carry - the swinging car
-# reaches metres past the anchor's column, where the road
-# can stand higher than the profile's window maximum; the
-# window widened to +-45 m in the same fix, and the margin
-# went to 1.0.)
-const CARRIER_ROUTE_CLEAR_M: float = 1.0
+# Fix Pass 10 (Item 2) gave the hang a PIVOT-DRIVEN carrier:
+# real state - position (anchor_pos), velocity, measured
+# acceleration - flying a path, with the pendulum integrating
+# the pivot's MEASURED acceleration. Fix Pass 15 (Item 2)
+# retires the flying carrier entirely: after four passes of
+# transports failing from the chair the owner scrapped the
+# drone and restored the original's rig - a fixed CRANE on
+# the service pad beside the drop piece. There is no flight
+# and no retrace: the car is collected OFF-STAGE (as in
+# 1989 - no collection animation exists), placed on the pad
+# under the jib, lifted on the chains, and the trolley SLEWS
+# the hanging car sideways to the drop station, where the
+# dangle is the fixed-pivot pendulum the original had -
+# kept honest-irregular by desert gusts on the jib and the
+# jib's own flex lagging the load (see _step_crane), never a
+# clean Lissajous. The pivot-state names survive from the
+# flight era (anchor_pos / carrier_vel / carrier_yaw /
+# carrier_path) so the hang machinery and its tests did not
+# have to be rewritten around a rename.
+const CRANE_SLEW_SPEED: float = 2.4 # m/s - trolley slew cap (a crane, not an aircraft)
+const CRANE_SLEW_ACCEL: float = 1.6 # m/s^2 - slew accel/brake limit
+const CARRIER_YAW_RATE: float = 0.9 # rad/s the jib turns the load at (name kept from the flight era)
+# Fix Pass 15 (Item 2): where the rig stands. The pickup sits
+# on the service pad CRANE_PICKUP_OFF beyond the road edge
+# (sidewalk to sidewalk: road 6.0 + pad to ~9.7); the post
+# stands CRANE_POST_OFF out, at the pad's far edge.
+const CRANE_PICKUP_OFF: float = 2.4 # m beyond the ribbon edge: pickup centreline
+const CRANE_POST_OFF: float = 3.6 # m beyond the ribbon edge: the post
+# The dangle's swing budget: the pivot's total excursion from
+# the station (gust + flex together) never exceeds this - the
+# release-consistency promise the drop staging measures.
+const PIVOT_OFF_MAX_M: float = 0.30
+# Desert gusts on the jib: the station target steps by up to
+# GUST_AMP per axis on a 1.2-2.2 s hash schedule (the FP14
+# wander's honest successor - same mechanism class, a fixed
+# rig in weather instead of a flying station-keeper).
+const GUST_AMP: float = 0.14 # m, per axis
+# Jib flex: the pivot leans after the swinging load through a
+# first-order lag (a lag cannot resonate; a spring near the
+# pendulum's own frequency could pump the swing). Lean cap
+# per axis JIB_FLEX_M at full deflection.
+const JIB_FLEX_M: float = 0.16 # m, per axis at |sin th| = 1
+const JIB_FLEX_TAU: float = 0.7 # s, the lag's time constant
 # Fix Pass 12 (Item 5): the air-recovery trigger's terms.
 # Below-band dwell: how long the car must stay below the
 # landing band, descending, before it counts as lost (a
@@ -735,16 +754,20 @@ var view_node: Node3D # seat-stack node carrying suspension view motion
 # Dangle state: line slack, catch blend, and a lagged orientation
 # direction (compliance - the car settles a beat behind the swing
 # instead of being rigidly framed to the pivot).
-# Fix Pass 10 (Item 2): pivot_pos IS the carrier's position now
-# (anchor_pos - no procedural offset). The carrier's flight state:
-var pivot_pos: Vector3 = Vector3.ZERO # the carrier's position (== anchor_pos)
+# Fix Pass 10 (Item 2): pivot_pos IS the rig's pivot (anchor_pos
+# - no procedural offset). The pivot state (names kept from the
+# flight era - see the constants block): position, slew
+# velocity, measured acceleration the pendulum feeds on, the
+# jib's heading, and the slew's target list (exactly one
+# station since FP15 - no retrace exists).
+var pivot_pos: Vector3 = Vector3.ZERO # the jib pivot (== anchor_pos)
 var carrier_vel: Vector3 = Vector3.ZERO
 var carrier_accel: Vector3 = Vector3.ZERO # measured, lightly filtered
-var carrier_yaw: float = 0.0 # the carrier's own heading
-var carrier_path: Array[Vector3] = [] # retrace waypoints for the carry
+var carrier_yaw: float = 0.0 # the jib's heading
+var carrier_path: Array[Vector3] = [] # slew targets: [the drop station]
 var carrier_wp: int = 0
 # Fix Pass 11 (Item 3): time spent at the station waiting for
-# the arrival yaw gate (bounded - see _step_carrier).
+# the arrival yaw gate (bounded - see _step_crane).
 var station_wait_t: float = 0.0
 var orient_yaw: float = 0.0 # the car's facing under the lines (springy)
 var orient_yaw_v: float = 0.0
@@ -752,12 +775,16 @@ var dip_t: float = -1.0 # flown-dip progress; -1 = not dipping
 var dip_depth: float = 0.0
 var dip_timer: float = 2.0
 var dip_seed: int = 0
-# Fix Pass 14 (Item 8): the hang WANDER state - the station
-# target itself drifts (see _step_carrier's dangle branch).
-var wander_seed: int = 0
-var wander_t: float = 0.0
-var wander_off: Vector2 = Vector2.ZERO
-const WANDER_AMP: float = 0.28 # m, per axis, of station wander
+# Fix Pass 14 (Item 8) gave the flying carrier a station
+# WANDER so the hang never settled to a clean Lissajous.
+# Fix Pass 15 (Item 2): the crane's fixed pivot gets its
+# irregularity honestly instead - desert GUSTS stepping the
+# station target (below) plus the jib's FLEX lagging the
+# load (flex_off, a first-order lag on the swing direction).
+var gust_seed: int = 0
+var gust_t: float = 0.0
+var gust_off: Vector2 = Vector2.ZERO
+var flex_off: Vector2 = Vector2.ZERO
 # Test hooks (smoke only, same pattern as test_grip): inject a
 # pivot acceleration / a yaw target to prove the pendulum and the
 # facing seek answer the PIVOT, not a schedule.
@@ -846,8 +873,15 @@ var wheel_node: Node3D # tilt node (stood-up wheel plane)
 var wheel_spin: Node3D # spin node inside it (rotates about the wheel axis)
 var smoke_mi: MeshInstance3D
 var lean_needle: MeshInstance3D
-var drone: Node3D
-var drone_rotors: Array[MeshInstance3D] = []
+# Fix Pass 15 (Item 2): the crane rig's nodes (built once,
+# posed per hang by _place_crane, hidden outside MODE_HANG).
+var crane: Node3D
+var crane_foot: MeshInstance3D
+var crane_post: MeshInstance3D
+var crane_pad: MeshInstance3D
+var crane_jib: MeshInstance3D
+var crane_counter: MeshInstance3D
+var crane_trolley: MeshInstance3D
 var line_mis: Array[MeshInstance3D] = []
 
 var dash_ctl_nodes: Array[Node3D] = []
@@ -982,7 +1016,7 @@ func _ready() -> void:
 	track_data["ribbon"] = _build_ribbon()
 	track_data["circuit"] = _build_circuit()
 	_build_car()
-	_build_drone()
+	_build_crane()
 	_build_rig()
 	_build_audio()
 	_set_track("circuit") # Fix Pass 10 (Item 3): the mountain circuit is the default track
@@ -3036,7 +3070,7 @@ func _panel_text() -> String:
 	lines.append("Boost: R A button (while driving)")
 	lines.append("Release: pull the DROP LEVER down")
 	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
-	lines.append("Call drone: L X button (while driving)")
+	lines.append("Call crane: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
 	lines.append("Dash buttons (GRIP): red restart, green lean, purple track, amber view A/B")
 	lines.append("Recenter: L stick click / BOTH grips")
@@ -3175,40 +3209,94 @@ func _state_name() -> String:
 	return "?"
 
 
-# ---------------------------------------------------------------- drone
+# ---------------------------------------------------------------- crane
 
-func _build_drone() -> void:
-	drone = Node3D.new()
-	drone.name = "Drone"
-	add_child(drone)
-	var body_mat := _mat(Color(0.18, 0.19, 0.22))
-	_box(drone, Vector3(0.85, 0.22, 0.85), Vector3.ZERO, body_mat)
-	_box(drone, Vector3(0.30, 0.16, 0.30), Vector3(0, -0.16, 0), _mat_unshaded(Color(1.0, 0.75, 0.15)))
-	for ax: float in [-0.62, 0.62]:
-		for az: float in [-0.62, 0.62]:
-			_box(drone, Vector3(0.30, 0.06, 0.30), Vector3(ax * 0.8, 0.05, az * 0.8), body_mat)
-			var rot := MeshInstance3D.new()
-			var rm := CylinderMesh.new()
-			rm.top_radius = 0.30
-			rm.bottom_radius = 0.30
-			rm.height = 0.02
-			rot.mesh = rm
-			rot.position = Vector3(ax, 0.10, az)
-			rot.material_override = _mat(Color(0.75, 0.78, 0.82))
-			drone.add_child(rot)
-			drone_rotors.append(rot)
-	# 4 lift lines (unit cylinders, stretched between drone and car corners)
+# Fix Pass 15 (Item 2): the crane rig, built once and re-posed
+# per hang by _place_crane. Static furniture (post, footing,
+# service pad) is posed in the drop frame's space at placement
+# time; the jib, counter-jib and trolley are posed every frame
+# by _update_crane_visual from the live pivot state. The rig
+# reads in the game's block language: a lattice-free post, a
+# beam jib, a counterweight block, and the four chains the
+# manual's Drop Start describes.
+func _build_crane() -> void:
+	crane = Node3D.new()
+	crane.name = "Crane"
+	crane.visible = false
+	add_child(crane)
+	var steel := _mat(Color(0.85, 0.55, 0.08)) # crane yellow, weathered flat
+	var dark := _mat(Color(0.16, 0.16, 0.18))
+	# Static furniture (positions set by _place_crane).
+	crane_foot = _box(crane, Vector3(1.6, 0.35, 1.6), Vector3.ZERO, dark)
+	crane_post = _box(crane, Vector3(0.42, 1.0, 0.42), Vector3.ZERO, steel) # unit-height post, scaled at placement
+	crane_pad = _box(crane, Vector3(0.9, 0.06, 3.9), Vector3.ZERO, _mat(Color(0.45, 0.42, 0.38))) # service pad: long axis on Z (= side at placement)
+	# Dynamic members (posed per frame).
+	crane_jib = _beam_instance(steel)
+	crane_counter = _beam_instance(dark)
+	crane_trolley = _box(crane, Vector3(0.55, 0.34, 0.55), Vector3.ZERO, dark)
+	crane.add_child(crane_jib)
+	crane.add_child(crane_counter)
+	# 4 chains (unit cylinders, stretched between the trolley's
+	# spreader frame and the car corners - the manual's chains).
 	for i: int in 4:
 		var lm := MeshInstance3D.new()
 		var cm := CylinderMesh.new()
-		cm.top_radius = 0.012
-		cm.bottom_radius = 0.012
+		cm.top_radius = 0.014
+		cm.bottom_radius = 0.014
 		cm.height = 1.0
 		lm.mesh = cm
-		lm.material_override = _mat_unshaded(Color(0.1, 0.1, 0.1))
+		lm.material_override = _mat_unshaded(Color(0.08, 0.08, 0.08))
 		lm.visible = false
 		add_child(lm)
 		line_mis.append(lm)
+
+
+func _beam_instance(mat: Material) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.34, 0.30, 1.0) # unit length on Z, stretched by _set_beam
+	mi.mesh = bm
+	mi.material_override = mat
+	return mi
+
+
+# Stretch a unit beam between two world points.
+func _set_beam(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
+	var dirv: Vector3 = b - a
+	var lenv: float = dirv.length()
+	if lenv < 0.05:
+		mi.visible = false
+		return
+	mi.visible = true
+	var basis := Basis.looking_at(dirv / lenv, Vector3.UP)
+	mi.global_transform = Transform3D(basis, (a + b) * 0.5)
+	mi.scale = Vector3(1.0, 1.0, lenv)
+
+
+# Pose the rig on the drop piece: the post stands on the
+# service pad CRANE_POST_OFF beyond the ribbon edge, its top
+# a metre above the pivot line; the pad runs from the ribbon
+# edge out past the pickup point, its top flush with the road
+# surface so the car rests on it like road.
+func _place_crane(drop_s: float) -> void:
+	var fr: Dictionary = _frame_at(drop_s)
+	var side: Vector3 = fr["side"]
+	var post_base: Vector3 = fr["pos"] + side * (HALF_WIDTH + CRANE_POST_OFF)
+	var post_h: float = HANG_LEN + HANG_CLEAR + 1.1
+	# The furniture stands gravity-vertical in the road's
+	# heading frame: basis X = travel direction, Z = side
+	# (the pad's long axis runs out from the ribbon edge).
+	var tan_h: Vector3 = Vector3(fr["tan"].x, 0.0, fr["tan"].z).normalized()
+	var side_h: Vector3 = tan_h.cross(Vector3.UP).normalized()
+	var fb := Basis(tan_h, Vector3.UP, side_h)
+	# Footing + post + pad are children of the (untransformed)
+	# crane root - set their world transforms directly.
+	crane_foot.global_transform = Transform3D(fb, post_base + Vector3(0.0, 0.17, 0.0))
+	crane_post.global_transform = Transform3D(fb, post_base + Vector3(0.0, post_h * 0.5, 0.0))
+	crane_post.scale = Vector3(1.0, post_h, 1.0)
+	var pad_c: Vector3 = fr["pos"] + side * (HALF_WIDTH + 1.9)
+	crane_pad.global_transform = Transform3D(fb, pad_c + Vector3(0.0, -0.03, 0.0))
+	crane.visible = true
 
 
 func _set_line(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
@@ -3224,13 +3312,47 @@ func _set_line(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
 	mi.scale = Vector3(1.0, lenv, 1.0)
 
 
-func _drone_corners() -> Array[Vector3]:
+# The chains' top corners: a spreader frame under the trolley,
+# hung from the pivot in the jib's heading frame (same axis
+# order as _car_corners so the line pairing matches).
+func _crane_corners() -> Array[Vector3]:
 	var out: Array[Vector3] = []
-	var xf: Transform3D = drone.global_transform
-	for ax: float in [-0.62, 0.62]:
-		for az: float in [-0.62, 0.62]:
-			out.append(xf * Vector3(ax, -0.05, az))
+	var xf := Transform3D(Basis(Vector3.UP, carrier_yaw), pivot_pos)
+	for ax: float in [-0.45, 0.45]:
+		for az: float in [-0.45, 0.45]:
+			out.append(xf * Vector3(ax, -0.30, az))
 	return out
+
+
+# Fix Pass 15 (Item 2): pose the rig from the live pivot
+# state - the jib reaches from the post top to a point half a
+# metre above the trolley, the counter-jib reaches back with
+# its weight, the trolley block rides at the pivot. Hidden
+# outside MODE_HANG (the rig exists only at a Drop Start /
+# recovery, placed by _place_crane).
+func _update_crane_visual() -> void:
+	if crane == null:
+		return
+	var show: bool = mode == MODE_HANG
+	crane.visible = show
+	if not show:
+		for lm: MeshInstance3D in line_mis:
+			lm.visible = false
+		return
+	var top: Vector3 = crane_post.global_position + Vector3(0.0, crane_post.scale.y * 0.5, 0.0)
+	var hook: Vector3 = pivot_pos + Vector3(0.0, 0.5, 0.0)
+	_set_beam(crane_jib, top, hook)
+	var back: Vector3 = top + (top - hook).normalized() * 2.2 + Vector3(0.0, 0.1, 0.0)
+	_set_beam(crane_counter, top, back)
+	crane_trolley.global_position = pivot_pos
+	# Fix Pass 6 (Item 4) wire rule holds: chain i runs trolley
+	# corner i -> car corner i and no pair can cross - the car's
+	# facing seeks this same carrier_yaw (with lag), so the two
+	# yaws never diverge past a few degrees.
+	var tops: Array[Vector3] = _crane_corners()
+	var bots: Array[Vector3] = _car_corners()
+	for i: int in 4:
+		_set_line(line_mis[i], tops[i], bots[i])
 
 
 func _car_corners() -> Array[Vector3]:
@@ -3437,7 +3559,7 @@ func _poll_xr_buttons(delta: float) -> void:
 		in_boost = true
 	# Left X: the drone call - DRIVE only, unchanged.
 	if x_edge and mode == MODE_DRIVE:
-		_call_drone()
+		_call_crane()
 	# Fix Pass 12 (Item 2): the right B button is the PANEL
 	# toggle (the owner's run-12 ask). Deliberate in every
 	# mode, hang included - and logged there like the rest.
@@ -3471,7 +3593,7 @@ func _input(event: InputEvent) -> void:
 				_do_release()
 		KEY_L:
 			if mode == MODE_DRIVE:
-				_call_drone()
+				_call_crane()
 		KEY_T:
 			_toggle_lean()
 		KEY_V:
@@ -4041,40 +4163,39 @@ func start_race() -> void:
 	# the car hangs plumb over the ribbon centreline regardless of the
 	# section's slope/bank (the frame-up offset drifted sideways).
 	anchor_target = fr["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR)
-	# Fix Pass 13 (Item 6): DROP START IS A PICKUP. The car
-	# starts ON THE GROUND beside the start line - the pickup
-	# point, HALF_WIDTH + 4 m off the centreline at road
-	# height - the carrier attaches over it, lifts it, and
-	# flies the same direct transport as a recovery (climb to
-	# transport altitude, cruise, descend into the arrival).
-	# The dangle exists only at the station; the pre-FP13
-	# instant station dangle is gone. anchor_target above is
-	# unchanged (the FP2 station).
-	var pickup: Vector3 = Vector3(fr["pos"]) + Vector3(fr["side"]) * (HALF_WIDTH + 4.0)
+	# Fix Pass 13 (Item 6) made Drop Start a pickup; Fix Pass
+	# 15 (Item 2) changes the rig, not the shape: the car
+	# starts ON THE SERVICE PAD beside the start line - the
+	# pickup point, CRANE_PICKUP_OFF beyond the ribbon edge
+	# at road height - the crane stands over the drop piece,
+	# the chains attach, the winch lifts the car to hang
+	# height, and the trolley slews it sideways to the
+	# station over the road. The drone's climb-cruise-descend
+	# transport is gone; the slew is the whole journey.
+	# anchor_target above is unchanged (the FP2 station).
+	var pickup: Vector3 = Vector3(fr["pos"]) + Vector3(fr["side"]) * (HALF_WIDTH + CRANE_PICKUP_OFF)
 	pickup.y = float(fr["pos"].y) + 0.4
 	hang_from_pos = pickup
 	car.global_position = pickup
-	anchor_pos = pickup + Vector3.UP * (HANG_LEN + 1.6)
+	# The pivot rides at the rig's fixed height over the DROP
+	# piece's road - the same height as the station, so the
+	# attach lift is exactly the car's rest offset (0.8 m).
+	anchor_pos = Vector3(pickup.x, float(fr["pos"].y) + HANG_LEN + HANG_CLEAR, pickup.z)
 	pivot_pos = anchor_pos
 	anchor_t = 0.0
 	carrier_vel = Vector3.ZERO
 	carrier_accel = Vector3.ZERO
 	carrier_path.clear()
 	carrier_wp = 0
-	var alt13: float = _transport_altitude(anchor_pos, anchor_target, float(fr["pos"].y))
-	if anchor_pos.y < alt13 - 0.05:
-		var p_0: Vector3 = anchor_pos
-		p_0.y = alt13
-		carrier_path.append(p_0)
-	carrier_path.append(Vector3(anchor_target.x, alt13, anchor_target.z))
 	carrier_path.append(anchor_target)
-	carrier_yaw = atan2(-(anchor_target.x - anchor_pos.x), -(anchor_target.z - anchor_pos.z))
+	carrier_yaw = _frame_yaw(fr["tan"])
 	orient_yaw = carrier_yaw
 	orient_yaw_v = 0.0
+	_place_crane(drop_target_s)
 	# Fix Pass 5: bigger, out-of-phase starting swing (see PEND_LEN_*).
 	# Fix Pass 13 (Item 6): the seed is set at ATTACH and the
-	# pendulum evolves continuously through the flight - the
-	# swing judged at the drop is the flight's own, never a
+	# pendulum evolves continuously through the carry - the
+	# swing judged at the drop is the journey's own, never a
 	# state imposed at the station.
 	pend_th_f = 0.34
 	pend_th_l = 0.26
@@ -4125,52 +4246,28 @@ func _reset_suspension() -> void:
 func _reset_dangle_feel() -> void:
 	# Fix Pass 10 (Item 2): the dip state is the FLOWN-dip state
 	# (progress/depth/cadence); the procedural pivot offset is gone.
+	# Fix Pass 15 (Item 2): the dips read as WINCH dips now, and
+	# the nudge state is the gust + jib-flex pair.
 	dip_t = -1.0
 	dip_depth = 0.0
 	dip_timer = 2.0
 	dip_seed = 0
-	wander_seed = 0
-	wander_t = 0.0
-	wander_off = Vector2.ZERO
+	gust_seed = 0
+	gust_t = 0.0
+	gust_off = Vector2.ZERO
+	flex_off = Vector2.ZERO
 	slack_t = 0.0
 	catch_t = 1.0
 	orient_have = false
 
 
-func _call_drone() -> void:
+func _call_crane() -> void:
 	if mode != MODE_DRIVE:
 		return
 	_begin_recovery(car.global_position, car_s)
 
 
-func _transport_altitude(a: Vector3, b: Vector3, seed_y: float) -> float:
-	# Fix Pass 13 (Item 6): the direct route's cruise
-	# altitude - the highest road surface within 45 m in plan
-	# of the straight line a->b, plus the hang stack
-	# (HANG_LEN + HANG_CLEAR) plus CARRIER_ROUTE_CLEAR_M.
-	# The 45 m window is the FP12 rule (it also covers where
-	# the swinging car reaches around the anchor's column),
-	# and stilts stand under their own surface, so clearing
-	# every nearby surface clears them too. Spine samples
-	# every ~5 m over the whole track; called at recovery /
-	# race start only, never per frame.
-	var m: float = seed_y
-	var pa := Vector2(a.x, a.z)
-	var pb := Vector2(b.x, b.z)
-	var spine: Array[Vector3] = []
-	var n: int = int(track_len / 5.0)
-	for i: int in range(n + 1):
-		spine.append(Vector3(_frame_at(float(i) * 5.0)["pos"]))
-	var steps: int = maxi(1, int(pa.distance_to(pb) / 5.0))
-	for k: int in range(steps + 1):
-		var p: Vector2 = pa.lerp(pb, float(k) / float(steps))
-		for sp: Vector3 in spine:
-			if Vector2(sp.x, sp.z).distance_to(p) <= 45.0:
-				m = maxf(m, sp.y)
-	return m + HANG_LEN + HANG_CLEAR + CARRIER_ROUTE_CLEAR_M
-
-
-func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
+func _begin_recovery(_catch_pos: Vector3, from_s: float) -> void:
 	mode = MODE_HANG
 	is_drop_start = false
 	speed = 0.0
@@ -4180,66 +4277,50 @@ func _begin_recovery(catch_pos: Vector3, from_s: float) -> void:
 	edge_roll = 0.0
 	hang_phase = "attach"
 	anchor_t = 0.0
-	hang_from_pos = catch_pos
 	drop_target_s = _find_drop_s(from_s)
 	var fr: Dictionary = _frame_at(drop_target_s)
 	# Fix Pass 2: world-up hang anchor (see start_race) - the car must
 	# hang centred over the ribbon, not offset along a tilted frame up.
 	anchor_target = fr["pos"] + Vector3.UP * (HANG_LEN + HANG_CLEAR)
-	anchor_pos = catch_pos + Vector3.UP * (HANG_LEN + 1.6)
+	# Fix Pass 15 (Item 2): THE COLLECTION HAPPENS OFF-STAGE.
+	# The drone era's problem was never one bug: FP10 retraced
+	# the road with the car dangling (1911 frames home), FP12
+	# added a clearance profile (still ~1500), FP13 split
+	# travel from the hang and flew direct - and the owner's
+	# run-14 verdict closed the file ("the DRONE, good lord,
+	# it just gets worst. its doing loop de loops now... we'll
+	# just use crane"). The original never showed a collection
+	# at all: the car comes back on the crane at the drop
+	# piece. So the fall site is abandoned where it lies -
+	# _catch_pos now serves only the caller's bookkeeping -
+	# and the car is placed on the service pad under the rig,
+	# exactly as at the Drop Start: attach, lift, slew,
+	# dangle. anchor_target itself is untouched: the dangle
+	# station is exactly where Fix Pass 2 put it. Nothing
+	# arms during the slew: the wheel and the drop lever
+	# latch only in the dangle, and the pendulum state is
+	# never touched by the phase transitions, so the swing
+	# the car arrives with is the swing it dangles with.
+	var pickup: Vector3 = Vector3(fr["pos"]) + Vector3(fr["side"]) * (HALF_WIDTH + CRANE_PICKUP_OFF)
+	pickup.y = float(fr["pos"].y) + 0.4
+	hang_from_pos = pickup
+	car.global_position = pickup
+	anchor_pos = Vector3(pickup.x, float(fr["pos"].y) + HANG_LEN + HANG_CLEAR, pickup.z)
 	pivot_pos = anchor_pos
-	# Fix Pass 13 (Item 6): THE SPLIT - travel is separated
-	# from the hang. The FP10-FP12 carrier retraced the road
-	# backwards at hang height, following every climb and
-	# curve with the car dangling under it the whole way
-	# (measured: FP11 1911 frames end to end for the stage-28
-	# recovery; FP12's clearance profile brought the carry to
-	# ~1480-1560 frames and it was still the long way home,
-	# swinging - the owner's run-13 verdict: "the drone
-	# remains a nightmare. Might need a rethink"). The route
-	# is now DIRECT, flown by the same machinery (waypoint
-	# advance, braking-curve flare on the final leg, the
-	# FP11 arrival yaw gate): climb out over the catch to a
-	# transport altitude, one straight cruise leg to above
-	# the station, descend into the arrival. The transport
-	# altitude keeps the FP12 clearance rule - the highest
-	# road surface within 45 m of the route plus the hang
-	# stack plus CARRIER_ROUTE_CLEAR_M - applied to the
-	# straight plan line instead of the retrace (see
-	# _transport_altitude). anchor_target itself is
-	# untouched: the dangle station is exactly where Fix
-	# Pass 2 put it. Nothing arms during transport: the
-	# wheel and the drop lever latch only in the dangle
-	# (Items 3/6), so the cruise is pure travel and the hang
-	# begins only on arrival - and the pendulum state is
-	# never touched by the transition, so the swing the car
-	# arrives with is the swing it dangles with.
 	carrier_vel = Vector3.ZERO
 	carrier_accel = Vector3.ZERO
-	carrier_yaw = _frame_yaw(_frame_at(from_s)["tan"])
+	carrier_yaw = _frame_yaw(fr["tan"])
 	station_wait_t = 0.0
 	carrier_path.clear()
 	carrier_wp = 0
-	var alt13: float = _transport_altitude(anchor_pos, anchor_target,
-		float(_frame_at(from_s)["pos"].y))
-	# Climb-out first: a deep catch (a gap fall is caught ~13 m
-	# below the road) starts UNDER the surface it must cross.
-	# If the hover sits below the transport altitude, the
-	# first path point is straight above the catch - the
-	# carrier climbs out of the hole vertically before it
-	# travels, instead of dragging the car diagonally through
-	# the lip it fell past.
-	if anchor_pos.y < alt13 - 0.05:
-		var p_0: Vector3 = anchor_pos
-		p_0.y = alt13
-		carrier_path.append(p_0)
-	carrier_path.append(Vector3(anchor_target.x, alt13, anchor_target.z))
 	carrier_path.append(anchor_target)
+	_place_crane(drop_target_s)
 	_reset_dangle_feel()
-	# initial pendulum angles from the catch offset
-	var off: Vector3 = catch_pos - anchor_pos
-	pend_th_f = clampf(off.dot(fr["tan"]) / HANG_LEN, -0.6, 0.6)
-	pend_th_l = clampf(off.dot(fr["side"]) / HANG_LEN, -0.6, 0.6)
+	# The pendulum seeds on the rig's own fixed swing (the
+	# Drop Start's shape, slightly smaller) - the fall's
+	# geometry no longer reaches into the hang.
+	pend_th_f = 0.30
+	pend_th_l = 0.22
 	pend_om_f = 0.0
 	pend_om_l = 0.0
 
@@ -4408,15 +4489,12 @@ func _physics_process(delta: float) -> void:
 	_refresh_car_visuals()
 	_update_audio(delta)
 	_update_telegraph(delta) # Fix Pass 15 (Item 1): dust + controller rumble off the same signal
-	_update_drone_visual(delta)
+	_update_crane_visual()
 	if step_log_on:
 		_step_log_row()
 
 
 func _process(_delta: float) -> void:
-	# rotor spin (visual only)
-	for r: MeshInstance3D in drone_rotors:
-		r.rotation.y += 28.0 * _delta
 	# Fix Pass 6 audio stall watchdog: if the physics loop has
 	# gone quiet (main loop stalled / app wedged), cut the gains
 	# so a looping buffer can never drone on unattended. Physics
@@ -5000,37 +5078,33 @@ func _carrier_dip_offset() -> Vector2:
 	return Vector2(y, vy)
 
 
-func _step_carrier(delta: float) -> void:
-	# Fix Pass 10 (Item 2): the carrier's flight integrator. It
-	# replaces both the old constant-speed carry step and the
-	# procedural dip offset: anchor_pos is a flown position with
-	# velocity and an acceleration LIMIT, and carrier_accel is
-	# MEASURED from the velocity change the limit allowed -
-	# the pendulum (and the slack trigger) read that, never a
-	# schedule.
+func _step_crane(delta: float) -> void:
+	# Fix Pass 15 (Item 2): the crane's pivot integrator - what
+	# _step_carrier was to the drone. There is no flight: the
+	# pivot is the trolley's position on the jib, and it has
+	# exactly three jobs. In ATTACH it holds over the pickup
+	# while the chains settle. In CARRY it SLEWS - sideways, at
+	# crane speed, under a braking-curve cap - from above the
+	# pad to the drop station, turning the load to the drop
+	# heading as it goes (the FP11 approach lesson, kept: the
+	# turn is travelled, not dangled). In DANGLE it holds the
+	# station against the winch dips and the gust/flex nudge.
+	# Through all of it carrier_accel is MEASURED from the
+	# velocity change the limits allowed - the pendulum (and
+	# the slack trigger) read that, never a schedule.
 	var target: Vector3 = anchor_target
 	var target_vel: Vector3 = Vector3.ZERO
-	var arrive: bool = true # true: closing behaviour; false: cruise through
 	if hang_phase == "attach":
-		target = anchor_pos # hold station over the catch while lines settle
+		target = anchor_pos # hold over the pickup while the chains settle
 	elif hang_phase == "carry":
-		if carrier_wp < carrier_path.size():
-			target = carrier_path[carrier_wp]
-			arrive = carrier_wp == carrier_path.size() - 1
-			# Advance on proximity OR on passing the waypoint
-			# abeam (a chord-cutting carrier can pass a point
-			# metres off and orbit it at cruise otherwise).
-			if not arrive and (anchor_pos.distance_to(target) < 2.5 or \
-					(anchor_pos.distance_to(target) < 7.0 and \
-					carrier_vel.dot(target - anchor_pos) < 0.0)):
-				carrier_wp += 1
-				target = carrier_path[carrier_wp]
-				arrive = carrier_wp == carrier_path.size() - 1
+		target = anchor_target
 	elif hang_phase == "dangle":
-		# Flown dips on the old hash cadence (deterministic -
-		# the smoke depends on reproducible behaviour), but the
-		# dip is a manoeuvre: the station target descends on the
-		# dip profile and the carrier flies down to it and back.
+		# Winch dips on the old hash cadence (deterministic -
+		# the smoke depends on reproducible behaviour): the
+		# station target descends on the dip profile and the
+		# winch follows it down and back. (FP10-FP14 flew this
+		# very profile with the drone; depths and cadence are
+		# unchanged - only the reader of the motion changed.)
 		if dip_t < 0.0:
 			dip_timer -= delta
 			if dip_timer <= 0.0:
@@ -5045,87 +5119,80 @@ func _step_carrier(delta: float) -> void:
 			if dip_t >= DIP_DUR:
 				dip_t = -1.0
 		var doff: Vector2 = _carrier_dip_offset()
-		# Fix Pass 14 (Item 8): the station WANDERS. The film
-		# study (section 4): the original's hang sway is
-		# irregular, nudged, never a clean sine - our base
-		# dangle was a perfectly periodic Lissajous (fore
-		# half-period 2.36 s, min = max). The wander moves
-		# the STATION TARGET by hash-scheduled horizontal
-		# offsets (+-WANDER_AMP per axis, re-picked every
-		# 1.2-2.2 s on the house hash) and the carrier FLIES
-		# to it through the same P-law as everything else,
-		# so the pendulum is nudged by the MEASURED carrier
-		# acceleration - the sway irregularity is flown,
-		# never scripted into the pendulum. Dangle phase
-		# only: the carry phase and the release are
-		# untouched.
-		wander_t -= delta
-		if wander_t <= 0.0:
-			wander_seed += 1
-			var hw1: float = sin(float(wander_seed) * 12.9898) * 43758.5453
-			var hw2: float = sin(float(wander_seed) * 78.233) * 12543.21
-			var hw3: float = sin(float(wander_seed) * 37.719) * 28001.83
-			wander_off = Vector2((hw1 - floor(hw1)) * 2.0 - 1.0, (hw2 - floor(hw2)) * 2.0 - 1.0) * WANDER_AMP
-			wander_t = 1.2 + 1.0 * (hw3 - floor(hw3))
-		target = anchor_target + Vector3(wander_off.x, doff.x, wander_off.y)
+		# Fix Pass 15 (Item 2): the fixed pivot's honest
+		# irregularity. FP14 kept the flying station from
+		# settling to a clean Lissajous with a hash WANDER of
+		# the station target (+-0.28 m per axis, re-picked
+		# every 1.2-2.2 s); the crane's equivalents are
+		# weather and structure. Desert GUSTS step the target
+		# on the same house hash and cadence (+-GUST_AMP per
+		# axis), and the JIB FLEXES: the pivot leans after
+		# the swinging load through a first-order lag on the
+		# load's direction - a lag couples the two swing
+		# axes into each other and can never resonate or
+		# pump (a spring near the pendulum's own frequency
+		# could). Gust + flex together are clamped to the
+		# PIVOT_OFF_MAX_M budget, so the pivot's total
+		# excursion from the station is a NUMBER the drop
+		# staging can assert, not a hope.
+		gust_t -= delta
+		if gust_t <= 0.0:
+			gust_seed += 1
+			var hg1: float = sin(float(gust_seed) * 12.9898) * 43758.5453
+			var hg2: float = sin(float(gust_seed) * 78.233) * 12543.21
+			var hg3: float = sin(float(gust_seed) * 37.719) * 28001.83
+			gust_off = Vector2((hg1 - floor(hg1)) * 2.0 - 1.0, (hg2 - floor(hg2)) * 2.0 - 1.0) * GUST_AMP
+			gust_t = 1.2 + 1.0 * (hg3 - floor(hg3))
+		var flex_want := Vector2(sin(pend_th_f), sin(pend_th_l)) * JIB_FLEX_M
+		flex_off += (flex_want - flex_off) * (1.0 - exp(-delta / JIB_FLEX_TAU))
+		var fr_n: Dictionary = _frame_at(drop_target_s)
+		var off_h: Vector2 = gust_off + flex_off
+		if off_h.length() > PIVOT_OFF_MAX_M:
+			off_h = off_h.normalized() * PIVOT_OFF_MAX_M
+		target = anchor_target + fr_n["tan"] * off_h.x + fr_n["side"] * off_h.y \
+			+ Vector3(0.0, doff.x, 0.0)
 		target_vel = Vector3(0.0, doff.y, 0.0)
 	# velocity command
 	var desired: Vector3
 	if test_pivot_accel_on:
 		desired = carrier_vel # acceleration is injected below
-	elif arrive:
-		desired = target_vel + (target - anchor_pos) * 1.4
-		if desired.length() > CARRIER_SPEED:
-			desired = desired.normalized() * CARRIER_SPEED
-		# Fix Pass 12 (Item 3): the arrival FLARE, shipped form -
-		# a braking-curve speed cap on the carry's final leg:
-		# |v| <= sqrt(2 * 5 * d). Full-limit braking from the
-		# new 15 m/s cruise otherwise holds the pendulum near
-		# atan(9/9.8) ~ 43 deg through the arrival, and a
-		# release in that swing throws the car metres sideways
-		# (the instrumented stage-11c release measured om_l
-		# -2.65 rad/s, a ~14 m/s tip velocity, and a clean miss
-		# of the road). On the curve the carrier decelerates at
-		# ~5 m/s^2 the whole way in - gentle on the pendulum,
-		# and, unlike an accel cap, it cannot overshoot the
-		# P-law station: speed is a function of distance left.
+	elif hang_phase == "carry":
+		# The slew: a P-law closing on the station under a
+		# braking-curve cap (the FP12 flare's shape, at crane
+		# numbers): |v| <= sqrt(2 * 1.2 * d) and never above
+		# CRANE_SLEW_SPEED, so the trolley is already slow
+		# when it arrives and the pendulum is never dragged
+		# at flight accelerations.
+		desired = (target - anchor_pos) * 1.4
+		var d_rem: float = anchor_pos.distance_to(target)
+		var cap: float = minf(CRANE_SLEW_SPEED, sqrt(2.0 * 1.2 * maxf(d_rem - 0.05, 0.0)))
+		if desired.length() > cap:
+			desired = desired.normalized() * cap
+	elif hang_phase == "dangle":
+		# Split authority at the station: the WINCH (vertical)
+		# keeps the flown-dip authority (gain 2.2, cap 2.0) -
+		# the deep dips need it to slack the chains. The
+		# HORIZONTAL nudge (gusts + flex) is crept after at a
+		# gentler gain and cap: a crane trolley easing against
+		# the weather, and the pendulum is nudged, never
+		# kicked - the settle checks stage this.
+		var dv_v: float = clampf(target_vel.y + (target.y - anchor_pos.y) * 2.2, -2.0, 2.0)
+		var dh: Vector2 = Vector2(target.x - anchor_pos.x, target.z - anchor_pos.z) * 1.1
+		if dh.length() > 0.6:
+			dh = dh.normalized() * 0.6
+		desired = Vector3(dh.x, dv_v, dh.y)
 	else:
-		var to: Vector3 = target - anchor_pos
-		desired = to.normalized() * CARRIER_SPEED if to.length() > 0.01 else Vector3.ZERO
-	# Fix Pass 13 (Item 6): the flare now guards the whole
-	# APPROACH, not just the final leg. The direct route's
-	# penultimate point sits ~1 m above the station, so a
-	# carrier arriving at transport speed (26 m/s) crossed it
-	# at 11+ m/s, overshot the station by ~5 m with the car
-	# swinging low over the neighbouring road, and spent
-	# ~300 frames creeping back on the P-law tail (measured:
-	# every transport ~1700-1830 frames regardless of
-	# distance, and stage-28 hits on the overshoot). The cap
-	# is computed on the REMAINING route (to the current
-	# waypoint, plus the drop from the penultimate point to
-	# the station), so the carrier is already on the curve
-	# while it is still cruising.
-	if hang_phase == "carry":
-		var rem6: float = (target - anchor_pos).length()
-		if not arrive:
-			rem6 += (anchor_target - target).length()
-		var cap6: float = sqrt(2.0 * 5.0 * maxf(rem6 - 0.05, 0.0))
-		if desired.length() > cap6:
-			desired = desired.normalized() * cap6
+		desired = target_vel + (target - anchor_pos) * 2.2
+		if desired.length() > 2.0:
+			desired = desired.normalized() * 2.0
 	# integrate under the accel limit; station-keeping gets a
-	# higher limit (the rig works hard over the drop point -
+	# higher limit (the winch works hard over the drop point -
 	# that authority is what lets it fly the deep dips).
 	var prev_vel: Vector3 = carrier_vel
 	if test_pivot_accel_on:
 		carrier_vel += test_pivot_accel * delta
 	else:
-		var accel_lim: float = 11.0 if hang_phase == "dangle" else CARRIER_ACCEL
-		# (The FP12 flare's first form - an accel cap of 5 on
-		# this branch - was measured RINGING against the P-law
-		# for ~18 s at the station: too weak to shed 15 m/s
-		# inside the P-law's braking distance, it overshot and
-		# oscillated. The shipped flare is the braking-curve
-		# speed cap in the velocity command below.)
+		var accel_lim: float = 11.0 if hang_phase == "dangle" else CRANE_SLEW_ACCEL
 		var dv: Vector3 = desired - carrier_vel
 		var max_dv: float = accel_lim * delta
 		if dv.length() > max_dv:
@@ -5135,31 +5202,13 @@ func _step_carrier(delta: float) -> void:
 	carrier_accel = carrier_accel.lerp(inst_accel, 0.5)
 	anchor_pos += carrier_vel * delta
 	pivot_pos = anchor_pos
-	# Carrier yaw: at speed it faces its velocity; at station it
-	# faces the drop section - both rate-limited, so a heading
-	# change is a turn the car gets twisted through afterwards.
-	# Fix Pass 11 (Item 3): the return is flown as an APPROACH.
-	# The velocity the carrier arrives on points back along the
-	# walk-back - ~180 deg from the drop tangent on a straight -
-	# so facing velocity to the very end left the whole turn to
-	# be spun through at the station while the car dangled
-	# (run 11: "comes in facing the direction you came and
-	# takes a painfully long time to turn around"). From the
-	# final approach on - the last waypoint, or the last ~45 m
-	# (at cruise 9 m/s and CARRIER_YAW_RATE that is >= 5 s,
-	# enough for the full 180) - the yaw goal is the DROP
-	# heading: the turn is flown, not dangled.
-	var yaw_goal: float = carrier_yaw
-	var hv: Vector3 = Vector3(carrier_vel.x, 0.0, carrier_vel.z)
-	var on_approach: bool = hang_phase == "dangle" or (hang_phase == "carry" \
-		and (arrive or anchor_pos.distance_to(anchor_target) < 45.0))
-	if on_approach:
-		yaw_goal = _frame_yaw(_frame_at(drop_target_s)["tan"])
-	elif hv.length() > 0.8:
-		yaw_goal = atan2(-hv.normalized().x, -hv.normalized().z)
+	# Jib yaw: the load's facing turns toward the drop heading
+	# through the slew and holds it at the station (rate-limited,
+	# so the car is twisted gently, never snapped).
+	var yaw_goal: float = _frame_yaw(_frame_at(drop_target_s)["tan"])
 	var max_turn: float = CARRIER_YAW_RATE * delta
 	carrier_yaw += clampf(wrapf(yaw_goal - carrier_yaw, -PI, PI), -max_turn, max_turn)
-	# Slack: a hard flown descent drops the carrier out from
+	# Slack: a hard winch descent drops the pivot out from
 	# under the car faster than the car can follow - measured
 	# acceleration, not the old impulse threshold on a schedule.
 	if hang_phase == "dangle" and carrier_accel.y < DIP_SLACK_ACCEL \
@@ -5170,15 +5219,15 @@ func _step_carrier(delta: float) -> void:
 		hang_vel = (fr_s["tan"] * (pend_om_f * cos(pend_th_f))
 			+ fr_s["side"] * (pend_om_l * cos(pend_th_l))) * HANG_LEN
 		hang_vel += carrier_vel
-	# Arrival at the drop point ends the carry.
+	# Arrival at the station ends the slew.
 	# Fix Pass 11 (Item 3): a yaw gate joins the position and
-	# velocity conditions - the carry does not end until the
-	# carrier has flown its alignment (within 0.08 rad of the
-	# drop heading), so the car is releasable on arrival instead
-	# of dangling through a station spin. The gate is BOUNDED
-	# (3 s of station wait): a pathologically short final leg
+	# velocity conditions - the slew does not end until the jib
+	# has turned its alignment in (within 0.08 rad of the drop
+	# heading), so the car is releasable on arrival instead of
+	# dangling through a station spin. The gate is BOUNDED
+	# (3 s of station wait): a pathologically short slew
 	# degrades to the old behaviour, never to a stuck recovery.
-	if hang_phase == "carry" and carrier_wp >= carrier_path.size() - 1:
+	if hang_phase == "carry":
 		if anchor_pos.distance_to(anchor_target) < 0.08 and carrier_vel.length() < 0.35:
 			var drop_yaw_g: float = _frame_yaw(_frame_at(drop_target_s)["tan"])
 			if absf(wrapf(carrier_yaw - drop_yaw_g, -PI, PI)) < 0.08:
@@ -5196,9 +5245,8 @@ func _step_carrier(delta: float) -> void:
 		else:
 			station_wait_t = 0.0
 
-
 func _update_hang(delta: float) -> void:
-	_step_carrier(delta)
+	_step_crane(delta)
 	match hang_phase:
 		"attach":
 			anchor_t += delta / 1.0
@@ -5214,7 +5262,7 @@ func _update_hang(delta: float) -> void:
 				anchor_t = 0.0
 			return
 		"carry":
-			pass # the carrier flies the retrace path (see _step_carrier)
+			pass # the trolley slews the pivot (see _step_crane)
 		"dangle":
 			pass
 	_step_pendulum(delta)
@@ -6223,42 +6271,7 @@ func _update_telegraph(_delta: float) -> void:
 				0.08 + 0.22 * rumble_haptic_now, 0.09, 0.0)
 
 
-func _update_drone_visual(_delta: float) -> void:
-	if drone == null:
-		return
-	if mode == MODE_HANG:
-		drone.global_position = pivot_pos + Vector3.UP * 0.35
-		# Fix Pass 10 (Item 2): the drone IS the carrier - it sits
-		# at the pivot, yaws with carrier_yaw, and tilts INTO its
-		# measured acceleration like a real lift rig working the
-		# load (nose down accelerating, back under braking, rolled
-		# into a turn). The canned carry tilt and dip wiggles are
-		# retired with the procedural pivot they served.
-		# Fix Pass 6 (Item 4) wire rule still holds: lift-line i
-		# runs drone corner i -> car corner i and no pair can
-		# cross - the car's facing seeks this same carrier_yaw
-		# (with lag), so the two yaws never diverge past a few
-		# degrees in a turn, far from the ~90 deg a crossing
-		# would need.
-		var cf: Vector3 = Vector3(-sin(carrier_yaw), 0.0, -cos(carrier_yaw))
-		var cr: Vector3 = Vector3(-cf.z, 0.0, cf.x)
-		var a_fwd: float = carrier_accel.dot(cf)
-		var a_lat: float = carrier_accel.dot(cr)
-		var tilt: float = clampf(a_fwd * 0.030, -0.38, 0.38) + 0.03 * sin(pend_th_f)
-		var roll: float = clampf(-a_lat * 0.030, -0.38, 0.38) + pend_th_l * 0.4
-		drone.rotation_degrees = Vector3(rad_to_deg(tilt), rad_to_deg(carrier_yaw),
-			rad_to_deg(roll))
-		var dc: Array[Vector3] = _drone_corners()
-		var cc: Array[Vector3] = _car_corners()
-		for i: int in 4:
-			_set_line(line_mis[i], dc[i], cc[i])
-	else:
-		# drone shadows the car from above-behind, lines tucked away
-		var want: Vector3 = car.global_position + Vector3.UP * 7.5 + car.global_transform.basis.z * 4.0
-		drone.global_position = drone.global_position.lerp(want, 0.04)
-		drone.rotation_degrees = Vector3.ZERO
-		for lm: MeshInstance3D in line_mis:
-			lm.visible = false
+
 
 
 # --- debug/test helpers (smoke + render scripts) ---

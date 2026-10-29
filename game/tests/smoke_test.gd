@@ -2,11 +2,11 @@ extends SceneTree
 
 ## Headless smoke for DE Test 1 (fallback mode, scripted inputs through
 ## the production action functions - _do_release /
-## _call_drone / _toggle_lean - plus an autopilot on the wheel):
+## _call_crane / _toggle_lean - plus an autopilot on the wheel):
 ##   Godot --headless --path . --script tests/smoke_test.gd
 ## Stages asserted: drop-start dangle sways -> release -> touchdown
 ## scored -> drive -> climb -> banked corner held -> gap crossed
-## airborne -> on-demand drone lift -> dangle -> release over
+## airborne -> on-demand crane lift -> dangle -> release over
 ## track -> driving resumes -> lean experiment changes grip at
 ## the bank. (The prep sequence this header used to list was
 ## deleted in Fix Pass 13 - stage 5 proves the deletion, and
@@ -476,7 +476,7 @@ func _run() -> void:
 	check(main.mode == main.MODE_HANG and main.hang_phase == "attach",
 		"stage1: race opens with the Drop Start pickup (phase %s)" % main.hang_phase)
 	var ok1: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 3000)
-	check(ok1, "stage1: the transport delivers the car to the Drop Start dangle")
+	check(ok1, "stage1: the pickup + slew delivers the car to the Drop Start dangle")
 	# Fix Pass 5 re-derivation: the dangle is now TWO pendulum axes on
 	# different lengths (resultant path diagonal, never a clean
 	# single-plane rhythm), amplitude clearly above the old 0.74 m
@@ -513,6 +513,13 @@ func _run() -> void:
 	# centred over the ribbon centreline. Zero the pendulum (test-only
 	# state poke; the position measured comes from production
 	# _hang_car_pos) and measure against the frame at drop_target_s.
+	# Fix Pass 15 (Item 2): stage 1's 480-frame swing sample leaves
+	# the crane's pivot converged onto its gust/flex-nudged target
+	# (up to the 0.30 m budget off the station) - the FP2 claim is
+	# about the ARRIVED hang, so re-pose the arrived state through
+	# the suite's own hook first; the nudge creeps the pivot at
+	# most ~0.01 m in the 4 frames before the measure.
+	main.debug_set_hang_dangle()
 	main.pend_th_f = 0.0
 	main.pend_th_l = 0.0
 	main.pend_om_f = 0.0
@@ -876,8 +883,8 @@ func _run() -> void:
 	main.test_throttle = 0.0
 	main.test_boost = false
 
-	# Stage 4: on-demand drone lift -> dangle.
-	main._call_drone()
+	# Stage 4: on-demand crane lift -> dangle.
+	main._call_crane()
 	var dangling: bool = await wait_until(
 		func() -> bool: return main.mode == main.MODE_HANG and main.hang_phase == "dangle", 2500)
 	check(dangling, "stage4: on-demand lift carries the car to a dangle")
@@ -1437,7 +1444,7 @@ func _run() -> void:
 			break
 	main.wheel_angle = 0.0
 	main.test_throttle = 0.0
-	check(dang_b, "stage11b: steering hard over drives the car off the edge into a drone-recovery dangle (mode=%d phase=%s, %d frames)" % [main.mode, main.hang_phase, tf])
+	check(dang_b, "stage11b: steering hard over drives the car off the edge into a crane-recovery dangle (mode=%d phase=%s, %d frames)" % [main.mode, main.hang_phase, tf])
 	check(not main.is_drop_start, "stage11b: this dangle is a recovery, not a Drop Start")
 	# held-grip probe on the LEAN button: a grip parked in
 	# the zone across many polls fires EXACTLY once (a second
@@ -1648,7 +1655,7 @@ func _run() -> void:
 		main.test_throttle = 0.0
 		var dang13: bool = await wait_until(
 			func() -> bool: return main.mode == main.MODE_HANG and main.hang_phase == "dangle", 2500)
-		check(dang13, "stage13: %s - the drone recovery engages after the fall" % side_name)
+		check(dang13, "stage13: %s - the crane recovery engages after the fall" % side_name)
 		main.pend_th_f = 0.0
 		main.pend_th_l = 0.0
 		main.pend_om_f = 0.0
@@ -1719,7 +1726,7 @@ func _run() -> void:
 		"stage15: DIAG zone line names the hand in the zone (%s)" % main._diag_zone_line())
 	main.test_hand_set = false
 
-	# ---------- stage 16: Fix Pass 10 (Item 1) - drone placement ----------
+	# ---------- stage 16: Fix Pass 10 (Item 1) - drop placement ----------
 	# The drop search walks BACK from where the car left the road
 	# and must land on a flat straight piece with
 	# DROP_MIN_RUNUP_M of hazard-free road ahead. Property-check
@@ -1782,7 +1789,7 @@ func _run() -> void:
 			elif main.mode == main.MODE_DRIVE:
 				landed16 = true # made the far side - fixture invalid, say so
 		check(caught16 and not landed16,
-			"stage16: drone catches the gap fall (live)")
+			"stage16: the recovery catches the gap fall (live)")
 		if caught16:
 			check(main.drop_target_s <= main.air_start_s + 0.01,
 				"stage16: live drop at/behind the fall start (drop %.0f <= fall %.0f)" % [main.drop_target_s, main.air_start_s])
@@ -1791,7 +1798,10 @@ func _run() -> void:
 			check(main._drop_piece_ok(main.drop_target_s) and main._drop_runup_ok(main.drop_target_s),
 				"stage16: live drop piece + run-up valid (drop %.0f)" % main.drop_target_s)
 
-	# ---------- stage 17: Fix Pass 10 (Item 2) - pivot-driven flight ----
+	# ---------- stage 17: Fix Pass 10 (Item 2) - pivot-driven hang ----
+	# (Fix Pass 15: the pivot is the crane's trolley now; the
+	# physics claims - lag, equilibrium, yaw spring, settle,
+	# measured-accel slack - are the same claims.)
 	# (a) The pendulum integrates the PIVOT's acceleration: inject
 	# a sustained 3 m/s^2 along the drop frame's tangent. The
 	# swing must LAG first (small angle early) and settle at the
@@ -1867,17 +1877,20 @@ func _run() -> void:
 	var realign17: bool = await wait_until(
 		func() -> bool: return absf(wrapf(main.orient_yaw - main.carrier_yaw, -PI, PI)) < deg_to_rad(1.5), 900)
 	check(realign17, "stage17: car realigns to the carrier after a carrier turn (no permanent twist)")
-	# (c) Production carry: fall off the staircase, get carried
-	# ~110 m back along the retrace path. The flight must EXCITE
-	# the pendulum (accel/braking/turns), the hang must SETTLE
-	# after arrival, and a flown dip at full depth must slack
-	# the lines through MEASURED carrier acceleration.
+	# (c) Production carry: fall off the staircase, get
+	# collected (off-stage, FP15) and SLEWED the ~8.4 m from
+	# the pad to the station. The slew must EXCITE the
+	# pendulum (its seed swing rides through it), the hang
+	# must SETTLE after arrival, and a winch dip at full
+	# depth must slack the lines through MEASURED pivot
+	# acceleration.
 	main._do_release()
 	var drv17: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv17, "stage17: setup release lands into DRIVE")
 	main.debug_warp_to_s(main.stairs_s0 + 15.0)
-	main._call_drone()
-	var path17: int = 0
+	main._call_crane()
+	var pickup_anchor17: Vector3 = main.anchor_pos
+	var slew17: float = 0.0
 	var peak17: float = 0.0
 	var saw_carry17: bool = false
 	var f17: int = 0
@@ -1886,14 +1899,14 @@ func _run() -> void:
 		f17 += 1
 		if main.hang_phase == "carry":
 			saw_carry17 = true
-			path17 = main.carrier_path.size()
+			slew17 = maxf(slew17, main.anchor_pos.distance_to(pickup_anchor17))
 		if saw_carry17:
 			peak17 = maxf(peak17, maxf(absf(main.pend_th_f), absf(main.pend_th_l)))
 		if saw_carry17 and main.hang_phase == "dangle":
 			break
 	main.dip_timer = 1000.0 # settle window stays dip-free; the dip test re-arms it
-	check(saw_carry17 and path17 >= 2,
-		"stage17: recovery flies a retrace path (%d waypoints)" % path17)
+	check(saw_carry17 and slew17 > 5.0,
+		"stage17: recovery slews the pivot from the pad to the station (%.1f m travelled, floor 5.0)" % slew17)
 	check(peak17 > 0.10,
 		"stage17: the carry excites the pendulum (peak %.3f rad, floor 0.10)" % peak17)
 	# settle: with the carrier AT STATION the swing must DECAY at
@@ -1930,9 +1943,9 @@ func _run() -> void:
 			min_acc17 = minf(min_acc17, main.carrier_accel.y)
 		if main.slack_t > 0.0:
 			slack_seen17 = true
-	check(dip_seen17, "stage17: a flown dip occurs at the dangle")
+	check(dip_seen17, "stage17: a winch dip occurs at the dangle")
 	check(min_acc17 < -3.0,
-		"stage17: the dip is real carrier acceleration (min %.1f m/s^2)" % min_acc17)
+		"stage17: the dip is real pivot acceleration (min %.1f m/s^2)" % min_acc17)
 	check(slack_seen17,
 		"stage17: full-depth dip slacks the lines via measured accel (min %.1f, threshold %.1f)" % [min_acc17, main.DIP_SLACK_ACCEL])
 	# and the whole hang still hands off to a drive
@@ -2200,7 +2213,7 @@ func _run() -> void:
 	# Slow run: pinned 16 to the ring, then 10 m/s - below the
 	# top's sqrt(gR) ~= 10.4 - the load goes negative past
 	# vertical and the car detaches INSIDE the ring, falls,
-	# and the drone recovers it onto the MAIN track.
+	# and the crane recovers it onto the MAIN track.
 	main._set_track("circuit")
 	await frames(3)
 	main.start_race()
@@ -2271,7 +2284,7 @@ func _run() -> void:
 	check(air_in_ring21 and main.mode == main.MODE_AIR,
 		"stage21: slow ring entry detaches inside the ring (spur_s %.0f of %.0f-%.0f)" % [last_spur_s21, ring0_21, ring1_21])
 	var hang21: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 6000)
-	check(hang21, "stage21: the fall ends in a drone recovery")
+	check(hang21, "stage21: the fall ends in a crane recovery")
 	if hang21:
 		check(main._drop_piece_ok(main.drop_target_s) and main._drop_runup_ok(main.drop_target_s),
 			"stage21: recovery drop is a qualified MAIN-track piece (s %.0f)" % main.drop_target_s)
@@ -2374,32 +2387,36 @@ func _run() -> void:
 	check(float(audit23["worst"]) <= main.DASH_AUDIT_TOL,
 		"stage23: worst segment-to-handle deviation %.3f m (tol %.3f)" % [float(audit23["worst"]), main.DASH_AUDIT_TOL])
 
-	# ---------- stage 24: Fix Pass 11 (Item 3) - drone approach ----
+	# ---------- stage 24: Fix Pass 11 (Item 3) - the approach ----
 	# Production recovery: warp to circuit s 900, whose drop
-	# piece sits 158 m behind. Fix Pass 13 (Item 6) re-derives
-	# the geometry: the carrier no longer retraces the road
-	# (FP11/12 flew back along the track facing its velocity,
-	# ~180 deg from the drop heading); it flies the DIRECT
-	# chord at transport altitude, facing the chord - still a
-	# real arrival turn (the max yaw error is printed), and
-	# it must still ARRIVE aligned: yaw error at the dangle
-	# transition within the gate's few degrees, the alignment
-	# already flown 30 frames before arrival, and the car's
-	# own facing settled on the drop heading within ~2 s of
-	# arrival (releasable).
+	# piece sits 158 m behind. FP11-FP13 staged the carrier's
+	# ARRIVAL TURN here (the retrace arrived facing backwards;
+	# the direct chord still worked a real turn, max err
+	# printed). Fix Pass 15 (Item 2) retires the question with
+	# the drone: the crane is PLACED on the drop piece facing
+	# the drop heading and the collection happens off-stage,
+	# so the claims become the crane's own, at the same
+	# strength: (i) the pivot never leaves the drop piece's
+	# neighbourhood (its whole journey is the pad-to-station
+	# slew, ~8.4 m - the drone's chord ranged 150+ m of
+	# track); (ii) the jib's yaw NEVER deviates from the drop
+	# heading by more than the arrival gate (there is no turn
+	# to fly and none is spun at the station either); (iii)
+	# it still arrives aligned and the car's own facing is
+	# settled on the drop heading within ~2 s (releasable).
 	main.start_race()
 	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
-	main.dip_timer = 1000.0 # keep flown dips out of the measurements
+	main.dip_timer = 1000.0 # keep winch dips out of the measurements
 	main._do_release()
 	var drv24: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv24, "stage24: setup release lands into DRIVE")
 	main.debug_warp_to_s(900.0)
-	main._call_drone()
+	main._call_crane()
 	var drop_yaw24: float = 0.0
 	var yaw_err_dangle24: float = -1.0
 	var yaw_err_max24: float = 0.0
-	var err_hist24: Array[float] = []
+	var station_dist_max24: float = 0.0
 	var saw_carry24: bool = false
 	var f24: int = 0
 	while f24 < 6000:
@@ -2407,25 +2424,25 @@ func _run() -> void:
 		f24 += 1
 		if main.hang_phase == "carry":
 			saw_carry24 = true
-		if saw_carry24:
+		if main.mode == main.MODE_HANG:
 			drop_yaw24 = main._frame_yaw(main._frame_at(main.drop_target_s)["tan"])
 			var e24: float = absf(wrapf(main.carrier_yaw - drop_yaw24, -PI, PI))
 			yaw_err_max24 = maxf(yaw_err_max24, e24)
-			err_hist24.append(e24)
-			if err_hist24.size() > 30:
-				err_hist24.pop_front()
+			station_dist_max24 = maxf(station_dist_max24,
+				main.anchor_pos.distance_to(main.anchor_target))
 		if saw_carry24 and main.hang_phase == "dangle":
 			yaw_err_dangle24 = absf(wrapf(main.carrier_yaw - drop_yaw24, -PI, PI))
 			break
 	main.dip_timer = 1000.0
 	check(saw_carry24 and yaw_err_dangle24 >= 0.0,
-		"stage24: the recovery carries and arrives (dangle reached)")
-	check(yaw_err_max24 > deg_to_rad(20.0),
-		"stage24: the direct carry still works a real arrival turn (max yaw err %.0f deg)" % rad_to_deg(yaw_err_max24))
+		"stage24: the recovery slews and arrives (dangle reached, %d frames)" % f24)
+	check(station_dist_max24 <= main.HALF_WIDTH + main.CRANE_PICKUP_OFF + 0.6,
+		"stage24: the pivot never leaves the drop piece (max %.1f m from the station, slew bound %.1f)" % [
+			station_dist_max24, main.HALF_WIDTH + main.CRANE_PICKUP_OFF + 0.6])
+	check(yaw_err_max24 < deg_to_rad(5.0),
+		"stage24: the jib faces the drop heading from the first frame (max yaw err %.1f deg)" % rad_to_deg(yaw_err_max24))
 	check(yaw_err_dangle24 >= 0.0 and yaw_err_dangle24 < deg_to_rad(5.0),
-		"stage24: carrier arrives aligned (yaw err %.1f deg at the dangle)" % rad_to_deg(maxf(yaw_err_dangle24, 0.0)))
-	check(err_hist24.size() >= 10 and err_hist24[0] < deg_to_rad(20.0),
-		"stage24: the turn was flown, not spun at the station (err %.1f deg, 30 frames out)" % rad_to_deg(err_hist24[0] if err_hist24.size() > 0 else 999.0))
+		"stage24: the rig arrives aligned (yaw err %.1f deg at the dangle)" % rad_to_deg(maxf(yaw_err_dangle24, 0.0)))
 	var t24: int = 0
 	var aligned24: bool = false
 	while t24 < 180:
@@ -2664,19 +2681,27 @@ func _run() -> void:
 	check(main.panels_visible and main.panel_root.visible and main.diag_root.visible,
 		"stage27: production toggle shows both boards (the R B path calls this)")
 
-	# ---------- stage 28: Fix Pass 12 (Item 3) - drone clearance --
+	# ---------- stage 28: Fix Pass 12 (Item 3) - hang clearance --
 	# Production recoveries, asserted ANALYTICALLY on every frame
 	# of the carry: the carried car (plan disc r=1.7 m at its
 	# centre, floor at its true global AABB min) must never
 	# intersect a ribbon box (surface-0.45..surface over
 	# +-HALF_WIDTH) or a stilt box (0.55 wide, surface down to
-	# the desert floor) of any sample near the route - main
-	# track and spur alike. Cases: (A) the stage-24 walk-back
+	# the desert floor) of any sample near the rig - main
+	# track and spur alike. FP12 wrote this stage for the
+	# drone's ROUTE (a 150-260 m carry at hang height, road
+	# and pylons mid-carry). Fix Pass 15 (Item 2): there is
+	# no route - the collection is off-stage and the crane's
+	# whole journey is the pad-to-station slew - so the claim
+	# is restated at the same analytic strength over what the
+	# hang actually traverses: the car, through attach, slew
+	# and arrival, must never strike the ribbon it hangs over
+	# or a stilt beside it. Cases: (A) the stage-24 walk-back
 	# (fall s 900, drop 158 m behind) re-timed - FP11 needed
-	# 1911 frames end to end; (H) a drone call past the hump
-	# span, whose walk-back crosses all five humps; (G) a
-	# genuine gap fall - the catch is inside the gap, below
-	# road level, and the climb-out crosses the lip.
+	# 1911 frames end to end for the flight; (H) a call past
+	# the hump span, whose drop piece sits just past the
+	# humps (the swing reaches over the sloped samples beside
+	# the piece); (G) a genuine gap fall.
 	var car_meshes28: Array[MeshInstance3D] = []
 	main._collect_meshes(main.car_body, car_meshes28)
 	var run_case28 = func(fall_s: float, label: String, frame_cap: int) -> Array:
@@ -2691,9 +2716,9 @@ func _run() -> void:
 			return [false, 0, "setup release failed"]
 		main.debug_warp_to_s(fall_s)
 		await frames(3)
-		main._call_drone()
+		main._call_crane()
 		await frames(2)
-		# Candidate samples: within 9 m in plan of the flown
+		# Candidate samples: within 9 m in plan of the rig
 		# corridor (path points lerped every ~5 m).
 		var corridor: Array[Vector3] = [main.anchor_pos]
 		var prev_cp: Vector3 = main.anchor_pos
@@ -2820,8 +2845,8 @@ func _run() -> void:
 			main.debug_pin_speed(13.0)
 		elif main.mode == main.MODE_HANG:
 			hang_g28 = true
-	check(hang_g28, "stage28: the gap fall is caught by the drone (drone call from inside the gap)")
-	# fly this recovery out with the same analytic assertion
+	check(hang_g28, "stage28: the gap fall is recovered (crane collects from inside the gap)")
+	# Slew this recovery out with the same analytic assertion.
 	var corridor_g: Array[Vector3] = [main.anchor_pos]
 	var prev_cg: Vector3 = main.anchor_pos
 	for pi2: int in main.carrier_path.size():
@@ -2831,18 +2856,14 @@ func _run() -> void:
 		for si3: int in range(1, seg_ng + 1):
 			corridor_g.append(prev_cg.lerp(nxt_cg, float(si3) / float(seg_ng)))
 		prev_cg = nxt_cg
-	# Fall-site scoping, stated plainly: the gap catch wedges
-	# the car UNDER the far lip (measured: caught ~4.7 m below
-	# the lip's surface at its plan position, on the
-	# centreline, where the lip's own stilt stands). ANY
-	# extraction crosses that one cell - rising through it,
-	# sliding under it, or dodging its stilt - for the ~1-2 s
-	# the drone needs to lift the car out of the hole it fell
-	# into; FP11's attach did the same, unmeasured. That cell
-	# (the gap span plus both lips) is therefore EXEMPT from
-	# the assertion and its brush count is printed for the
-	# record. Everything beyond it - the climb-out's exit,
-	# the whole 260 m carry across the climb - is asserted.
+	# Fall-site scoping, FP15 form: the drone era exempted
+	# the gap cell here because any extraction crossed it.
+	# The crane collects off-stage - there IS no extraction -
+	# so the exemption is retired with the drone: every
+	# sample near the rig is asserted, and only the FP12
+	# station cell (10 m around the drop point, where the
+	# settling swing's low corner brushes the road plane -
+	# measured ~0.17 m, ~0.4 s) counts as brush.
 	var cands_g: Array = []
 	for i3: int in main.t_pts.size():
 		if bool(main.t_gap[i3]):
@@ -2855,8 +2876,7 @@ func _run() -> void:
 				break
 		if near3:
 			var frg: Dictionary = main._frame_at(float(i3))
-			var exempt3: bool = float(i3) >= main.gap_s0 - 4.0 and float(i3) <= main.gap_s1 + 6.0
-			cands_g.append([p3, Vector3(frg["side"]), Vector3(frg["tan"]), i3 % 10 == 0, 0.275, exempt3])
+			cands_g.append([p3, Vector3(frg["side"]), Vector3(frg["tan"]), i3 % 10 == 0, 0.275, false])
 	var hits_g: int = 0
 	var brush_g: int = 0
 	var fg2: int = 0
@@ -2896,15 +2916,15 @@ func _run() -> void:
 				else:
 					hits_g += 1
 	check(hits_g == 0 and saw_carry_g,
-		"stage28: case G carry beyond the fall-site cell is collision-free (hits %d)" % hits_g)
-	print("stage28: case G fall->dangle %d frames from the drone call; fall-site brush %d frame-samples (exempt cell, see comment)" % [fg2, brush_g])
+		"stage28: case G slew is collision-free (hits %d)" % hits_g)
+	print("stage28: case G fall->dangle %d frames from the recovery trigger; station brush %d frame-samples (see comment)" % [fg2, brush_g])
 
 	# ---------- stage 29: Fix Pass 12 (Items 5+6) ----------------
 	# Item 5: the air trigger. The convicted case first: a
 	# 48 m/s launch off the climb top (s 2125, rebound 2.0)
 	# flies 3.64 s and LANDS (the old bare 2.4 s timer snatched
 	# it at 2.41 s). The dip-lip flight (2.32 s) lands too.
-	# Genuine losses still get the drone, and sooner: the
+	# Genuine losses still get the crane, and sooner: the
 	# below-band dwell fires in well under the old 2.4 s.
 	main._set_track("circuit")
 	await frames(3)
@@ -2957,7 +2977,7 @@ func _run() -> void:
 	# what makes it lost.
 	var lost29: Array = await fly_case.call(735.0, 2.0, 30.0)
 	check(not bool(lost29[0]) and int(lost29[1]) < 200,
-		"stage29: a lateral exit off the dip lip is genuinely lost - drone in %.2f s (lateral-exit rule)" % (float(lost29[1]) / 90.0))
+		"stage29: a lateral exit off the dip lip is genuinely lost - crane in %.2f s (lateral-exit rule)" % (float(lost29[1]) / 90.0))
 	# Item 6: the merge arrives aligned, and the garnishes exist.
 	var spur29: Dictionary = main.track_data["circuit"]["spur"]
 	var slen29: float = float(spur29["len"])
@@ -3173,7 +3193,7 @@ func _run() -> void:
 	(main.test_btn["L"] as Dictionary)["ax_button"] = false
 	main._poll_xr_buttons(0.016)
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
-		"stage32: X in the hang is inert (the drone call is DRIVE-only)")
+		"stage32: X in the hang is inert (the crane call is DRIVE-only)")
 	(main.test_btn["R"] as Dictionary)["ax_button"] = true
 	main._poll_xr_buttons(0.016)
 	check(not main.in_boost and main.boost_arm_blocked,
@@ -3267,23 +3287,24 @@ func _run() -> void:
 	check(absf(lean_node33.position.y - base_y33) < 0.002,
 		"stage33: the button returns flush on release")
 
-	# ---------- stage 34: Fix Pass 13 (Item 6) - the split transport ----
-	# (a) Drop Start is a pickup: the car starts ON THE GROUND
-	# beside the start line, the carrier attaches and flies it
-	# to the station; nothing arms during transport (wheel and
-	# drop lever polls are inert in attach/carry), and the
-	# pendulum state crosses the carry->dangle transition
-	# untouched. (b) Two staged falls' catch->dangle seconds,
-	# printed against the FP12 retrace numbers.
+	# ---------- stage 34: Fix Pass 13 (Item 6) - the pickup, FP15 the crane ----
+	# (a) Drop Start is a pickup: the car starts ON THE PAD
+	# beside the start line, the crane attaches, lifts and
+	# slews it to the station; nothing arms during the journey
+	# (wheel and drop lever polls are inert in attach/carry),
+	# and the pendulum state crosses the carry->dangle
+	# transition untouched. (b) Two staged falls'
+	# trigger->dangle seconds, printed against the FP12
+	# retrace numbers the drone era left behind.
 	main._set_track("ribbon")
 	main.dip_timer = 1000.0
 	check(main.mode == main.MODE_HANG and main.hang_phase == "attach",
 		"stage34: Drop Start opens with the attach (phase %s)" % main.hang_phase)
 	var fr34: Dictionary = main._frame_at(2.0)
-	var pickup34: Vector3 = Vector3(fr34["pos"]) + Vector3(fr34["side"]) * (main.HALF_WIDTH + 4.0)
+	var pickup34: Vector3 = Vector3(fr34["pos"]) + Vector3(fr34["side"]) * (main.HALF_WIDTH + main.CRANE_PICKUP_OFF)
 	pickup34.y = float(fr34["pos"].y) + 0.4
 	check(main.car.global_position.distance_to(pickup34) < 0.05,
-		"stage34: the car starts on the ground at the pickup point beside the start line")
+		"stage34: the car starts on the service pad at the pickup point beside the start line")
 	# inert controls during transport (attach here; the same
 	# gates cover carry - the lever/wheel latch conditions
 	# test the dangle phase itself)
@@ -3317,7 +3338,7 @@ func _run() -> void:
 			dang34 = true
 			break
 		pend_prev34 = Vector4(main.pend_th_f, main.pend_th_l, main.pend_om_f, main.pend_om_l)
-	check(dang34, "stage34: the Drop Start transport arrives (dangle after %d frames, %.1f s)" % [f34, float(f34) / 90.0])
+	check(dang34, "stage34: the Drop Start pickup + slew arrives (dangle after %d frames, %.1f s)" % [f34, float(f34) / 90.0])
 	check(pend_jump34 < 0.05,
 		"stage34: pendulum state is continuous across the handover (jump %.3f rad)" % pend_jump34)
 	# (b) the two staged falls
@@ -3333,7 +3354,7 @@ func _run() -> void:
 			return [-1, 0.0]
 		main.debug_warp_to_s(fall_s)
 		await frames(3)
-		main._call_drone()
+		main._call_crane()
 		var n: int = 0
 		var ok: bool = false
 		while n < 6000:
@@ -3344,15 +3365,15 @@ func _run() -> void:
 				break
 		return [n if ok else -1, main.drop_target_s]
 	var fall_a34: Array = await transport34.call(900.0)
-	print("stage34: fall A (s900) catch->dangle %d frames = %.1f s (drop s %.0f); FP12's retrace needed 1482-1559 frames for the carry portion alone, FP11 1911 end to end" % [
+	print("stage34: fall A (s900) trigger->dangle %d frames = %.1f s (drop s %.0f); FP12's retrace needed 1482-1559 frames for the carry portion alone, FP11 1911 end to end" % [
 		int(fall_a34[0]), float(fall_a34[0]) / 90.0, float(fall_a34[1])])
 	check(int(fall_a34[0]) > 0 and int(fall_a34[0]) < 1482,
-		"stage34: fall A transport (%d frames) beats FP12's carry-only frames (1482)" % int(fall_a34[0]))
+		"stage34: fall A crane recovery (%d frames) beats FP12's carry-only frames (1482)" % int(fall_a34[0]))
 	var fall_b34: Array = await transport34.call(3279.0)
-	print("stage34: fall B (s3279, the hairpin walk-back) catch->dangle %d frames = %.1f s (drop s %.0f)" % [
+	print("stage34: fall B (s3279, the hairpin walk-back) trigger->dangle %d frames = %.1f s (drop s %.0f)" % [
 		int(fall_b34[0]), float(fall_b34[0]) / 90.0, float(fall_b34[1])])
 	check(int(fall_b34[0]) > 0,
-		"stage34: fall B transport arrives (drop s %.0f)" % float(fall_b34[1]))
+		"stage34: fall B crane recovery arrives (drop s %.0f)" % float(fall_b34[1]))
 	main._set_track("ribbon")
 	# ---------- stage 35: Fix Pass 14 (Item 1) - THE REBOUND ----
 	# The film study's headline (notes section 3): a big jump
@@ -4135,17 +4156,23 @@ func _run() -> void:
 	main.wheel_angle = 0.0
 	main.test_throttle = 0.0
 
-	# ---------- stage 42: Fix Pass 14 (Item 8) - HANG WANDER + DROP ----
+	# ---------- stage 42: Fix Pass 14 (Item 8) - HANG NUDGE + DROP ----
 	# The base dangle was a perfectly periodic Lissajous:
 	# fore sway half-period 2.36 s with min = max = 2.36-2.37
 	# (harness M7 census, dips frozen) - the film's hang is
-	# irregular and nudged (study section 4). Item 8 wanders
-	# the carrier's station target (hash-scheduled, flown
-	# through the P-law, never scripted into the pendulum).
-	# This stage repeats the M7 census with the wander live
-	# and the dips frozen, so the spread measured is the
-	# wander's alone; the drop fall must stay in the film's
-	# 0.3-0.5 s band (base 0.44 s).
+	# irregular and nudged (study section 4). FP14 wandered
+	# the flying carrier's station target and measured a
+	# 0.31 s spread. Fix Pass 15 (Item 2): the crane's pivot
+	# is FIXED, so the irregularity must come from honest
+	# fixed-pivot sources - desert gusts stepping the station
+	# target and the jib's flex lagging the load. This stage
+	# repeats the M7 census with the nudge live and the dips
+	# frozen (the spread measured is the nudge's alone),
+	# holds the spread floor FP14 set (0.25 s), and adds the
+	# crane's two budget claims: the swing cone stays
+	# bounded, and the pivot never strays past its excursion
+	# budget from the station. The drop fall must stay in
+	# the film's 0.3-0.5 s band (base 0.44 s).
 	main._set_track("ribbon")
 	main.start_race()
 	var ok42: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
@@ -4153,10 +4180,15 @@ func _run() -> void:
 	main.dip_timer = 1000.0 # dips frozen, as in the M7 census
 	var thf42: Array = []
 	var thl42: Array = []
+	var cone42: float = 0.0
+	var poff42: float = 0.0
 	for i42: int in 2700:
 		await physics_frame
 		thf42.append(main.pend_th_f)
 		thl42.append(main.pend_th_l)
+		cone42 = maxf(cone42, Vector2(main.pend_th_f, main.pend_th_l).length())
+		var pa42: Vector3 = main.anchor_pos - main.anchor_target
+		poff42 = maxf(poff42, Vector2(pa42.x, pa42.z).length())
 	var zc42 := func(series: Array) -> Array:
 		var iv: Array = []
 		var last: int = -1
@@ -4191,6 +4223,10 @@ func _run() -> void:
 		"stage42: the fore sway is IRREGULAR now - half-period spread %.2f s (base 0.01)" % (float(sf42[2]) - float(sf42[1])))
 	check(float(sf42[0]) >= 1.9 and float(sf42[0]) <= 2.9,
 		"stage42: the mean sway period stays the pendulum's own (%.2f s)" % float(sf42[0]))
+	check(cone42 < 1.05,
+		"stage42: the swing cone stays bounded under the nudge (max %.2f rad)" % cone42)
+	check(poff42 <= 0.45,
+		"stage42: the pivot honours its excursion budget (max %.2f m from the station, budget %.2f + lag)" % [poff42, main.PIVOT_OFF_MAX_M])
 	main._do_release()
 	var fd42: int = 0
 	while main.mode != main.MODE_DRIVE and fd42 < 300:
