@@ -335,11 +335,21 @@ func grip_press_ctl(kind: String, hand: String = "R") -> void:
 	main.test_hand_set = true
 	# released for two polls (a clean not-gripping state), one
 	# gripped poll (the edge), released again
+	# Fix Pass 16 (Item 4): the SIDE button fires on a SUSTAINED
+	# hold (SIDE_HOLD_S), not a tap - for that kind the gripped
+	# poll repeats until the side actually flips (capped).
 	main.test_grip[hand] = 0.0
 	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
 	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
 	main.test_grip[hand] = 1.0
-	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
+	if kind == "side":
+		var side_was: bool = main.drop_lever_left
+		var polls16: int = 0
+		while main.drop_lever_left == side_was and polls16 < 90:
+			main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
+			polls16 += 1
+	else:
+		main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
 	main.test_grip[hand] = 0.0
 	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
 
@@ -4689,6 +4699,37 @@ func _run() -> void:
 		"stage46: the swept segment fires the grazed control (endpoints outside, path inside)")
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	# (f) Fix Pass 16 (Item 4): SIDE takes a deliberate hold.
+	# A brush (0.2 s in the zone, then out) does NOT flip it; a
+	# sustained in-zone hold does, and the flip is ANNOUNCED on
+	# the readout. The side is restored at the end (the setting
+	# persists - the next run's stage 44 expects its own start).
+	var side_entry46: bool = main.drop_lever_left
+	var side_seg46: Array[Vector3] = main._dash_ctl_segment(main.dash_ctl_kinds.find("side"))
+	var side_mid46: Vector3 = (side_seg46[0] + side_seg46[1]) * 0.5
+	main.test_hand_pos["R"] = side_mid46
+	main.test_grip["R"] = 1.0
+	for ip46: int in 18:
+		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	check(main.drop_lever_left == side_entry46,
+		"stage46: a 0.2 s brush of SIDE does not flip it (deliberate hold)")
+	main.test_hand_pos["R"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	for ip46b: int in 6:
+		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_pos["R"] = side_mid46
+	main.test_grip["R"] = 1.0
+	for ip46c: int in 60:
+		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	check(main.drop_lever_left != side_entry46,
+		"stage46: a sustained 0.6 s hold flips the lever side")
+	check(main.contact_label.text.begins_with("LEVER SIDE:"),
+		"stage46: the flip is announced on the readout (%s)" % main.contact_label.text)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	if main.drop_lever_left != side_entry46:
+		main._toggle_drop_lever_side()
 	main.test_hand_set = false
 
 	print("---")

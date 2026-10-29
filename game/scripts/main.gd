@@ -4030,6 +4030,13 @@ func _toggle_drop_lever_side() -> void:
 	_apply_drop_lever_side()
 	_save_settings()
 	_update_panel()
+	# Fix Pass 16 (Item 4): the flip is ANNOUNCED on the
+	# touchdown readout (run 15's flip was silent and only
+	# discovered later). The DIAG DRP line and the persisted
+	# setting already name the side; now the moment does too.
+	if contact_label != null:
+		contact_label.text = "LEVER SIDE: %s" % ("LEFT" if drop_lever_left else "RIGHT")
+		contact_readout_t = 2.5
 
 
 func _capture_lean_neutral() -> void:
