@@ -4346,8 +4346,15 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 			var d: float = wrapf(ang - grab_prev_ang, -PI, PI)
 			wheel_angle = clampf(wheel_angle + d, -PI, PI)
 			grab_prev_ang = ang
-	elif held and drop_lever_hand != hand \
+	elif held and grab_hand == "" and drop_lever_hand != hand \
 			and _seg_point_dist(prev, pos, hub_w) < WHEEL_GRAB_RADIUS:
+		# Fix Pass 16 (Item 3): the latch takes only a FREE wheel.
+		# FP15's branch let a second gripping hand STEAL the
+		# wheel (re-basing grab_prev_ang to its own angle), so
+		# two held hands fought over grab_hand every frame and
+		# neither ever read as holding - half the both-hands
+		# defect, in the latch itself. A gripping hand on an
+		# OWNED wheel is the passenger instead (rim attach).
 		grab_hand = hand
 		grab_prev_ang = _hand_wheel_angle(hand)
 		grab_wheel_count += 1
@@ -6158,6 +6165,21 @@ func _refresh_car_visuals() -> void:
 	# at _hand_wheel_angle for the sign pairing)
 	if wheel_spin != null:
 		wheel_spin.rotation.y = -wheel_angle
+	# Fix Pass 16 (Item 3): a rim-attached passenger rep is posed
+	# FROM the spin node - its stored grab point rides the rim,
+	# so the hand reads as holding the wheel while it turns.
+	# A detached rep returns to its build transform (identity
+	# under its controller node: the measured hand point).
+	for h3: String in ["L", "R"]:
+		var rep3: Node3D = ctrl_rep.get(h3)
+		if rep3 == null:
+			continue
+		if bool(rim_attach[h3]) and wheel_spin != null:
+			var lp3: Vector3 = rim_local[h3]
+			rep3.global_transform = Transform3D(
+				wheel_spin.global_transform.basis, wheel_spin.global_transform * lp3)
+		elif rep3.transform != Transform3D.IDENTITY:
+			rep3.transform = Transform3D.IDENTITY
 	# Fix Pass 16 (Item 1): the origin dot is the hand's witness -
 	# swollen while the hand has a CANDIDATE in reach, more while
 	# it holds a LATCH. If the dot is small, the hand is on

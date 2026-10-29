@@ -515,6 +515,70 @@ func _run() -> void:
 	var lat_rc: float = rel_rc.dot(fr_rc["side"])
 	check(absf(lat_rc) < 0.05,
 		"recovery hang centred over the centreline (lat offset %.3f m)" % lat_rc)
+	# Capture 2b (Fix Pass 16, Item 3): BOTH HANDS ON THE WHEEL.
+	# The standing defect since Test 1: both hands could GRAB,
+	# but only the driver's rep read as holding - the passenger
+	# rep hung at the raw controller pose while the rim turned
+	# under it. The fix poses the passenger rep from the wheel's
+	# spin node (its grab point stored in spin-local space).
+	# Staged here, in the settled dangle (the wheel is live in
+	# the dangle since FP13, and the hanging car barely moves),
+	# through the production grab path on the test hands; the
+	# assertions measure the REP's transform, not the state -
+	# this layer (controller reps under the XR rig) is exactly
+	# what the headless smoke cannot see, which is why the
+	# defect survived four passes of staged-green lever fixes.
+	var hub_l2b: Vector3 = main._wheel_hub_local()
+	var pv2b: Vector3 = main._wheel_plane_v()
+	var rim_pt2b = func(r: float, phi: float) -> Vector3:
+		return main.car.global_transform * (hub_l2b + r * (cos(phi) * Vector3.RIGHT + sin(phi) * pv2b))
+	var rep_ang2b = func(p: Vector3) -> float:
+		var lc: Vector3 = main.car.to_local(p) - hub_l2b
+		return atan2(lc.dot(pv2b), lc.x)
+	main.test_hand_set = true
+	main.test_hand_pos["R"] = rim_pt2b.call(0.25, -0.6)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.grab_hand == "R", "both-hands: the right hand drives the wheel")
+	main.test_hand_pos["L"] = rim_pt2b.call(0.25, 0.6)
+	main.test_grip["L"] = 1.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(bool(main.rim_attach["L"]), "both-hands: the left hand attaches to the rim")
+	await physics_frame
+	var l_rep_0: Vector3 = main.ctrl_rep["L"].global_position
+	var la0: float = rep_ang2b.call(l_rep_0)
+	check(absf(wrapf(la0 - 0.6, -PI, PI)) < 0.05,
+		"both-hands: the passenger rep sits at its grab point (%.2f rad)" % la0)
+	var wa2b: float = main.wheel_angle
+	main.test_hand_pos["R"] = rim_pt2b.call(0.25, -0.1)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(wrapf(main.wheel_angle - wa2b - 0.5, -PI, PI)) < 0.05,
+		"both-hands: the driver turns the wheel 0.5 rad")
+	await physics_frame
+	var l_rep_1: Vector3 = main.ctrl_rep["L"].global_position
+	var la1: float = rep_ang2b.call(l_rep_1)
+	check(absf(wrapf(la1 - la0 - 0.5, -PI, PI)) < 0.05,
+		"both-hands: the passenger rep RIDES the rim (%.2f -> %.2f rad)" % [la0, la1])
+	var hub_w2b: Vector3 = main.car.global_transform * hub_l2b
+	check(absf(l_rep_1.distance_to(hub_w2b) - l_rep_0.distance_to(hub_w2b)) < 0.01,
+		"both-hands: the passenger rep stays on the rim (radius constant)")
+	check(main.ctrl_rep["R"].global_position.distance_to(main.hand_ctrl["R"].global_position) < 0.0001,
+		"both-hands: the driver rep still equals its controller pose")
+	var cam2b := Camera3D.new()
+	main.car_body.add_child(cam2b)
+	cam2b.fov = 55.0
+	cam2b.position = Vector3(0.0, 1.32, 0.38)
+	cam2b.look_at(hub_w2b, Vector3.UP)
+	await snap(cam2b, "both_hands_wheel.png")
+	cam2b.queue_free()
+	# restore: wheel back to its entry angle, grips released
+	main.test_hand_pos["R"] = rim_pt2b.call(0.25, -0.6)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_grip["L"] = 0.0
+	main.test_grip["R"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_set = false
 	# Fix Pass 5: the lift proof now shoots the car hanging at a
 	# DIAGONAL - both pendulum axes displaced, so the hang direction
 	# (and with it the car attitude, via the lagged orientation)
