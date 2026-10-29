@@ -1832,7 +1832,14 @@ func _build_spur(d: Dictionary) -> void:
 	var edge_pos := PackedVector3Array()
 	var edge_nrm := PackedVector3Array()
 	var edge_col := PackedColorArray()
-	var surf_c := Color(0.07, 0.07, 0.09)
+	# Fix Pass 18 (micro): the main field is ASPHALT GREY -
+	# same value as the tracks' surf_c in
+	# _build_track_meshes; colour only. (What read "brown"
+	# on device was never this field at all: the box
+	# sections' winding was inverted, so the driver saw the
+	# underside's bot_c through the culled top - see the
+	# _add_quad_m note. This value is judged on device.)
+	var surf_c := Color(0.30, 0.30, 0.33)
 	var skirt_c := Color(1.0, 0.5, 0.05)
 	var bot_c := Color(0.55, 0.27, 0.03)
 	var edge_c := Color(1.0, 0.72, 0.10)
@@ -1864,19 +1871,19 @@ func _build_spur(d: Dictionary) -> void:
 		var up_avg: Vector3 = (u0 + u1) * 0.5
 		var side_avg: Vector3 = (s0 + s1) * 0.5
 		var on_ring: bool = i10 >= ring_i0 and i10 <= ring_i0 + 68
-		_add_quad(surf_pos, surf_nrm, surf_col, l0, r0, r1, l1, up_avg, surf_c)
-		_add_quad(skirt_pos, skirt_nrm, skirt_col, l0, l1, bl1, bl0, -side_avg, skirt_c)
-		_add_quad(skirt_pos, skirt_nrm, skirt_col, r1, r0, br0, br1, side_avg, skirt_c)
-		_add_quad(skirt_pos, skirt_nrm, skirt_col, bl1, br1, br0, bl0, -up_avg,
+		_add_quad_m(surf_pos, surf_nrm, surf_col, l0, r0, r1, l1, up_avg, surf_c)
+		_add_quad_m(skirt_pos, skirt_nrm, skirt_col, l0, l1, bl1, bl0, -side_avg, skirt_c)
+		_add_quad_m(skirt_pos, skirt_nrm, skirt_col, r1, r0, br0, br1, side_avg, skirt_c)
+		_add_quad_m(skirt_pos, skirt_nrm, skirt_col, bl1, br1, br0, bl0, -up_avg,
 			ring_c if on_ring else bot_c)
 		if on_ring:
 			# underside amber strips, continuous (a hoop
 			# outline, not optic flow - undashed), 2 cm proud
 			# of the underside so they never z-fight it.
-			_add_quad(edge_pos, edge_nrm, edge_col,
+			_add_quad_m(edge_pos, edge_nrm, edge_col,
 				bl1 - u1 * 0.02, bl1 + s1 * EDGE_STRIP_W - u1 * 0.02, bl0 + s0 * EDGE_STRIP_W - u0 * 0.02, bl0 - u0 * 0.02,
 				-up_avg, edge_c)
-			_add_quad(edge_pos, edge_nrm, edge_col,
+			_add_quad_m(edge_pos, edge_nrm, edge_col,
 				br1 - s1 * EDGE_STRIP_W - u1 * 0.02, br1 - u1 * 0.02, br0 - u0 * 0.02, br0 - s0 * EDGE_STRIP_W - u0 * 0.02,
 				-up_avg, edge_c)
 		# Fix Pass 11 (Item 5): the edge strips are DASHED
@@ -1884,10 +1891,10 @@ func _build_spur(d: Dictionary) -> void:
 		# speed; a continuous strip on a flat surface gives the
 		# eye nothing temporal to measure speed against.
 		if i10 % 5 < 3:
-			_add_quad(edge_pos, edge_nrm, edge_col,
+			_add_quad_m(edge_pos, edge_nrm, edge_col,
 				l0 + u0 * 0.02, l0 + s0 * EDGE_STRIP_W + u0 * 0.02, l1 + s1 * EDGE_STRIP_W + u1 * 0.02, l1 + u1 * 0.02,
 				up_avg, edge_c)
-			_add_quad(edge_pos, edge_nrm, edge_col,
+			_add_quad_m(edge_pos, edge_nrm, edge_col,
 				r0 + u0 * 0.02, r0 - s0 * EDGE_STRIP_W + u0 * 0.02, r1 - s1 * EDGE_STRIP_W + u1 * 0.02, r1 + u1 * 0.02,
 				up_avg, edge_c)
 		if i10 % 12 == 0:
@@ -2418,7 +2425,27 @@ func _build_track_meshes(d: Dictionary) -> void:
 	var stilt_nrm := PackedVector3Array()
 	var stilt_col := PackedColorArray()
 	var hw: float = HALF_WIDTH
-	var surf_c := Color(0.07, 0.07, 0.09)
+	# Fix Pass 18 (micro): the main field is ASPHALT GREY
+	# (was near-black 0.07/0.07/0.09, which read brown
+	# against the tan desert - the owner: "more road
+	# colored, not brown"). Neutral with a faint cool bias
+	# so the warm sun cannot push it back toward tan; it
+	# separates from the desert (0.76/0.62/0.42) by hue AND
+	# value. Colour only: no geometry, no markings change -
+	# the amber centre band and edge strips keep their
+	# identity, and the band's step over the surface is now
+	# carried by hue plus ~2x luminance (was ~8x luminance
+	# over the near-black; see the FP15 note below, whose
+	# step figure predates this re-base).
+	# Fix Pass 18 (micro): the main field goes from
+	# near-black (0.07, 0.07, 0.09) to ASPHALT GREY - the
+	# owner's word was "more road colored, not brown". Cool
+	# neutral, a clear step DOWN in luminance from the tan
+	# desert (0.76, 0.62, 0.42) and up from the old field,
+	# so the ribbon separates from the terrain by value as
+	# well as hue. Colour only: no geometry, fog, or light
+	# changes in this pass; the tracks pass owns those.
+	var surf_c := Color(0.30, 0.30, 0.33)
 	var skirt_c := Color(1.0, 0.5, 0.05)
 	var bot_c := Color(0.55, 0.27, 0.03)
 	var edge_c := Color(1.0, 0.72, 0.10)
@@ -2440,9 +2467,14 @@ func _build_track_meshes(d: Dictionary) -> void:
 	# in an empty scene, or lifted metres into the air).
 	# As part of the surface it cannot be depth-eaten; it
 	# shades and fogs with the road, which costs the
-	# unshaded punch of the guides but keeps the ~8x
-	# luminance step over the asphalt everywhere the road
-	# itself is visible. Width 1.1 m: at the guide's 0.55
+	# unshaded punch of the guides but keeps the luminance
+	# step over the asphalt everywhere the road itself is
+	# visible. (FP18: over the grey field the step is ~2x
+	# luminance plus a strong hue separation - warm amber
+	# on cool grey - rather than the ~8x the near-black
+	# field gave; the band is also RENDERED only since
+	# FP18's winding fix - before that it existed in the
+	# mesh data but was culled with the rest of the top.) Width 1.1 m: at the guide's 0.55
 	# the trace would shrink to a hairline at dip ranges.
 	# Smoke stage 45 asserts the band's presence in the
 	# mesh (a third of the surface vertices, on the
@@ -2476,23 +2508,23 @@ func _build_track_meshes(d: Dictionary) -> void:
 		var cr0: Vector3 = p0 + s0 * 0.55
 		var cl1: Vector3 = p1 - s1 * 0.55
 		var cr1: Vector3 = p1 + s1 * 0.55
-		_add_quad(surf_pos, surf_nrm, surf_col, l0, cl0, cl1, l1, up_avg, surf_c)
-		_add_quad(surf_pos, surf_nrm, surf_col, cl0, cr0, cr1, cl1, up_avg, centre_c)
-		_add_quad(surf_pos, surf_nrm, surf_col, cr0, r0, r1, cr1, up_avg, surf_c)
+		_add_quad_m(surf_pos, surf_nrm, surf_col, l0, cl0, cl1, l1, up_avg, surf_c)
+		_add_quad_m(surf_pos, surf_nrm, surf_col, cl0, cr0, cr1, cl1, up_avg, centre_c)
+		_add_quad_m(surf_pos, surf_nrm, surf_col, cr0, r0, r1, cr1, up_avg, surf_c)
 		# box-section sides (skirts) + underside
-		_add_quad(skirt_pos, skirt_nrm, skirt_col, l0, l1, bl1, bl0, -side_avg, skirt_c)
-		_add_quad(skirt_pos, skirt_nrm, skirt_col, r1, r0, br0, br1, side_avg, skirt_c)
-		_add_quad(skirt_pos, skirt_nrm, skirt_col, bl1, br1, br0, bl0, -up_avg, bot_c)
+		_add_quad_m(skirt_pos, skirt_nrm, skirt_col, l0, l1, bl1, bl0, -side_avg, skirt_c)
+		_add_quad_m(skirt_pos, skirt_nrm, skirt_col, r1, r0, br0, br1, side_avg, skirt_c)
+		_add_quad_m(skirt_pos, skirt_nrm, skirt_col, bl1, br1, br0, bl0, -up_avg, bot_c)
 		# edge strips, raised 0.02 (unshaded: they stay bright at distance)
 		# Fix Pass 11 (Item 5): DASHED (3 m on / 2 m off) - optic
 		# flow for the raised top speed; a continuous strip on a
 		# flat untextured surface gives the eye nothing temporal
 		# to measure speed against.
 		if i % 5 < 3:
-			_add_quad(edge_pos, edge_nrm, edge_col,
+			_add_quad_m(edge_pos, edge_nrm, edge_col,
 				l0 + u0 * 0.02, l0 + s0 * EDGE_STRIP_W + u0 * 0.02, l1 + s1 * EDGE_STRIP_W + u1 * 0.02, l1 + u1 * 0.02,
 				up_avg, edge_c)
-			_add_quad(edge_pos, edge_nrm, edge_col,
+			_add_quad_m(edge_pos, edge_nrm, edge_col,
 				r0 - s0 * EDGE_STRIP_W + u0 * 0.02, r0 + u0 * 0.02, r1 + u1 * 0.02, r1 - s1 * EDGE_STRIP_W + u1 * 0.02,
 				up_avg, edge_c)
 		# stilts every 10 m down to the ground (Fix Pass 9: the
@@ -2520,6 +2552,25 @@ func _add_quad(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorAr
 		pp.append(v)
 		nn.append(n)
 		cc.append(col)
+
+
+func _add_quad_m(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorArray,
+		a: Vector3, b: Vector3, c: Vector3, d: Vector3, n: Vector3, col: Color) -> void:
+	# Fix Pass 18: MIRRORED corner order (a-d-c-b). _add_quad's
+	# a-b-c / a-c-d walk is back-facing from the stated normal's
+	# side in this renderer - FP12 convicted the same bug on the
+	# guide strip and chevrons and mirrored them locally; the
+	# ribbon box sections (surface, skirts, underside, edge
+	# strips) kept the naive order, so the road's top has been
+	# culled from above since the box section was built and the
+	# driver has been looking at the box's UNDERSIDE (bot_c
+	# brown) through it - the FP15 centre band, present in the
+	# mesh data, never rendered at all. Proven by bisect: the
+	# built surface with flipped triangle order renders its
+	# vertex colours from above; unflipped it draws nothing
+	# there under any material. The stated normals were always
+	# correct - only the winding was inverted.
+	_add_quad(pp, nn, cc, a, d, c, b, n, col)
 
 
 func _add_box_verts(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorArray,
