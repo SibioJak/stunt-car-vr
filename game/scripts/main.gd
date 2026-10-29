@@ -355,7 +355,15 @@ const REBOUND_DEEP_HIT_WINDOW: float = 0.5 # seconds a deep hit stays evidence
 const REBOUND_GATE_VY: float = 4.5 # impact vy (m/s) that arms the energy return
 const REBOUND_THROW_FRAC: float = 0.62 # gated throw cap = this x impact vy
 const REBOUND_THROW_CAP: float = 6.2 # absolute ceiling on the gated throw, m/s
-const REBOUND_CHAIN_RESET_S: float = 0.5 # grounded seconds that re-arm the return
+const REBOUND_CHAIN_RESET_S: float = 0.5
+# Fix Pass 14 (Item 7): flight attitude. The film study
+# (section 3): through a real flight the nose-down attitude
+# BUILDS - the car leaves on the lip's angle and arrives
+# slope-matched, nose-first. The build is quadratic in air
+# time (a constant angular acceleration of the attitude),
+# capped so a very long flight cannot arrive inverted.
+const AIR_NOSE_DOWN_ACCEL: float = 0.349 # rad/s^2 of attitude build (~20 deg/s^2)
+const AIR_NOSE_DOWN_MAX: float = 0.489 # rad (~28 deg) cap on the build # grounded seconds that re-arm the return
 # The return stroke itself (measured, see _susp_integrate):
 # with the stock rate the gated throw reached only 1.33 m/s
 # of its 3.66 cap on the staged gap landing - the impact's
@@ -677,6 +685,7 @@ var bounce_pending: bool = false # suspension asked to go airborne
 var bounce_vy: float = 0.0
 var pending_rebound: bool = false # FP14 (Item 1): the pending bounce is the spring-throw route
 var air_from_rebound: bool = false # FP14 (Item 1): this flight began as a spring rebound
+var air_basis0: Basis = Basis.IDENTITY # FP14 (Item 7): the takeoff basis a road flight's attitude builds from
 var air_from_release: bool = false # FP14 (Item 1): this flight began as a drone release (a drop, not a jump)
 var rebound_gate_vy: float = 0.0 # FP14 (Item 1): impact vy of an armed energy return (0 = unarmed)
 var deep_hit_age: float = 9.0 # FP14 (Item 2): seconds since the last deep compression (route-2 evidence)
@@ -2485,6 +2494,7 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 	lost_lat_t = 0.0
 	air_exit_y = float(fr["pos"].y)
 	air_from_gap = from_gap
+	air_basis0 = car.global_transform.basis # FP14 (Item 7): attitude builds from the takeoff basis
 	air_from_rebound = false # FP14 (Item 1): callers that throw the car set this after entry
 	air_from_release = false # FP14 (Item 1): a road-born flight; _do_release marks its own
 	grounded_t = 0.0
@@ -4553,6 +4563,21 @@ func _update_air(delta: float) -> void:
 	air_vel.y -= GRAV * delta
 	var pos: Vector3 = car.global_position + air_vel * delta
 	car.global_position = pos
+	# Fix Pass 14 (Item 7): the flight attitude - nose-down
+	# builds quadratically through the flight from the
+	# takeoff basis (film study section 3: slope-matched,
+	# nose-first arrivals). Absolute from air_basis0 each
+	# frame, never integrated, so there is no drift to
+	# unwind at the landing; _land reads this basis for its
+	# tilt ruling, so a slope-matched arrival grades like
+	# one. Drone drops are EXCLUDED (air_from_release):
+	# FP13's touchdown behaviour is the drop's whole
+	# contract, and a 0.44 s fall would only pick up ~2 deg
+	# of build against the pendulum's own tilt story.
+	if not air_from_release:
+		var off7: float = clampf(-0.5 * AIR_NOSE_DOWN_ACCEL * air_time * air_time, -AIR_NOSE_DOWN_MAX, 0.0)
+		if off7 != 0.0:
+			car.global_transform = Transform3D(air_basis0.rotated(air_basis0.x.normalized(), off7), pos)
 	# Fix Pass 9: the track s estimate comes from projecting the
 	# car's ACTUAL position (the old forward-motion integration
 	# assumed the velocity followed the spine - under the

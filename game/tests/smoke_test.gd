@@ -4035,6 +4035,106 @@ func _run() -> void:
 	main.wheel_angle = 0.0
 	main.test_throttle = 0.0
 
+	# ---------- stage 41: Fix Pass 14 (Item 7) - GUARDS + FLIGHT ATTITUDE ----
+	# (a) FLAT = DEAD STEADY, still: the harness protocol
+	# verbatim (home straight, pin 30, unsteered, jitter
+	# OFF, springs poked to rest - means AND corners on the
+	# per-wheel tree). Base measurements: view heave p2p
+	# 0.7-1.9 mm, heading max deviation from its mean
+	# 0.000 deg. Items 1-6 must not have bought their
+	# motion with flat-road noise, and nothing in the pass
+	# may manufacture yaw.
+	main._set_track("ribbon")
+	main.jitter_on = false
+	main.test_throttle = 0.0
+	var hy41: Array = []
+	var hd41: Array = []
+	for seg41: int in 2:
+		main.debug_warp_to_s(main.track_len - 175.0)
+		main.wheel_angle = 0.0
+		main.c_f = main.SUSP_REST
+		main.c_r = main.SUSP_REST
+		main.cv_f = 0.0
+		main.cv_r = 0.0
+		for k41: int in 4:
+			main.susp_c[k41] = main.SUSP_REST
+			main.susp_cv[k41] = 0.0
+		main.body_sink = 0.0
+		main.body_sink_v = 0.0
+		for i41: int in 450:
+			main.debug_pin_speed(30.0)
+			await physics_frame
+			if i41 >= 120:
+				hy41.append(main.view_node.position.y - main.body_sink)
+				var fr41: Dictionary = main._frame_at(main.car_s)
+				hd41.append(wrapf(main.car_heading - main._frame_yaw(fr41["tan"]), -PI, PI))
+	var hymax41: float = -1e9
+	var hymin41: float = 1e9
+	for v41: float in hy41:
+		hymax41 = maxf(hymax41, v41)
+		hymin41 = minf(hymin41, v41)
+	var hdmean41: float = 0.0
+	for v41b: float in hd41:
+		hdmean41 += v41b
+	hdmean41 /= float(hd41.size())
+	var hdmax41: float = 0.0
+	for v41c: float in hd41:
+		hdmax41 = maxf(hdmax41, absf(v41c - hdmean41))
+	print("stage41: flat guard - view heave p2p %.4f m, heading max dev from mean %.4f deg (base: 0.0007-0.0019 m, 0.000 deg)" % [hymax41 - hymin41, rad_to_deg(hdmax41)])
+	check(hymax41 - hymin41 < 0.003,
+		"stage41: the flat stays dead steady - view heave p2p %.2f mm" % ((hymax41 - hymin41) * 1000.0))
+	check(rad_to_deg(hdmax41) < 0.05,
+		"stage41: no manufactured yaw on the flat - heading dev %.4f deg" % rad_to_deg(hdmax41))
+	# (b) FLIGHT ATTITUDE: the circuit gap at 33 (stage 35's
+	# staging). The basis pitch must BUILD nose-down through
+	# the flight (Item 7: quadratic from the takeoff basis)
+	# and arrive near the landing slope - the film's
+	# slope-matched, nose-first arrival. At base the basis
+	# was frozen at the takeoff pitch (+10 deg lip against a
+	# -3.4 deg landing slope). Heading must not move at all.
+	main._set_track("circuit")
+	main.jitter_on = true
+	main.debug_warp_to_s(main.gap_s0 - 55.0)
+	main.test_throttle = 0.0
+	var p_first41: float = 999.0
+	var p_last41: float = 0.0
+	var hdg_first41: float = 0.0
+	var hdg_last41: float = 0.0
+	var slope41: float = 0.0
+	var ep_len41: int = 0
+	var got41: bool = false
+	for f41: int in 1500:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(33.0)
+		await physics_frame
+		if main.mode == main.MODE_AIR:
+			ep_len41 += 1
+			var fwd41: Vector3 = -main.car.global_transform.basis.z.normalized()
+			var pit41: float = asin(clampf(fwd41.y, -1.0, 1.0))
+			if ep_len41 == 1:
+				p_first41 = pit41
+				hdg_first41 = main.car_heading
+			p_last41 = pit41
+			hdg_last41 = main.car_heading
+			slope41 = asin(clampf(Vector3(main._frame_at(main.air_s_est)["tan"]).y, -1.0, 1.0))
+		elif ep_len41 > 0:
+			if ep_len41 >= 45:
+				got41 = true
+				break
+			ep_len41 = 0
+			p_first41 = 999.0
+	print("stage41: gap flight - pitch first %.2f deg, last %.2f deg (build %.2f deg nose-down), landing slope %.2f deg, heading drift %.4f deg" % [
+		rad_to_deg(p_first41), rad_to_deg(p_last41), rad_to_deg(p_first41 - p_last41), rad_to_deg(slope41), rad_to_deg(absf(wrapf(hdg_last41 - hdg_first41, -PI, PI)))])
+	check(got41, "stage41: a full gap flight was staged (%d frames)" % ep_len41)
+	check(rad_to_deg(p_first41 - p_last41) >= 3.0,
+		"stage41: nose-down attitude BUILDS through the flight (%.2f deg)" % rad_to_deg(p_first41 - p_last41))
+	check(absf(rad_to_deg(p_last41 - slope41)) <= 6.0,
+		"stage41: the arrival is slope-matched (contact pitch %.2f vs slope %.2f deg)" % [rad_to_deg(p_last41), rad_to_deg(slope41)])
+	check(absf(wrapf(hdg_last41 - hdg_first41, -PI, PI)) < deg_to_rad(0.01),
+		"stage41: no yaw is manufactured in flight (drift %.4f deg)" % rad_to_deg(absf(wrapf(hdg_last41 - hdg_first41, -PI, PI))))
+	main.wheel_angle = 0.0
+	main.test_throttle = 0.0
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
