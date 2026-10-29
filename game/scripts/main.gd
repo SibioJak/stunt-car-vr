@@ -1101,6 +1101,15 @@ func _box(parent: Node, size: Vector3, pos: Vector3, mat: Material, bname: Strin
 
 
 func _ready() -> void:
+	# Fix Pass 16 (Item 5): the grab session log - one line per
+	# grab event, truncated per session, at user://grab_log.txt
+	# (next to settings.cfg). If a grab ever fails silently in
+	# the headset again, this file is the witness the staged
+	# suite structurally cannot be.
+	grab_log_file = FileAccess.open("user://grab_log.txt", FileAccess.WRITE)
+	if grab_log_file != null:
+		grab_log_file.store_line("FP16 grab log - events: LAT latch, FIRE activation, EARLY lever release, NOLAT zone entry unlatched, RIM passenger attach")
+		grab_log_file.flush()
 	_load_settings()
 	_build_environment()
 	track_data["ribbon"] = _build_ribbon()
@@ -1123,6 +1132,9 @@ func _notification(what: int) -> void:
 			or what == NOTIFICATION_WM_CLOSE_REQUEST \
 			or what == NOTIFICATION_EXIT_TREE:
 		_set_audio_latched(true)
+		if what == NOTIFICATION_EXIT_TREE and grab_log_file != null:
+			grab_log_file.close() # FP16 (Item 5): the session log ends with the session
+			grab_log_file = null
 	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
 		_set_audio_latched(false)
 
@@ -3303,6 +3315,9 @@ func _build_diag_block() -> String:
 		lines.append("BTN -")
 	else:
 		lines.append("BTN " + " ".join(hang_btn_log))
+	# Fix Pass 16 (Item 5): the last grab event rides the board -
+	# the grab path's own account, in the driver's face.
+	lines.append("GRAB %s" % (grab_last_event if grab_last_event != "" else "-"))
 	return "\n".join(lines)
 
 
@@ -4550,6 +4565,16 @@ func _activate_dash_ctl(kind: String) -> void:
 # ---------------------------------------------------------------- actions
 
 func start_race() -> void:
+	# Fix Pass 16 (Item 5): close the previous race's grab
+	# account into the session log before the state resets -
+	# fires, latches, early releases, rescued chatter dips, and
+	# each hand's session squeeze peak (a channel that never
+	# rises, or a squeeze that never peaks, reads here).
+	if grab_fire_count + grab_wheel_count + grab_lever_count + grab_chatter_count > 0:
+		_grab_event("SUMMARY fire %d wheel %d lever %d early %d chatter %d peak L %.2f R %.2f" % [
+			grab_fire_count, grab_wheel_count, grab_lever_count,
+			grab_early_count, grab_chatter_count,
+			float(grab_peak["L"]), float(grab_peak["R"])])
 	mode = MODE_HANG
 	hang_phase = "attach" # Fix Pass 13 (Item 6): Drop Start is a pickup + transport now
 	is_drop_start = true

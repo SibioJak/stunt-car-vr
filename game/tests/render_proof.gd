@@ -279,7 +279,7 @@ func _run() -> void:
 			"restart", "lean", "track", "Recenter", "SPACE", "W/S", "V track",
 			"DIAG", "ANCHOR", "CAMH", "HLD", "Jitter", "JIT", "CONTACT",
 			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP LEVER", "Panels", "TAB",
-			"amber view", "G view", "lever side", "M lever"]:
+			"amber view", "G view", "lever side", "M lever", "GRAB"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)
 	check(main.wheel_node != null, "grab wheel exists")
 	# Fix Pass 13 (Item 1): the prep switches are deleted -

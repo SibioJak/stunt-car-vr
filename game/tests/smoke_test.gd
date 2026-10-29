@@ -4730,6 +4730,15 @@ func _run() -> void:
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	if main.drop_lever_left != side_entry46:
 		main._toggle_drop_lever_side()
+	# (g) Fix Pass 16 (Item 5): the telemetry shipped - the
+	# event ring carries this stage's own latches and fires,
+	# the DIAG block carries the GRAB line, the log is open.
+	var ev46: String = " ".join(main.grab_events)
+	check(main.grab_events.size() > 0 and ev46.contains("DRP FIRE") and ev46.contains("WHEEL LAT"),
+		"stage46: telemetry ring carries the stage's events (%d events)" % main.grab_events.size())
+	check(main._build_diag_block().contains("GRAB"),
+		"stage46: the DIAG block carries the GRAB line")
+	check(main.grab_log_file != null, "stage46: the session grab log is open")
 	main.test_hand_set = false
 
 	print("---")
