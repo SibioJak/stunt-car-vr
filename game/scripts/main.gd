@@ -4176,6 +4176,31 @@ func _grab_event(ev: String) -> void:
 		grab_log_file.flush()
 
 
+func _hand_owner(hand: String) -> String:
+	# Fix Pass 17 (Item 1): hand ownership - the grab path's
+	# arbitration state. A hand owns at most one control class
+	# at a time: the wheel (driver), the rim (passenger), the
+	# drop lever, or a dash latch (one-shots and the seat trims
+	# alike). Every acquisition in _poll_grab is gated on the
+	# hand owning NOTHING - or the dash class itself, for
+	# Fix Pass 9's squeeze-and-sweep between dash controls.
+	# Ownership ends only on grip release (the FP16 latches'
+	# own clearing), never on a zone exit. The owner's own run-16
+	# log convicted the need: at T14.8 one squeeze both fired
+	# the drop lever and rim-attached (L RIM ATT + L DRP FIRE) -
+	# with the wheel free, that hand could have latched the
+	# WHEEL and pulled a steer instead of a drop.
+	if grab_hand == hand:
+		return "wheel"
+	if bool(rim_attach[hand]):
+		return "rim"
+	if drop_lever_hand == hand:
+		return "lever"
+	if int(dash_ctl_fired[hand]) >= 0:
+		return "dash"
+	return ""
+
+
 func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	# Fix Pass 16 (Item 1) - OPERATION FIX THE FUCKING LEVERS:
 	# this function was rebuilt around the Item 0 differential
@@ -4248,6 +4273,46 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	# 15 m/s of hand - far past any real pass-through.
 	if prev.distance_to(pos) > 0.25:
 		prev = pos
+	# Fix Pass 17 (Item 1): cross-class arbitration. An unowned,
+	# held hand inside several tests in the same frame takes
+	# the NEAREST (the tests' own distances, swept like the
+	# acquisitions they gate); entries in different frames are
+	# ordered by ownership itself - the first acquisition owns
+	# the hand until release, so later arrivals never evaluate.
+	# Exact ties resolve in this poll's own order: lever, dash,
+	# wheel (strict <, first minimum kept). The loser records
+	# nothing: no latch, no attach, no event.
+	var owner17: String = _hand_owner(hand)
+	var win17: String = ""
+	if held and owner17 == "":
+		var d_lever17: float = 1e9
+		var d_dash17: float = 1e9
+		var d_wheel17: float = 1e9
+		if drop_lever_hand == "" and mode == MODE_HANG and hang_phase == "dangle":
+			var lseg17: Array = debug_drop_lever_segment()
+			if lseg17.size() == 2:
+				d_lever17 = _seg_seg_dist(prev, pos, lseg17[0], lseg17[1])
+				if d_lever17 > DROP_LEVER_GRAB_RADIUS:
+					d_lever17 = 1e9
+		var cd17: Array = _dash_ctl_near_swept_d(prev, pos)
+		if int(cd17[0]) >= 0:
+			d_dash17 = float(cd17[1])
+		var wl17: bool = mode == MODE_DRIVE or mode == MODE_AIR \
+			or (mode == MODE_HANG and hang_phase == "dangle")
+		if wl17 and grab_hand == "":
+			d_wheel17 = _seg_point_dist(prev, pos, car.global_transform * _wheel_hub_local())
+			if d_wheel17 >= WHEEL_GRAB_RADIUS:
+				d_wheel17 = 1e9
+		var best17: float = 1e9
+		if d_lever17 < best17:
+			best17 = d_lever17
+			win17 = "lever"
+		if d_dash17 < best17:
+			best17 = d_dash17
+			win17 = "dash"
+		if d_wheel17 < best17:
+			best17 = d_wheel17
+			win17 = "wheel"
 	# Item 5 telemetry: a zone ENTRY with no latch is the
 	# near-miss signature - it separates "the hand never
 	# arrived" (no entry) from "the grip never read" (entry,
@@ -4282,7 +4347,8 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	# also latch the lever - the two grabs never fight over
 	# one hand. FP16: the proximity test is the swept segment.
 	elif held and drop_lever_hand == "" and _hand_near_drop_lever_swept(prev, pos) \
-			and mode == MODE_HANG and hang_phase == "dangle" and grab_hand != hand:
+			and mode == MODE_HANG and hang_phase == "dangle" and grab_hand != hand \
+			and win17 == "lever": # FP17 (Item 1): arbitration - an owned hand, or a nearer wheel/dash win, never latches the lever
 		drop_lever_hand = hand
 		drop_lever_fired = false
 		grab_lever_count += 1
@@ -4302,7 +4368,11 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	if not held:
 		dash_ctl_fired[hand] = -1
 		side_hold_t[hand] = 0.0
-	elif ctl_now >= 0:
+	elif ctl_now >= 0 and (owner17 == "dash" or win17 == "dash"):
+		# FP17 (Item 1): a hand owning the wheel, the rim or the
+		# drop lever cannot take a dash control mid-squeeze; a
+		# dash owner keeps the FP9 sweep, and an unowned hand
+		# takes the control only when the dash won arbitration.
 		var kind: String = dash_ctl_kinds[ctl_now]
 		if kind == "side" and int(dash_ctl_fired[hand]) != ctl_now:
 			side_hold_t[hand] = float(side_hold_t[hand]) + _delta
@@ -4357,7 +4427,11 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 			_grab_event("%s WHEEL REL g%.2f" % [hand, grip_v])
 			# other hand takes over if it is still gripping the wheel
 			var other: String = "R" if hand == "L" else "L"
-			if bool(gripping[other]) and _hand_pos(other).distance_to(hub_w) < WHEEL_GRAB_RADIUS:
+			if bool(gripping[other]) and _hand_pos(other).distance_to(hub_w) < WHEEL_GRAB_RADIUS \
+					and (_hand_owner(other) == "" or _hand_owner(other) == "rim"):
+				# FP17 (Item 1): the takeover is an acquisition too -
+				# a hand owning the lever or a dash latch cannot be
+				# handed the wheel; a rim passenger promotes freely.
 				grab_hand = other
 				grab_prev_ang = _hand_wheel_angle(other)
 		else:
@@ -4369,7 +4443,8 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 			wheel_angle = clampf(wheel_angle + d, -PI, PI)
 			grab_prev_ang = ang
 	elif held and grab_hand == "" and drop_lever_hand != hand \
-			and _seg_point_dist(prev, pos, hub_w) < WHEEL_GRAB_RADIUS:
+			and _seg_point_dist(prev, pos, hub_w) < WHEEL_GRAB_RADIUS \
+			and win17 == "wheel": # FP17 (Item 1): arbitration - see the candidate block above
 		# Fix Pass 16 (Item 3): the latch takes only a FREE wheel.
 		# FP15's branch let a second gripping hand STEAL the
 		# wheel (re-basing grab_prev_ang to its own angle), so
@@ -4466,6 +4541,24 @@ func _dash_ctl_near_swept(a: Vector3, b: Vector3) -> int:
 	return best
 
 
+func _dash_ctl_near_swept_d(a: Vector3, b: Vector3) -> Array:
+	# Fix Pass 17 (Item 1): the swept dash test with its winning
+	# distance - the cross-class arbitration in _poll_grab
+	# compares the tests' own distances, so the point/swept pair
+	# gains a third sibling that reports how near the nearest
+	# control was. Returns [index, distance]; index -1 and
+	# distance 1e9 when nothing is inside its radius.
+	var best: int = -1
+	var best_d: float = 1e9
+	for i: int in dash_ctl_nodes.size():
+		var seg: Array[Vector3] = _dash_ctl_segment(i)
+		var d: float = _seg_seg_dist(a, b, seg[0], seg[1])
+		if d < _dash_ctl_radius(i) and d < best_d:
+			best_d = d
+			best = i
+	return [best, best_d]
+
+
 func _update_rim_attach(hand: String, held: bool, pos: Vector3) -> void:
 	# Fix Pass 16 (Item 3): the passenger hand rides the rim.
 	# The DRIVING hand's rim point is glued by construction
@@ -4480,7 +4573,11 @@ func _update_rim_attach(hand: String, held: bool, pos: Vector3) -> void:
 	# (the caller clears it on that path).
 	var other: String = "R" if hand == "L" else "L"
 	var want: bool = held and grab_hand == other \
-		and pos.distance_to(car.global_transform * _wheel_hub_local()) < WHEEL_GRAB_RADIUS
+		and pos.distance_to(car.global_transform * _wheel_hub_local()) < WHEEL_GRAB_RADIUS \
+		and drop_lever_hand != hand and int(dash_ctl_fired[hand]) < 0
+	# FP17 (Item 1): the attach is gated on the hand owning
+	# nothing else - run 16's T14.8 (RIM ATT in the same instant
+	# as DRP FIRE) cannot recur: a lever hand never attaches.
 	if want and not bool(rim_attach[hand]):
 		rim_attach[hand] = true
 		rim_local[hand] = wheel_spin.global_transform.affine_inverse() * pos

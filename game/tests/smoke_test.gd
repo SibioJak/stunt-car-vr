@@ -2508,6 +2508,14 @@ func _run() -> void:
 	main.test_hand_set = true
 	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
 	main.test_hand_pos["R"] = lever_at.call(main.drop_lever_angle)
+	# Fix Pass 17 (Item 1) staging amendment: FP16's script
+	# squeezed from whatever latch an earlier stage left held -
+	# arbitration (one hand, one control) now requires the hand
+	# to RELEASE between controls, as a real driver does. One
+	# release poll restores the staged intent; the lever grab
+	# itself is unchanged.
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main.test_grip["R"] = 1.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	check(main.drop_lever_hand == "R", "stage25: grip near the shaft latches the lever")
@@ -4739,6 +4747,179 @@ func _run() -> void:
 	check(main._build_diag_block().contains("GRAB"),
 		"stage46: the DIAG block carries the GRAB line")
 	check(main.grab_log_file != null, "stage46: the session grab log is open")
+	main.test_hand_set = false
+
+	# ---------- stage 47: Fix Pass 17 - ONE HAND, ONE CONTROL ----
+	# Item 1, staged against the production path with the owner's
+	# run-16 grab log as the script. (a1) is his T14.8 verbatim:
+	# right hand driving, left hand fires the drop lever - FP16
+	# recorded L RIM ATT in the same instant as L DRP FIRE.
+	# (a2) is the recovery case the log could not show: the lever
+	# grabbed with the wheel FREE, where the cross-talk would
+	# have steered instead of dropping. (b) holds the wheel
+	# INSIDE lever range; (b2) enters both volumes in one fresh
+	# squeeze; (e) takes a dash latch to the wheel.
+	main.test_hand_set = true
+	var pv47: Vector3 = main._wheel_plane_v()
+	var rim_pt47 = func(r: float, phi: float) -> Vector3:
+		return main.car.global_transform * (main._wheel_hub_local() \
+			+ r * (cos(phi) * Vector3.RIGHT + sin(phi) * pv47))
+	var lever_at47 = func(th: float) -> Vector3:
+		return main.car_body.global_transform * (main.drop_lever_pivot.position \
+			+ Basis(Vector3.RIGHT, th) * Vector3(0, 0.27, 0))
+	var far47: Vector3 = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	var ev47 = func(from_i: int) -> String:
+		var parts47: Array[String] = []
+		for ei47: int in range(from_i, main.grab_events.size()):
+			parts47.append(main.grab_events[ei47])
+		return " ".join(parts47)
+	# rim points: the driver-side low point (dash-clear by
+	# construction) and the side point nearest the lever.
+	var phi_low47: float = PI / 2.0
+	var phi_near47: float = PI if main.drop_lever_left else 0.0
+	check(main._dash_ctl_near(rim_pt47.call(0.25, phi_low47)) == -1,
+		"stage47: precondition - the low rim point is outside every dash zone")
+	# (a1) T14.8: R drives, L fires the lever.
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await frames(4)
+	main.dip_timer = 1000.0
+	main.test_hand_pos["R"] = rim_pt47.call(0.25, phi_low47)
+	main.test_hand_pos["L"] = far47
+	main.test_grip["R"] = 0.0
+	main.test_grip["L"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.grab_hand == "R", "stage47: (a1) the driver latches the wheel")
+	var mark47a: int = main.grab_events.size()
+	main.test_hand_pos["L"] = lever_at47.call(0.0)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main.test_grip["L"] = 1.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(main.drop_lever_hand == "L", "stage47: (a1) the lever latches while the other hand drives")
+	main.test_hand_pos["L"] = lever_at47.call(0.30)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main.test_hand_pos["L"] = lever_at47.call(0.55)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	var eva47: String = ev47.call(mark47a)
+	check(eva47.contains("L DRP FIRE"),
+		"stage47: (a1) the lever fires with the wheel held (his first drop, working)")
+	check(not eva47.contains("L RIM ATT") and not eva47.contains("L WHEEL LAT"),
+		"stage47: (a1) T14.8 is dead - the lever hand records ZERO rim/wheel events")
+	main.test_grip["L"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	var drv47a: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv47a, "stage47: (a1) the drop lands into DRIVE")
+	# (a2) the lever with the wheel FREE.
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await frames(4)
+	main.dip_timer = 1000.0
+	main.test_hand_pos["R"] = far47
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	var mark47b: int = main.grab_events.size()
+	main.test_hand_pos["L"] = lever_at47.call(0.0)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main.test_grip["L"] = 1.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main.test_hand_pos["L"] = lever_at47.call(0.55)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	var eva47b: String = ev47.call(mark47b)
+	check(main.mode == main.MODE_AIR and eva47b.contains("L DRP FIRE"),
+		"stage47: (a2) the lever fires with the wheel FREE (the recovery case)")
+	check(not eva47b.contains("L WHEEL LAT") and not eva47b.contains("L RIM ATT"),
+		"stage47: (a2) a free wheel is NOT latched by the lever hand - the pull cannot steer")
+	main.test_grip["L"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	var drv47b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv47b, "stage47: (a2) the drop lands into DRIVE")
+	# (b) a HELD wheel inside lever range.
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await frames(4)
+	main.dip_timer = 1000.0
+	main.test_hand_pos["R"] = rim_pt47.call(0.25, phi_low47)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.grab_hand == "R", "stage47: (b) the driver latches before moving into lever range")
+	var seg47b: Array = main.debug_drop_lever_segment()
+	var near_pt47: Vector3 = rim_pt47.call(0.225, phi_near47)
+	if main._seg_point_dist(seg47b[0], seg47b[1], near_pt47) > 0.16:
+		# The bare rim point measures 0.217 m from the segment in
+		# the raked body space - just outside the lever's tube.
+		# Step from it toward the segment's nearest point until
+		# the pose is honestly inside lever range (a driving
+		# hand at the rim's lever-side edge, reaching in).
+		var ab47b: Vector3 = seg47b[1] - seg47b[0]
+		var tb47: float = clampf((near_pt47 - seg47b[0]).dot(ab47b) / ab47b.length_squared(), 0.0, 1.0)
+		var spb47: Vector3 = seg47b[0] + ab47b * tb47
+		near_pt47 = near_pt47 + (spb47 - near_pt47).normalized() * (near_pt47.distance_to(spb47) - 0.16)
+	check(main._seg_point_dist(seg47b[0], seg47b[1], near_pt47) <= main.DROP_LEVER_GRAB_RADIUS,
+		"stage47: (b) precondition - the near rim point IS inside lever range (%.3f m)" % main._seg_point_dist(seg47b[0], seg47b[1], near_pt47))
+	var mark47c: int = main.grab_events.size()
+	main.test_hand_pos["R"] = near_pt47
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	var eva47c: String = ev47.call(mark47c)
+	check(main.grab_hand == "R" and main.drop_lever_hand == "" and not eva47c.contains("DRP LAT"),
+		"stage47: (b) a held wheel inside lever range keeps the wheel - the lever never latches")
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	# (b2) simultaneous fresh entry inside BOTH volumes: the
+	# segment's hub-nearest point stepped 0.30 m from the hub -
+	# inside the lever's tube and the wheel's radius at once.
+	var seg47: Array = main.debug_drop_lever_segment()
+	var hub47b: Vector3 = main.car.global_transform * main._wheel_hub_local()
+	var ab47: Vector3 = seg47[1] - seg47[0]
+	var t47: float = clampf((hub47b - seg47[0]).dot(ab47) / ab47.length_squared(), 0.0, 1.0)
+	var sp47: Vector3 = seg47[0] + ab47 * t47
+	var pose47: Vector3 = sp47 + (hub47b - sp47).normalized() * (sp47.distance_to(hub47b) - 0.30)
+	check(main._seg_point_dist(seg47[0], seg47[1], pose47) <= main.DROP_LEVER_GRAB_RADIUS \
+		and pose47.distance_to(hub47b) < main.WHEEL_GRAB_RADIUS \
+		and main._dash_ctl_near(pose47) == -1,
+		"stage47: (b2) precondition - inside lever range AND wheel radius, outside dash zones (lever %.3f m, hub %.3f m)" % [
+			main._seg_point_dist(seg47[0], seg47[1], pose47), pose47.distance_to(hub47b)])
+	var mark47d: int = main.grab_events.size()
+	main.test_hand_pos["R"] = pose47
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	var eva47d: String = ev47.call(mark47d)
+	check(main.drop_lever_hand == "R" and main.grab_hand == "",
+		"stage47: (b2) simultaneous entry resolves NEAREST - the lever (~0.12 m) beats the hub (0.30 m)")
+	check(eva47d.contains("R DRP LAT") and not eva47d.contains("R WHEEL LAT") and not eva47d.contains("R RIM ATT"),
+		"stage47: (b2) exactly one acquisition - the loser records nothing")
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	# (e) a dash latch taken to the wheel (still in the dangle -
+	# the dash and the wheel are both live here).
+	var seat_i47: int = main.dash_ctl_kinds.find("seatup")
+	var seat_seg47: Array[Vector3] = main._dash_ctl_segment(seat_i47)
+	var seat_mid47: Vector3 = (seat_seg47[0] + seat_seg47[1]) * 0.5
+	main.test_hand_pos["L"] = seat_mid47
+	main.test_grip["L"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	var mark47e: int = main.grab_events.size()
+	main.test_grip["L"] = 1.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(int(main.dash_ctl_fired["L"]) == seat_i47, "stage47: (e) the seat lever latches (dash owner)")
+	main.test_hand_pos["L"] = rim_pt47.call(0.25, phi_low47)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	var eva47e: String = ev47.call(mark47e)
+	check(main.grab_hand == "" and not eva47e.contains("L WHEEL LAT"),
+		"stage47: (e) a dash-latched hand cannot take the wheel mid-squeeze")
+	main.test_grip["L"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	main.test_hand_set = false
 
 	print("---")
