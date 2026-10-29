@@ -4570,6 +4570,122 @@ func _run() -> void:
 				break
 		check(near45, "stage45: %s band vertices sit on the centreline at s50" % key45)
 
+	# ---------- stage 46: Fix Pass 16 (Item 1) - THE GRAB REBUILD ----
+	# The differential's convicted mechanisms, staged against the
+	# production path: (a) the Schmitt band holds a latch - a
+	# squeeze dipping to 0.45 (below FP15's 0.65 cut, above the
+	# 0.30 release) neither drops the latch nor re-fires the
+	# toggle, and the rescue is COUNTED; (b) the drop lever's
+	# pull survives the same dip mid-throw; (c) the wheel's soft
+	# lock tracks its hand OUTSIDE the grab radius; (d) the swept
+	# zone test fires a control the hand passes THROUGH inside
+	# one frame step; (e) suspect 3's stage: the rendered rep and
+	# the measured hand point are the same transform.
+	main.test_hand_set = false
+	for h46: String in ["L", "R"]:
+		check(main.ctrl_rep[h46].global_position.distance_to(main.hand_ctrl[h46].global_position) < 0.0001,
+			"stage46: %s rep origin == the measured hand point (one pose source)" % h46)
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await frames(4)
+	main.dip_timer = 1000.0
+	var lean_seg46: Array[Vector3] = main._dash_ctl_segment(main.dash_ctl_kinds.find("lean"))
+	var lean_mid46: Vector3 = (lean_seg46[0] + lean_seg46[1]) * 0.5
+	main.test_hand_set = true
+	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_hand_pos["R"] = lean_mid46
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	var lean_was46: bool = main.lean_on
+	var chatter_was46: int = main.grab_chatter_count
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.lean_on != lean_was46, "stage46: full squeeze fires LEAN (latch engages)")
+	main.test_grip["R"] = 0.45
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.lean_on != lean_was46 and bool(main.gripping["R"]),
+		"stage46: a dip to 0.45 holds the latch (no drop, no re-fire)")
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.lean_on != lean_was46,
+		"stage46: recovery to full squeeze does NOT re-fire (FP15 double-toggle is dead)")
+	check(main.grab_chatter_count > chatter_was46,
+		"stage46: the rescued dip was counted as chatter (%d)" % main.grab_chatter_count)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(not bool(main.gripping["R"]), "stage46: a true release (0.0 < 0.30) ends the latch")
+	# (b) the drop lever through the same dip, mid-throw
+	var lever_at46 = func(th: float) -> Vector3:
+		return main.car_body.global_transform * (main.drop_lever_pivot.position \
+			+ Basis(Vector3.RIGHT, th) * Vector3(0, 0.27, 0))
+	main.test_hand_pos["R"] = lever_at46.call(main.drop_lever_angle)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.drop_lever_hand == "R", "stage46: lever latches")
+	main.test_hand_pos["R"] = lever_at46.call(0.30)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_grip["R"] = 0.45
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.drop_lever_hand == "R" and absf(main.drop_lever_angle - 0.30) < 0.06,
+		"stage46: mid-throw dip to 0.45 keeps the pull (%.2f rad)" % main.drop_lever_angle)
+	main.test_grip["R"] = 1.0
+	main.test_hand_pos["R"] = lever_at46.call(0.55)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.mode == main.MODE_AIR, "stage46: the saved pull still fires past the detent")
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	var drv46: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv46, "stage46: the drop lands into DRIVE for the wheel test")
+	# (c) wheel soft lock: latch on the rim, then steer from
+	# OUTSIDE the grab radius - the latched hand keeps the wheel.
+	var hub46: Vector3 = main.car.global_transform * main._wheel_hub_local()
+	var pv46: Vector3 = main._wheel_plane_v()
+	var rim_pt46 = func(r: float, phi: float) -> Vector3:
+		return main.car.global_transform * (main._wheel_hub_local() \
+			+ r * (cos(phi) * Vector3.RIGHT + sin(phi) * pv46))
+	main.test_hand_pos["R"] = rim_pt46.call(0.25, 0.0)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.grab_hand == "R", "stage46: wheel latches on the rim")
+	var wa46: float = main.wheel_angle
+	main.test_hand_pos["R"] = rim_pt46.call(0.55, 0.5)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.grab_hand == "R" and absf(wrapf(main.wheel_angle - wa46 - 0.5, -PI, PI)) < 0.05,
+		"stage46: soft lock - steering follows the hand at 0.55 m radius (past the 0.40 zone)")
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.grab_hand == "", "stage46: release ends the wheel latch")
+	# (d) the swept test earns its keep on a GRAZING CHORD: the
+	# hand steps 0.10 m across the VIEW button's face, both
+	# endpoints 0.153 m out (outside the 0.15 radius - the
+	# endpoint test is blind at both samples), while the travel
+	# segment clips the zone at 0.145 m. (A full crossing in
+	# one step would be a >0.25 m step - the teleport cap's
+	# territory, endpoint-tested by design.) The button's
+	# world point is re-read NOW (the car has dropped and
+	# landed since the stage began).
+	var view_seg46d: Array[Vector3] = main._dash_ctl_segment(main.dash_ctl_kinds.find("view"))
+	var view_mid46d: Vector3 = (view_seg46d[0] + view_seg46d[1]) * 0.5
+	var bx46: Vector3 = main.car.global_transform.basis * Vector3(0.05, 0, 0)
+	var bz46: Vector3 = main.car.global_transform.basis * Vector3(0, 0, 0.145)
+	main.test_hand_pos["R"] = view_mid46d - bx46 + bz46
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main._dash_ctl_near(main.test_hand_pos["R"]) == -1,
+		"stage46: the chord's first endpoint is outside every zone (point test blind)")
+	var view_was46d: int = main.view_gain_mode
+	main.test_hand_pos["R"] = view_mid46d + bx46 + bz46
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.view_gain_mode != view_was46d,
+		"stage46: the swept segment fires the grazed control (endpoints outside, path inside)")
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_set = false
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:

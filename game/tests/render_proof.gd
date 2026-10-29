@@ -277,7 +277,7 @@ func _run() -> void:
 	var ptxt: String = main.panel_label.text + "\n" + main.diag_label.text
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call crane",
 			"restart", "lean", "track", "Recenter", "SPACE", "W/S", "V track",
-			"DIAG", "ANCHOR", "CAMH", "FRC", "Jitter", "JIT", "CONTACT",
+			"DIAG", "ANCHOR", "CAMH", "HLD", "Jitter", "JIT", "CONTACT",
 			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP LEVER", "Panels", "TAB",
 			"amber view", "G view", "lever side", "M lever"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)

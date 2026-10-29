@@ -252,6 +252,29 @@ const WHEEL_TILT_DEG: float = 68.0
 # tightening it would break rim grabs; the complaint named the levers.
 const WHEEL_GRAB_RADIUS: float = 0.40
 const DASH_CTL_RADIUS: float = 0.15
+# Fix Pass 16 (Item 1) - OPERATION FIX THE FUCKING LEVERS: the
+# grab rebuild's thresholds. The squeeze is read as an ANALOG
+# FLOAT ONLY (the runtime-converted "grip_click" bool imported
+# VDXR's undocumented press/release thresholds into every latch;
+# "grip_force" has no binding in any interaction profile and no
+# squeeze/force endpoint exists on Touch Plus - both are gone
+# from the latch math; click is still read for the DIAG block).
+# The float runs through OUR Schmitt trigger: engage above
+# GRIP_ENGAGE, release below GRIP_RELEASE, hold state between.
+# Before: a single 0.65 cut on (grip OR click OR force), so a
+# squeeze hovering at the cut chattered every latch it fed -
+# dash toggles double-fired, the drop lever's pull cancelled
+# mid-throw, the wheel grab dropped and re-took. The seat
+# levers' capture radius is decoupled from the buttons' in
+# Item 2 (bigger volume, smaller mesh); see _dash_ctl_radius.
+const GRIP_ENGAGE: float = 0.55
+const GRIP_RELEASE: float = 0.30
+const DASH_CTL_RADIUS_SEAT: float = 0.19
+# Fix Pass 16 (Item 4): the SIDE button fires only on a
+# SUSTAINED in-zone hold of this length - a stray brush of the
+# dash can no longer flip the drop lever's side mid-session
+# (run 15: it flipped itself, silently, and persisted).
+const SIDE_HOLD_S: float = 0.6
 # Fix Pass 5 (the feel pass) - suspension / mass model. Per-axle spring
 # states (front/rear compression in metres) chase geometry targets
 # derived from the road: how far the road surface at each axle sits
@@ -947,7 +970,7 @@ var seat_trim: float = 0.0
 const DROP_LEVER_REST_RAD: float = 0.0
 const DROP_LEVER_DETENT_RAD: float = 0.50
 const DROP_LEVER_MAX_RAD: float = 0.70
-const DROP_LEVER_GRAB_RADIUS: float = 0.16
+const DROP_LEVER_GRAB_RADIUS: float = 0.20 # FP16 (Item 2): was 0.16 - the volume grows as the mesh shrinks
 const DROP_LEVER_SPRING_RATE: float = 3.5 # rad/s back to rest
 # Fix Pass 15 (Item 3): the lever leaves the dash TOP for the
 # dash FACE - the owner's run-14 placement, verbatim shape:
@@ -984,7 +1007,8 @@ var xr_iface: XRInterface # stored at rig build for haptics
 # raw grip-channel values per hand, exactly as the runtime delivers.
 var diag_grip: Dictionary = {"L": 0.0, "R": 0.0}
 var diag_click: Dictionary = {"L": false, "R": false}
-var diag_force: Dictionary = {"L": 0.0, "R": 0.0}
+# (diag_force was deleted in Fix Pass 16 - the channel it read
+# has no binding in any interaction profile; see Item 0.)
 var diag_block: String = ""
 var diag_timer: float = 0.0
 var origin: XROrigin3D
@@ -1006,6 +1030,46 @@ var prev_btn: Dictionary = {}
 # it; the latch clears when the grip releases or the hand
 # leaves every zone, and moving zone-to-zone fires on entry.
 var dash_ctl_fired: Dictionary = {"L": -1, "R": -1}
+# Fix Pass 16 (Item 1): grab-rebuild state. prev_hand_pos feeds
+# the SWEPT zone tests (the segment the hand travelled this
+# frame, not just its endpoint - a fast hand can no longer pass
+# through a volume unsampled). grab_in_band marks a held grab
+# whose squeeze has dipped into the hysteresis rescue band
+# (below the old 0.65 cut, above GRIP_RELEASE): each entry is a
+# grab the FP15 latch would have dropped, and Item 5's telemetry
+# counts them. side_hold_t is Item 4's deliberate-hold clock for
+# the SIDE button. cand_kind/cand_ctl are the per-hand CANDIDATE
+# (nearest control in reach, gripped or not) that drives the
+# rep cue and the acquisition tick.
+var prev_hand_pos: Dictionary = {"L": Vector3.ZERO, "R": Vector3.ZERO}
+var prev_hand_valid: Dictionary = {"L": false, "R": false}
+var grab_in_band: Dictionary = {"L": false, "R": false}
+var side_hold_t: Dictionary = {"L": 0.0, "R": 0.0}
+var cand_kind: Dictionary = {"L": "", "R": ""}
+var cand_ctl: Dictionary = {"L": -1, "R": -1}
+var cand_tick_t: Dictionary = {"L": 0.0, "R": 0.0}
+var rep_dot: Dictionary = {} # hand -> the rep's origin-dot mesh (the candidate/latch cue)
+# Fix Pass 16 (Item 3): the passenger hand's rim attachment -
+# while the OTHER hand drives the wheel, a gripping hand on the
+# rim has its point stored in wheel-spin local space and its
+# rep rides the rim (see _update_rim_attach).
+var rim_attach: Dictionary = {"L": false, "R": false}
+var rim_local: Dictionary = {"L": Vector3.ZERO, "R": Vector3.ZERO}
+# Fix Pass 16 (Item 5): grab telemetry. grab_events is the
+# session's event ring (also written to user://grab_log.txt);
+# the counters and per-hand session squeeze peaks ride along so
+# a flatlined channel or a low-peaking squeeze is visible in
+# the log, not just in a screenshot.
+var grab_events: Array[String] = []
+var grab_last_event: String = ""
+var grab_fire_count: int = 0
+var grab_wheel_count: int = 0
+var grab_lever_count: int = 0
+var grab_early_count: int = 0
+var grab_chatter_count: int = 0
+var grab_peak: Dictionary = {"L": 0.0, "R": 0.0}
+var grab_log_file: FileAccess = null
+var prev_zone: Dictionary = {"L": -1, "R": -1}
 
 
 func _mat(c: Color) -> StandardMaterial3D:
@@ -1147,6 +1211,7 @@ func _build_controller_rep(ctrl: XRController3D, hand: String) -> void:
 	origin_dot.position = Vector3.ZERO
 	origin_dot.material_override = _mat_unshaded(accent)
 	rep.add_child(origin_dot)
+	rep_dot[hand] = origin_dot # FP16 (Item 1): the candidate/latch cue scales this dot
 
 
 func _build_environment() -> void:
@@ -3284,9 +3349,14 @@ func _diag_hand_line(hand: String) -> String:
 		flags += " NEAR"
 	if grab_hand == hand:
 		flags += " HOLD"
-	return "%s GRIP %.2f CLK %d FRC %.2f %dcm%s" % [
+	# Fix Pass 16 (Item 1): the FRC column is GONE - grip_force
+	# has no binding in any profile and no endpoint on this
+	# hardware, so the column read 0.00 for six passes and said
+	# nothing. HLD shows the Schmitt latch state instead: the
+	# debounced value every grab actually consumes.
+	return "%s GRIP %.2f CLK %d HLD %d %dcm%s" % [
 		hand, float(diag_grip[hand]), 1 if bool(diag_click[hand]) else 0,
-		float(diag_force[hand]), int(round(dist_m * 100.0)), flags]
+		1 if bool(gripping[hand]) else 0, int(round(dist_m * 100.0)), flags]
 
 
 func _state_name() -> String:
@@ -4032,6 +4102,7 @@ func _update_drop_lever_pull(hand: String) -> void:
 	drop_lever_angle = ang
 	if ang >= DROP_LEVER_DETENT_RAD and not drop_lever_fired:
 		drop_lever_fired = true
+		_grab_event("%s DRP FIRE g%.2f" % [hand, float(diag_grip[hand])]) # FP16 (Item 5)
 		_pulse_detent(hand)
 		_do_release() # self-gated: only a dangle lets go
 
@@ -4049,12 +4120,11 @@ func _update_drop_lever(delta: float) -> void:
 		drop_lever_pivot.rotation.x = drop_lever_angle
 
 
-func _pulse_detent(hand: String) -> void:
-	# The detent is FELT: a short pulse on the pulling hand
-	# through the action map's existing "haptic" output
-	# action (bound to /user/hand/{left,right}/output/haptic
-	# in project.godot). Null-safe - no live interface (tests,
-	# desktop) means no pulse and no error. Whether it is
+func _pulse_hand(hand: String, amp: float, dur: float) -> void:
+	# Fix Pass 16 (Item 1): the one haptic door. A short pulse
+	# on one hand through the action map's existing "haptic"
+	# output action. Null-safe - no live interface (tests,
+	# desktop) means no pulse and no error. Whether a pulse is
 	# perceptible on the live rig is the owner's verdict:
 	# unverifiable headless, listed as such in the pass report.
 	# API guarded: XRInterface.trigger_haptic_pulse (the call
@@ -4062,44 +4132,124 @@ func _pulse_detent(hand: String) -> void:
 	if not xr_ok or xr_iface == null:
 		return
 	xr_iface.trigger_haptic_pulse(&"haptic",
-		&"left_hand" if hand == "L" else &"right_hand", 0.0, 0.7, 0.12, 0.0)
+		&"left_hand" if hand == "L" else &"right_hand", 0.0, amp, dur, 0.0)
+
+
+func _pulse_detent(hand: String) -> void:
+	# The detent is FELT (Fix Pass 11): the strong pulse, kept
+	# distinct from Item 1's lighter latch/candidate ticks.
+	_pulse_hand(hand, 0.7, 0.12)
+
+
+func _grab_event(ev: String) -> void:
+	# Fix Pass 16 (Item 5): one telemetry event - into the ring,
+	# onto the DIAG GRAB line (via grab_last_event), and into
+	# the session log file when it is open.
+	grab_last_event = ev
+	grab_events.append("T%.1f %s" % [race_time, ev])
+	while grab_events.size() > 400:
+		grab_events.pop_front()
+	if grab_log_file != null:
+		grab_log_file.store_line("T%.1f %s" % [race_time, ev])
+		grab_log_file.flush()
 
 
 func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
-	# Fix Pass 3 (Item 3): grip is active if ANY channel the runtime
-	# actually delivers says so - analog "grip" > 0.65 OR "grip_click"
-	# OR "grip_force" > 0.65 (all read through XRController3D
-	# .get_input, the API-guarded call). The raw values are stashed
-	# for the panel DIAG block so the next live run shows which
-	# channel Virtual Desktop really feeds.
+	# Fix Pass 16 (Item 1) - OPERATION FIX THE FUCKING LEVERS:
+	# this function was rebuilt around the Item 0 differential
+	# (see the README's FP16 section). The design rules:
+	#   - The squeeze is the ANALOG FLOAT ONLY, through our own
+	#     Schmitt trigger (GRIP_ENGAGE / GRIP_RELEASE). FP15's
+	#     `grip_v > 0.65 or grip_click or grip_force > 0.65`
+	#     OR-term imported the runtime's undocumented bool
+	#     threshold (grip_click is squeeze/value through VDXR's
+	#     own conversion - no squeeze/click endpoint exists on
+	#     Touch Plus) and read a channel with no binding in any
+	#     profile (grip_force - no squeeze/force endpoint on
+	#     this hardware; its DIAG column read 0.00 forever).
+	#     Click is still READ, for the DIAG block only.
+	#   - LATCH semantics (the XR Tools / VTOL pattern): a grab,
+	#     once honestly made, ends on grip RELEASE - never on a
+	#     zone exit, a radius, or a one-frame value dip. One-shot
+	#     dash latches clear only on release, so a leave-and-
+	#     return inside one squeeze cannot double-toggle; the
+	#     seat levers trim on the latch, in or out of the zone;
+	#     the wheel tracks its hand at any radius (soft lock).
+	#   - Zone tests are SWEPT: the segment the hand travelled
+	#     this frame (prev -> now), not just its endpoint.
 	var grip_v: float = _input_float(ctrl, &"grip")
 	var grip_click: bool = _input_bool(ctrl, &"grip_click")
-	var grip_force: float = _input_float(ctrl, &"grip_force")
 	# Fix Pass 8 (Item 0): test_mode substitutes the synthetic
-	# grip level for the controller's channels, so the edge /
+	# grip level for the controller's channels, so the latch /
 	# proximity / activation logic below is the production code
 	# running on posed inputs. The XR reads above are what the
-	# headset path uses; they are API-guarded and were
-	# live-verified in runs 4-8 - what no headless run can
-	# reproduce is a runtime delivering stuck channel VALUES.
+	# headset path uses; they are API-guarded - what no headless
+	# run can reproduce is a runtime delivering stuck VALUES.
 	if test_mode:
 		grip_v = float(test_grip[hand])
 		grip_click = false
-		grip_force = 0.0
 	diag_grip[hand] = grip_v
 	diag_click[hand] = grip_click
-	diag_force[hand] = grip_force
-	var now: bool = grip_v > 0.65 or grip_click or grip_force > 0.65
-	# --- Fix Pass 11 (Item 4): THE DROP LEVER ---
-	# Latched per hand while gripped: the lever follows the
-	# hand along its arc; crossing the detent fires the
-	# release (plus a haptic pulse on the pulling hand) once
-	# per pull. Releasing the grip early leaves the lever to
-	# spring home in _update_drop_lever - no drop. Its zone
-	# overlaps no dash zone and sits outside the wheel-grab
-	# radius, so the grabs can never fight.
+	grab_peak[hand] = maxf(float(grab_peak[hand]), grip_v)
+	# The Schmitt trigger. gripping[] IS this state - every
+	# downstream reader (articulation, the recenter gate, the
+	# hang button gates) gets the debounced value.
+	var held: bool = bool(gripping[hand])
+	if held and grip_v < GRIP_RELEASE:
+		held = false
+	elif not held and grip_v > GRIP_ENGAGE:
+		held = true
+	gripping[hand] = held
+	# Chatter accounting (Item 5): a held grab whose squeeze
+	# dips below the OLD 0.65 cut without reaching GRIP_RELEASE
+	# is a grab FP15's latch would have dropped mid-use. Count
+	# the episode once; the session log carries the total.
+	if held and grip_v < 0.65:
+		if not bool(grab_in_band[hand]):
+			grab_in_band[hand] = true
+			grab_chatter_count += 1
+	else:
+		grab_in_band[hand] = false
+	var pos: Vector3 = _hand_pos(hand)
+	var prev: Vector3 = pos
+	if bool(prev_hand_valid[hand]):
+		prev = prev_hand_pos[hand]
+	# A sweep longer than this is not a pass-through - it is a
+	# TELEPORT (tracking loss + reacquisition, or a posed jump):
+	# test the endpoint only. An uncapped sweep drags through
+	# every zone on its path - its first conviction was the
+	# suite's own stage 25, where the latch poll's sweep crossed
+	# RESTART and reset the race mid-sequence (hang phase back
+	# to "attach", the detent fire gated, no drop). A live
+	# dropout + reacquire across the cockpit would have done
+	# the same to the owner. 0.25 m per physics frame is
+	# 15 m/s of hand - far past any real pass-through.
+	if prev.distance_to(pos) > 0.25:
+		prev = pos
+	# Item 5 telemetry: a zone ENTRY with no latch is the
+	# near-miss signature - it separates "the hand never
+	# arrived" (no entry) from "the grip never read" (entry,
+	# low value) in the owner's own log.
+	var zone_now: int = _dash_ctl_near(pos)
+	if zone_now != int(prev_zone[hand]):
+		if zone_now >= 0 and not held:
+			_grab_event("%s ZONE %s g%.2f NOLAT" % [hand,
+				dash_ctl_kinds[zone_now].to_upper(), grip_v])
+		prev_zone[hand] = zone_now
+	# --- THE DROP LEVER (Fix Pass 11's mechanism, Item 1's latch) ---
+	# Latched per hand: the lever follows the hand along its
+	# arc at ANY distance (the pull reads an angle, not a
+	# radius); crossing the detent fires the release once per
+	# pull. The latch ends only on grip release - and an early
+	# release after a real pull is WITNESSED (event + a release
+	# tick), never silent. Releasing early leaves the lever to
+	# spring home in _update_drop_lever - no drop.
 	if drop_lever_hand == hand:
-		if not now:
+		if not held:
+			if not drop_lever_fired and drop_lever_angle > 0.15:
+				grab_early_count += 1
+				_grab_event("%s DRP EARLY g%.2f @%.2f" % [hand, grip_v, drop_lever_angle])
+				_pulse_hand(hand, 0.30, 0.08)
 			drop_lever_hand = ""
 		else:
 			_update_drop_lever_pull(hand)
@@ -4107,72 +4257,207 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	# - during carrier transport (and every other mode) a hand
 	# on the lever is inert; nothing is hanging by it yet.
 	# Fix Pass 13 (Item 2): a hand holding the WHEEL cannot
-	# also latch the lever - at full throw the centre lever's
-	# knob enters the wheel's grab radius, and the two grabs
-	# never fight over one hand.
-	elif now and drop_lever_hand == "" and _hand_near_drop_lever(hand) \
+	# also latch the lever - the two grabs never fight over
+	# one hand. FP16: the proximity test is the swept segment.
+	elif held and drop_lever_hand == "" and _hand_near_drop_lever_swept(prev, pos) \
 			and mode == MODE_HANG and hang_phase == "dangle" and grab_hand != hand:
 		drop_lever_hand = hand
 		drop_lever_fired = false
+		grab_lever_count += 1
+		_grab_event("%s DRP LAT g%.2f" % [hand, grip_v])
+		_pulse_hand(hand, 0.35, 0.06)
 		_update_drop_lever_pull(hand)
-	var near_wheel: bool = _hand_pos(hand).distance_to(car.global_transform * _wheel_hub_local()) < WHEEL_GRAB_RADIUS
-	# Fix Pass 9 (Item 1): LEVEL-based dash activation. Chris, run 9:
-	# "I press grip near a lever, the panel says HOLD, levers don't
-	# move" - the flip used to fire only on a fresh grip EDGE while
-	# the hand was already in the zone, and a human hand squeezes
-	# first and reaches second, spending the edge in empty air (the
-	# HOLD readout proved grip arrived and the hand was placed).
-	# Now a gripping hand inside a control's zone fires it ONCE
-	# per continuous grab-and-zone entry (dash_ctl_fired); the
-	# latch re-arms when the grip releases or the hand leaves
-	# every zone, so a held grip sweeping from one control to the
-	# next fires each on entry - squeeze-and-touch IS the gesture.
-	var ctl_now: int = _dash_ctl_near(_hand_pos(hand)) if now else -1
-	# Fix Pass 11 (Item 1): the seat levers are HOLD controls - a
-	# gripping hand resting in the zone trims continuously at
-	# SEAT_TRIM_RATE instead of entry-firing a one-shot action.
-	if ctl_now >= 0 and dash_ctl_kinds[ctl_now].begins_with("seat"):
-		var sdir: float = 1.0 if dash_ctl_kinds[ctl_now] == "seatup" else -1.0
-		_apply_seat_trim(seat_trim + sdir * SEAT_TRIM_RATE * _delta)
-		dash_ctl_fired[hand] = ctl_now
-	elif ctl_now >= 0 and int(dash_ctl_fired[hand]) != ctl_now:
-		dash_ctl_fired[hand] = ctl_now
-		_activate_dash_ctl(dash_ctl_kinds[ctl_now])
-	elif ctl_now < 0:
+	# --- DASH CONTROLS (Fix Pass 9's level activation, Item 1's latch) ---
+	# A gripping hand inside a control's volume fires it ONCE
+	# per latch (dash_ctl_fired); the latch now clears ONLY on
+	# grip release, so zone exits and value dips inside one
+	# squeeze can neither re-fire a toggle nor stop a held seat
+	# lever. Moving zone-to-zone inside one squeeze still fires
+	# each control on entry - squeeze-and-sweep is the gesture.
+	# Fix Pass 16 (Item 4): the SIDE button is the exception -
+	# entry starts a deliberate hold (SIDE_HOLD_S), not a fire.
+	var ctl_now: int = _dash_ctl_near_swept(prev, pos) if held else -1
+	if not held:
 		dash_ctl_fired[hand] = -1
-	gripping[hand] = now
+		side_hold_t[hand] = 0.0
+	elif ctl_now >= 0:
+		var kind: String = dash_ctl_kinds[ctl_now]
+		if kind == "side" and int(dash_ctl_fired[hand]) != ctl_now:
+			side_hold_t[hand] = float(side_hold_t[hand]) + _delta
+			if float(side_hold_t[hand]) >= SIDE_HOLD_S:
+				dash_ctl_fired[hand] = ctl_now
+				side_hold_t[hand] = 0.0
+				grab_fire_count += 1
+				_grab_event("%s SIDE FIRE g%.2f" % [hand, grip_v])
+				_pulse_hand(hand, 0.35, 0.06)
+				_activate_dash_ctl(kind)
+		elif kind.begins_with("seat"):
+			if int(dash_ctl_fired[hand]) != ctl_now:
+				dash_ctl_fired[hand] = ctl_now
+				_grab_event("%s %s LAT g%.2f" % [hand, kind.to_upper(), grip_v])
+				_pulse_hand(hand, 0.35, 0.06)
+			var sdir: float = 1.0 if kind == "seatup" else -1.0
+			_apply_seat_trim(seat_trim + sdir * SEAT_TRIM_RATE * _delta)
+		elif int(dash_ctl_fired[hand]) != ctl_now:
+			dash_ctl_fired[hand] = ctl_now
+			grab_fire_count += 1
+			_grab_event("%s %s FIRE g%.2f" % [hand, kind.to_upper(), grip_v])
+			_pulse_hand(hand, 0.35, 0.06)
+			_activate_dash_ctl(kind)
+	else:
+		# Held, outside every volume: a latched seat lever keeps
+		# trimming on its latch; the SIDE hold clock resets (the
+		# hold must be IN the zone - deliberate means staying).
+		var fi: int = int(dash_ctl_fired[hand])
+		if fi >= 0 and fi < dash_ctl_kinds.size() and dash_ctl_kinds[fi].begins_with("seat"):
+			var sdir2: float = 1.0 if dash_ctl_kinds[fi] == "seatup" else -1.0
+			_apply_seat_trim(seat_trim + sdir2 * SEAT_TRIM_RATE * _delta)
+		side_hold_t[hand] = 0.0
+	# --- THE WHEEL (soft lock) ---
 	# Fix Pass 13 (Item 3): the wheel is also live in the
 	# DANGLE - the driver dials in the landing lock while the
-	# car hangs, and _do_release/_land never reset
-	# wheel_angle, so the lock carries into the drive. In the
-	# hang the wheel has NO yaw authority (nothing reads
-	# wheel_angle there - the pendulum owns the car); it only
-	# spins in the hands. Transport does not arm it: the gate
-	# is the dangle phase, not MODE_HANG alone.
+	# car hangs, and _do_release/_land never reset wheel_angle,
+	# so the lock carries into the drive. Transport does not
+	# arm it: the gate is the dangle phase, not MODE_HANG alone.
 	var wheel_live: bool = mode == MODE_DRIVE or mode == MODE_AIR \
 		or (mode == MODE_HANG and hang_phase == "dangle")
 	if not wheel_live:
 		if grab_hand == hand:
 			grab_hand = ""
+		rim_attach[hand] = false
+		prev_hand_pos[hand] = pos
+		prev_hand_valid[hand] = true
 		return
-	if now and near_wheel and drop_lever_hand != hand:
-		if grab_hand == "":
-			grab_hand = hand
-			grab_prev_ang = _hand_wheel_angle(hand)
-		elif grab_hand == hand:
+	var hub_w: Vector3 = car.global_transform * _wheel_hub_local()
+	if grab_hand == hand:
+		if not held:
+			grab_hand = ""
+			_grab_event("%s WHEEL REL g%.2f" % [hand, grip_v])
+			# other hand takes over if it is still gripping the wheel
+			var other: String = "R" if hand == "L" else "L"
+			if bool(gripping[other]) and _hand_pos(other).distance_to(hub_w) < WHEEL_GRAB_RADIUS:
+				grab_hand = other
+				grab_prev_ang = _hand_wheel_angle(other)
+		else:
+			# Soft lock: the latched hand steers at ANY radius -
+			# the angle is read about the hub, so an arm that
+			# extends through a big turn never drops the wheel.
 			var ang: float = _hand_wheel_angle(hand)
 			var d: float = wrapf(ang - grab_prev_ang, -PI, PI)
 			wheel_angle = clampf(wheel_angle + d, -PI, PI)
 			grab_prev_ang = ang
-	elif grab_hand == hand and not now:
-		grab_hand = ""
-		# other hand takes over if it is still gripping the wheel
-		var other: String = "R" if hand == "L" else "L"
-		if bool(gripping[other]) and _hand_pos(other).distance_to(car.global_transform * _wheel_hub_local()) < WHEEL_GRAB_RADIUS:
-			grab_hand = other
-			grab_prev_ang = _hand_wheel_angle(other)
+	elif held and drop_lever_hand != hand \
+			and _seg_point_dist(prev, pos, hub_w) < WHEEL_GRAB_RADIUS:
+		grab_hand = hand
+		grab_prev_ang = _hand_wheel_angle(hand)
+		grab_wheel_count += 1
+		_grab_event("%s WHEEL LAT g%.2f" % [hand, grip_v])
+		_pulse_hand(hand, 0.35, 0.06)
 	if grab_hand == "" and mode == MODE_DRIVE:
 		wheel_angle = move_toward(wheel_angle, 0.0, 1.6 * _delta)
+	_update_rim_attach(hand, held, pos)
+	# --- the CANDIDATE cue (Item 1's witness) ---
+	# The nearest control this hand could take right now. A new
+	# candidate while ungripped earns a faint tick - XR Tools'
+	# acquisition pulse - so "my hand is on something" is felt
+	# BEFORE the squeeze, not discovered after a silent miss.
+	var ck: String = ""
+	var cc: int = -1
+	if zone_now >= 0:
+		ck = "dash"
+		cc = zone_now
+	elif _hand_near_drop_lever(hand):
+		ck = "lever"
+	elif pos.distance_to(hub_w) < WHEEL_GRAB_RADIUS:
+		ck = "wheel"
+	if ck != String(cand_kind[hand]):
+		cand_kind[hand] = ck
+		if ck != "" and not held and race_time >= float(cand_tick_t[hand]):
+			cand_tick_t[hand] = race_time + 0.25
+			_pulse_hand(hand, 0.18, 0.04)
+	cand_ctl[hand] = cc
+	prev_hand_pos[hand] = pos
+	prev_hand_valid[hand] = true
+
+
+func _seg_seg_dist(p1: Vector3, q1: Vector3, p2: Vector3, q2: Vector3) -> float:
+	# Closest distance between two segments (Ericson's
+	# segment-segment closest point). The swept zone tests are
+	# built on it: a hand's per-frame travel vs a control's
+	# grab segment.
+	var d1: Vector3 = q1 - p1
+	var d2: Vector3 = q2 - p2
+	var r: Vector3 = p1 - p2
+	var a: float = d1.dot(d1)
+	var e: float = d2.dot(d2)
+	var f: float = d2.dot(r)
+	var s: float = 0.0
+	var t: float = 0.0
+	if a <= 1e-9 and e <= 1e-9:
+		return r.length()
+	if a <= 1e-9:
+		t = clampf(f / e, 0.0, 1.0)
+	else:
+		var c: float = d1.dot(r)
+		if e <= 1e-9:
+			s = clampf(-c / a, 0.0, 1.0)
+		else:
+			var b: float = d1.dot(d2)
+			var denom: float = a * e - b * b
+			s = clampf((b * f - c * e) / denom, 0.0, 1.0) if denom > 1e-9 else 0.0
+			t = (b * s + f) / e
+			if t < 0.0:
+				t = 0.0
+				s = clampf(-c / a, 0.0, 1.0)
+			elif t > 1.0:
+				t = 1.0
+				s = clampf((b - c) / a, 0.0, 1.0)
+	return (p1 + d1 * s - (p2 + d2 * t)).length()
+
+
+func _hand_near_drop_lever_swept(a: Vector3, b: Vector3) -> bool:
+	var seg: Array = debug_drop_lever_segment()
+	if seg.size() != 2:
+		return false
+	return _seg_seg_dist(a, b, seg[0], seg[1]) <= DROP_LEVER_GRAB_RADIUS
+
+
+func _dash_ctl_near_swept(a: Vector3, b: Vector3) -> int:
+	# The swept twin of _dash_ctl_near: the hand's travel this
+	# frame against every control's grab segment, each with
+	# its own radius; nearest wins, as in the point test.
+	var best: int = -1
+	var best_d: float = 1e9
+	for i: int in dash_ctl_nodes.size():
+		var seg: Array[Vector3] = _dash_ctl_segment(i)
+		var d: float = _seg_seg_dist(a, b, seg[0], seg[1])
+		if d < _dash_ctl_radius(i) and d < best_d:
+			best_d = d
+			best = i
+	return best
+
+
+func _update_rim_attach(hand: String, held: bool, pos: Vector3) -> void:
+	# Fix Pass 16 (Item 3): the passenger hand rides the rim.
+	# The DRIVING hand's rim point is glued by construction
+	# (the wheel's angle deltas come from its own motion, so
+	# the rim point under it never slips); a second gripping
+	# hand on the rim instead gets its grab point stored in
+	# wheel-spin local space, and _refresh_car_visuals poses
+	# its rep from the spin node - both hands read as holding
+	# the wheel. Attach requires: this hand gripping, on the
+	# rim, and the OTHER hand driving. It ends on release, on
+	# becoming the driver, or when the wheel goes non-live
+	# (the caller clears it on that path).
+	var other: String = "R" if hand == "L" else "L"
+	var want: bool = held and grab_hand == other \
+		and pos.distance_to(car.global_transform * _wheel_hub_local()) < WHEEL_GRAB_RADIUS
+	if want and not bool(rim_attach[hand]):
+		rim_attach[hand] = true
+		rim_local[hand] = wheel_spin.global_transform.affine_inverse() * pos
+		_grab_event("%s RIM ATT g%.2f" % [hand, float(diag_grip[hand])])
+	elif not want and bool(rim_attach[hand]):
+		rim_attach[hand] = false
 
 
 # Fix Pass 5 (Item 2): lever-shaped controls (the seat levers; the
@@ -4207,6 +4492,14 @@ func _seg_point_dist(a: Vector3, b: Vector3, p: Vector3) -> float:
 	return p.distance_to(a + ab * t)
 
 
+func _dash_ctl_radius(i: int) -> float:
+	# Fix Pass 16 (Item 2): capture radii are per-control and
+	# DECOUPLED from the meshes - the seat levers (smaller
+	# furniture after this pass) carry the generous volume;
+	# the buttons keep FP4's near-touch 0.15.
+	return DASH_CTL_RADIUS_SEAT if dash_ctl_kinds[i].begins_with("seat") else DASH_CTL_RADIUS
+
+
 func _dash_ctl_near(world_pos: Vector3) -> int:
 	# Fix Pass 10 (Item 0): the NEAREST control inside the radius
 	# wins, not the first listed. The zones just touch at the
@@ -4217,11 +4510,11 @@ func _dash_ctl_near(world_pos: Vector3) -> int:
 	# hand must fire the control it is actually closest to,
 	# never a neighbour it merely also grazes.
 	var best: int = -1
-	var best_d: float = DASH_CTL_RADIUS
+	var best_d: float = 1e9
 	for i: int in dash_ctl_nodes.size():
 		var seg: Array[Vector3] = _dash_ctl_segment(i)
 		var d: float = _seg_point_dist(seg[0], seg[1], world_pos)
-		if d < best_d:
+		if d < _dash_ctl_radius(i) and d < best_d:
 			best_d = d
 			best = i
 	return best
@@ -5865,6 +6158,19 @@ func _refresh_car_visuals() -> void:
 	# at _hand_wheel_angle for the sign pairing)
 	if wheel_spin != null:
 		wheel_spin.rotation.y = -wheel_angle
+	# Fix Pass 16 (Item 1): the origin dot is the hand's witness -
+	# swollen while the hand has a CANDIDATE in reach, more while
+	# it holds a LATCH. If the dot is small, the hand is on
+	# nothing: no silent misses, the state is on the hand itself.
+	for h1: String in ["L", "R"]:
+		var dot1: MeshInstance3D = rep_dot.get(h1)
+		if dot1 == null:
+			continue
+		var latched1: bool = grab_hand == h1 or drop_lever_hand == h1 \
+			or bool(rim_attach[h1]) \
+			or (bool(gripping[h1]) and int(dash_ctl_fired[h1]) >= 0)
+		var s1: float = 2.1 if latched1 else (1.5 if String(cand_kind[h1]) != "" else 1.0)
+		dot1.scale = Vector3.ONE * s1
 	if car_body != null:
 		var steer: float = clampf(wheel_angle / PI, -1.0, 1.0)
 		car_body.rotation.z = -steer * 0.05 - lat_vel * 0.012
