@@ -2307,6 +2307,32 @@ func _build_track_meshes(d: Dictionary) -> void:
 	var skirt_c := Color(1.0, 0.5, 0.05)
 	var bot_c := Color(0.55, 0.27, 0.03)
 	var edge_c := Color(1.0, 0.72, 0.10)
+	# Fix Pass 15 (Item 4): a CONTINUOUS centre band in the
+	# SpurGuide's amber, baked into the surface mesh itself
+	# (each surface quad is built as three: asphalt, band,
+	# asphalt). The invisible road is a contrast failure:
+	# the shaded surface reads brown against tan desert,
+	# and the dashed edges alias away with distance (FP12),
+	# so at the bottom of the dip the road ahead is one
+	# featureless sheet. Fog thinning was measured and
+	# rejected (no improvement at the dip sightline). An
+	# unbroken centre trace gives the eye the road's path
+	# at every range. Baked in, not a raised decal: a
+	# separate flat mesh floating +0.03 over the surface
+	# was built first and measured in the render proof's
+	# own renderer -- from driving angles it won ~0 pixels
+	# against the surface's depth (it rendered only alone
+	# in an empty scene, or lifted metres into the air).
+	# As part of the surface it cannot be depth-eaten; it
+	# shades and fogs with the road, which costs the
+	# unshaded punch of the guides but keeps the ~8x
+	# luminance step over the asphalt everywhere the road
+	# itself is visible. Width 1.1 m: at the guide's 0.55
+	# the trace would shrink to a hairline at dip ranges.
+	# Smoke stage 45 asserts the band's presence in the
+	# mesh (a third of the surface vertices, on the
+	# centreline) for both tracks.
+	var centre_c := Color(1.0, 0.60, 0.04)
 	var seg_n: int = t_pts.size() if bool(d["closed"]) else t_pts.size() - 1
 	for i: int in seg_n:
 		var frame0: Dictionary = _frame_at(float(i))
@@ -2329,7 +2355,15 @@ func _build_track_meshes(d: Dictionary) -> void:
 		var br1: Vector3 = r1 - u1 * RIBBON_DEPTH
 		var up_avg: Vector3 = (u0 + u1) * 0.5
 		var side_avg: Vector3 = (s0 + s1) * 0.5
-		_add_quad(surf_pos, surf_nrm, surf_col, l0, r0, r1, l1, up_avg, surf_c)
+		# the surface, in three strips across: asphalt, the
+		# FP15 centre band, asphalt (see centre_c above)
+		var cl0: Vector3 = p0 - s0 * 0.55
+		var cr0: Vector3 = p0 + s0 * 0.55
+		var cl1: Vector3 = p1 - s1 * 0.55
+		var cr1: Vector3 = p1 + s1 * 0.55
+		_add_quad(surf_pos, surf_nrm, surf_col, l0, cl0, cl1, l1, up_avg, surf_c)
+		_add_quad(surf_pos, surf_nrm, surf_col, cl0, cr0, cr1, cl1, up_avg, centre_c)
+		_add_quad(surf_pos, surf_nrm, surf_col, cr0, r0, r1, cr1, up_avg, surf_c)
 		# box-section sides (skirts) + underside
 		_add_quad(skirt_pos, skirt_nrm, skirt_col, l0, l1, bl1, bl0, -side_avg, skirt_c)
 		_add_quad(skirt_pos, skirt_nrm, skirt_col, r1, r0, br0, br1, side_avg, skirt_c)

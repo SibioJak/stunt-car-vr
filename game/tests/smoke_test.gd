@@ -4540,6 +4540,36 @@ func _run() -> void:
 	grip_press_ctl("side")
 	check(not main.drop_lever_left, "stage44: and the button brings it home again")
 
+	# --- Stage 45: FP15 (Item 4) - the centre band is baked into
+	# the surface mesh of both main tracks: a third of the surface
+	# vertices carry the guide amber (1.0, 0.60, 0.04) and they sit
+	# on the centreline. Data-level assertion: the fallback
+	# renderer does not reproduce the surface's vertex colours
+	# faithfully at driving angles (see README FP15 notes), so the
+	# band's presence is proven here, in the mesh, and its
+	# readability is the owner's verdict on his device.
+	for key45: String in ["ribbon", "circuit"]:
+		main._set_track(key45)
+		var surf45: MeshInstance3D = (main.track_data[key45]["root"] as Node3D).get_node("TrackSurface") as MeshInstance3D
+		var arrs45: Array = surf45.mesh.surface_get_arrays(0)
+		var v45: PackedVector3Array = arrs45[Mesh.ARRAY_VERTEX]
+		var c45: PackedColorArray = arrs45[Mesh.ARRAY_COLOR]
+		var amber45: int = 0
+		for col45: Color in c45:
+			if col45.r > 0.9 and col45.g > 0.5 and col45.g < 0.7 and col45.b < 0.15:
+				amber45 += 1
+		var frac45: float = float(amber45) / float(maxi(v45.size(), 1))
+		check(frac45 > 0.30 and frac45 < 0.36,
+			"stage45: %s centre band is a third of the surface (%.3f)" % [key45, frac45])
+		var fr45: Dictionary = main._frame_at(50.0)
+		var p45: Vector3 = fr45["pos"]
+		var near45: bool = false
+		for i45: int in v45.size():
+			if c45[i45].r > 0.9 and c45[i45].g > 0.5 and v45[i45].distance_to(p45) < 1.2:
+				near45 = true
+				break
+		check(near45, "stage45: %s band vertices sit on the centreline at s50" % key45)
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
