@@ -4135,6 +4135,71 @@ func _run() -> void:
 	main.wheel_angle = 0.0
 	main.test_throttle = 0.0
 
+	# ---------- stage 42: Fix Pass 14 (Item 8) - HANG WANDER + DROP ----
+	# The base dangle was a perfectly periodic Lissajous:
+	# fore sway half-period 2.36 s with min = max = 2.36-2.37
+	# (harness M7 census, dips frozen) - the film's hang is
+	# irregular and nudged (study section 4). Item 8 wanders
+	# the carrier's station target (hash-scheduled, flown
+	# through the P-law, never scripted into the pendulum).
+	# This stage repeats the M7 census with the wander live
+	# and the dips frozen, so the spread measured is the
+	# wander's alone; the drop fall must stay in the film's
+	# 0.3-0.5 s band (base 0.44 s).
+	main._set_track("ribbon")
+	main.start_race()
+	var ok42: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+	check(ok42, "stage42: the Drop Start pickup reaches the dangle")
+	main.dip_timer = 1000.0 # dips frozen, as in the M7 census
+	var thf42: Array = []
+	var thl42: Array = []
+	for i42: int in 2700:
+		await physics_frame
+		thf42.append(main.pend_th_f)
+		thl42.append(main.pend_th_l)
+	var zc42 := func(series: Array) -> Array:
+		var iv: Array = []
+		var last: int = -1
+		var prev: float = float(series[0])
+		for k42: int in range(1, series.size()):
+			var cur: float = float(series[k42])
+			if (prev < 0.0 and cur >= 0.0) or (prev >= 0.0 and cur < 0.0):
+				if last >= 0:
+					iv.append(float(k42 - last) / 90.0)
+				last = k42
+			prev = cur
+		return iv
+	var stats42 := func(iv: Array) -> Array:
+		var mn: float = 0.0
+		var lo: float = 1e9
+		var hi: float = -1e9
+		for v42: float in iv:
+			mn += v42
+			lo = minf(lo, v42)
+			hi = maxf(hi, v42)
+		if iv.size() > 0:
+			mn /= float(iv.size())
+		return [mn, lo, hi]
+	var ivf42: Array = zc42.call(thf42)
+	var ivl42: Array = zc42.call(thl42)
+	var sf42: Array = stats42.call(ivf42)
+	var sl42: Array = stats42.call(ivl42)
+	print("stage42: sway half-periods fore n=%d mean %.2f min %.2f max %.2f (base: mean 2.36, spread 0.01); lat n=%d mean %.2f min %.2f max %.2f" % [
+		ivf42.size(), float(sf42[0]), float(sf42[1]), float(sf42[2]), ivl42.size(), float(sl42[0]), float(sl42[1]), float(sl42[2])])
+	check(ivf42.size() >= 8, "stage42: enough fore sway cycles to judge (%d)" % ivf42.size())
+	check(float(sf42[2]) - float(sf42[1]) >= 0.25,
+		"stage42: the fore sway is IRREGULAR now - half-period spread %.2f s (base 0.01)" % (float(sf42[2]) - float(sf42[1])))
+	check(float(sf42[0]) >= 1.9 and float(sf42[0]) <= 2.9,
+		"stage42: the mean sway period stays the pendulum's own (%.2f s)" % float(sf42[0]))
+	main._do_release()
+	var fd42: int = 0
+	while main.mode != main.MODE_DRIVE and fd42 < 300:
+		await physics_frame
+		fd42 += 1
+	print("stage42: drop fall %.2f s (%d frames, base 0.44)" % [float(fd42) / 90.0, fd42])
+	check(float(fd42) / 90.0 >= 0.30 and float(fd42) / 90.0 <= 0.50,
+		"stage42: the short drop stays short (%.2f s in the film's 0.3-0.5 s band)" % (float(fd42) / 90.0))
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:

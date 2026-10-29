@@ -727,6 +727,12 @@ var dip_t: float = -1.0 # flown-dip progress; -1 = not dipping
 var dip_depth: float = 0.0
 var dip_timer: float = 2.0
 var dip_seed: int = 0
+# Fix Pass 14 (Item 8): the hang WANDER state - the station
+# target itself drifts (see _step_carrier's dangle branch).
+var wander_seed: int = 0
+var wander_t: float = 0.0
+var wander_off: Vector2 = Vector2.ZERO
+const WANDER_AMP: float = 0.28 # m, per axis, of station wander
 # Test hooks (smoke only, same pattern as test_grip): inject a
 # pivot acceleration / a yaw target to prove the pendulum and the
 # facing seek answer the PIVOT, not a schedule.
@@ -4010,6 +4016,9 @@ func _reset_dangle_feel() -> void:
 	dip_depth = 0.0
 	dip_timer = 2.0
 	dip_seed = 0
+	wander_seed = 0
+	wander_t = 0.0
+	wander_off = Vector2.ZERO
 	slack_t = 0.0
 	catch_t = 1.0
 	orient_have = false
@@ -4886,7 +4895,29 @@ func _step_carrier(delta: float) -> void:
 			if dip_t >= DIP_DUR:
 				dip_t = -1.0
 		var doff: Vector2 = _carrier_dip_offset()
-		target = anchor_target + Vector3(0.0, doff.x, 0.0)
+		# Fix Pass 14 (Item 8): the station WANDERS. The film
+		# study (section 4): the original's hang sway is
+		# irregular, nudged, never a clean sine - our base
+		# dangle was a perfectly periodic Lissajous (fore
+		# half-period 2.36 s, min = max). The wander moves
+		# the STATION TARGET by hash-scheduled horizontal
+		# offsets (+-WANDER_AMP per axis, re-picked every
+		# 1.2-2.2 s on the house hash) and the carrier FLIES
+		# to it through the same P-law as everything else,
+		# so the pendulum is nudged by the MEASURED carrier
+		# acceleration - the sway irregularity is flown,
+		# never scripted into the pendulum. Dangle phase
+		# only: the carry phase and the release are
+		# untouched.
+		wander_t -= delta
+		if wander_t <= 0.0:
+			wander_seed += 1
+			var hw1: float = sin(float(wander_seed) * 12.9898) * 43758.5453
+			var hw2: float = sin(float(wander_seed) * 78.233) * 12543.21
+			var hw3: float = sin(float(wander_seed) * 37.719) * 28001.83
+			wander_off = Vector2((hw1 - floor(hw1)) * 2.0 - 1.0, (hw2 - floor(hw2)) * 2.0 - 1.0) * WANDER_AMP
+			wander_t = 1.2 + 1.0 * (hw3 - floor(hw3))
+		target = anchor_target + Vector3(wander_off.x, doff.x, wander_off.y)
 		target_vel = Vector3(0.0, doff.y, 0.0)
 	# velocity command
 	var desired: Vector3
