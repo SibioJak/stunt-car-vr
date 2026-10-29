@@ -1643,6 +1643,153 @@ number, left deliberately untouched.
 
 
 
+## Fix Pass 15 — telegraphed limit, the crane, dash-face lever, centre band
+
+Base: FP14 final (2b92605). Four items, one commit each, in brief
+order. Tallies on the final tree: SMOKE 373/373, API GUARD
+70/70, RENDER PROOF 136/136. Everything below is
+probe-verified only; the feel verdicts (audio cues, crane swing,
+lever ergonomics, road readability) are the owner's on his device.
+
+### Item 1 — the limit, telegraphed (commit 1b66ba0)
+
+Traction loss no longer "just happens": a per-axle
+demand-vs-capacity signal (demanded lateral acceleration against
+FP14's load-scaled grip cap, load_grip = clamp(mean axle
+load^0.35, 0.15, 1.15)) drives three cue families before the
+bleed, all under the standing audio teardown discipline
+(latched kill, watchdog, silence-by-default):
+
+- Tire song: tonal 110 Hz stack whose gain follows the approach
+  band, band = clamp((ratio − 0.70) / 0.30) — silent below ratio
+  0.70, full at 1.00 (−34 dB floor → −19 dB).
+- Haptics: controller rumble above ratio 0.90 (TIRE_HAPTIC_EDGE).
+- Dust: kicked off the saturating axle's contact patches.
+- Edge family, per wheel from FP14's support state: straddling
+  the edge line scrapes (AUDIO_SCRAPE_MAX_DB −17); fully off the
+  ribbon is a rumble strip (AUDIO_RUMBLE_MAX_DB −16).
+
+Staged (stage 43): negative control peak ratio 0.00, all voices
+silent. Held-16 m/s sweeper: 151 band frames, ratio peak 0.98,
+slip peak 0.00 — the cues live in the approach, not the slide.
+Progressive entry (the money number): band opens at frame 294,
+slip at frame 329 — **warning lead 0.39 s / 8.9 m** — with song,
+haptic and dust all peaking at 1.00. Edge legs staged on the
+circuit home straight: straddle held at lat 6.06 → scrape 0.33;
+deep ride at lat 6.92 → rumble 1.00, scrape 0.05. Stage 19's
+census is frame-identical to FP14 (19,204 frames): no drive
+numbers moved.
+
+### Item 2 — the crane replaces the drone (commit 34795b8)
+
+The drone is deleted (Run 14: "it just gets worst — loop de
+loops"). In its place, the owner's own call: a fixed crane on a
+service pad beside the drop piece, chains per the manual,
+collection off-stage as in 1989. Flow: attach (1 s lift) →
+trolley slew → dangle. Internal carrier names kept; phases
+attach/carry/dangle. Constants: CRANE_PICKUP_OFF 2.4,
+CRANE_POST_OFF 3.6, CRANE_SLEW_SPEED 2.4, CRANE_SLEW_ACCEL 1.6,
+HANG_LEN 5.5, HANG_CLEAR 1.2; DROP_MIN_RUNUP_M 25.0 unchanged.
+
+The FP14 hang irregularity came from drone station wander; a
+fixed pivot must not regress to FP13's clean Lissajous (fore
+half-period spread 0.01 s). The crane's honest nudge sources:
+desert gusts stepping the station target (house hash, re-pick
+every 1.2–2.2 s, GUST_AMP 0.14) and jib flex as a first-order
+lag (JIB_FLEX_TAU 0.7 s, JIB_FLEX_M 0.16 — a lag, not a spring,
+so it cannot resonate); split station-keeping (winch vertical
+2.2 / cap 2.0 keeps dip authority; horizontal nudge 1.1 /
+cap 0.6); pivot excursion clamped at PIVOT_OFF_MAX_M 0.30.
+Census (2,700 frames, dips frozen): **fore half-period spread
+0.39 s** — at or above FP14's wander-driven 0.31 s, honestly
+sourced — mean period 2.26 s, max swing cone 0.40 rad, max
+pivot offset 0.14 m. Fall A/B recovery: 605 frames end-to-end
+against FP13's 1,439 and FP12's 1,482–1,559 carry-only.
+Retired drone stages replaced at equal strength: 17 (slew
+assertion replaces drone path length), 24 (restated: the crane
+is built facing the drop heading — pivot never leaves the drop
+piece, jib yaw within 5°), 28 (analytic clearance over attach +
+slew; the fall-site exemption retired with the drone), 34 (pad
+pickup at HALF_WIDTH + 2.4, tol 0.05), 42 (spread floor kept,
+plus cone < 1.05 rad and anchor excursion ≤ 0.45 m budgets).
+Panel text "Call drone" → "Call crane"; design-spec updated
+(crane lock with the 2026-10-28 reversal note, wreck-repair
+arms live on the crane, weather bends the jib).
+
+### Item 3 — drop lever to the dash face, lefty mirror (commit 49b759e)
+
+The lever leaves the dash top for the dash face, at the right
+of the wheel, facing the driver, throw up/down as before:
+DROP_LEVER_FACE_X 0.42, FACE_Y 0.70, FACE_Z −0.44 (was dash
+top (0, 0.88, −0.70)). The placement is zone-driven, because
+the first candidate face spot was a live fault: its grip point
+(shaft + 0.27 m) sat **0.117 m from the RESTART button's
+centre — inside its 0.15 m dash zone — so latching the lever
+restarted the race** (caught by stage 25's latch poll). The
+shipped spot clears the restart zone by 0.162 m and the wheel
+grab radius by 0.422 m at rest, more along the throw; stage 44
+sweeps the whole grip arc on both faces against every dash zone
+and the wheel radius as a standing guard. Mechanism untouched
+(detent 0.50, max throw 0.70, spring 3.5).
+
+Lefty mirror: a light-blue SIDE dash button — the seventh dash
+control, registered last so the FP10–14 six keep their indices
+(VIEW stays index 5) — flips the lever to the left face;
+desktop twin **M**. The side persists in settings (lever/left)
+beside seat trim, defaults right, and the DIAG wheel line reads
+DRP R / DRP L. The panel controls list names both in the same
+commit (VR line: blue lever side button; desktop line: M lever
+side). One knock-on fix: the widened DIAG readout put the
+board's lower sightlines through the lean needle (proof sweep:
+2 of 63 blocked) — the needle drops to y 1.04 (was 1.155) and
+the sweep is clean.
+
+### Item 4 — the invisible road: a centre band (commit c212ec8)
+
+Surface/contrast only; no ribbon geometry changed, per the
+brief. What shipped: a **continuous 1.1 m centre band in the
+descent guides' amber (1.0, 0.60, 0.04), baked into the surface
+mesh** — every surface quad is built as three strips (asphalt,
+band, asphalt), so a third of the surface vertices carry the
+band on both main tracks. Stage 45 asserts exactly that, at
+data level, for both tracks.
+
+What was tried and measured first, honestly:
+
+- Fog thinning (0.00012 → 0.00005): no improvement at the dip
+  sightline. Not shipped; fog is unchanged.
+- A separate raised decal mesh (+0.03 over the surface, the
+  first build): in the render proof's fallback renderer it won
+  ~0 pixels at driving angles (driver-view A/B counts identical
+  shown vs hidden; it rendered only alone in an emptied scene
+  or lifted metres into the air). Rejected — a marking that
+  cannot be verified in the project's own proof does not ship.
+  The baked band cannot be depth-eaten and uses the same
+  _add_quad/_add_mesh vertex-colour path as the field-verified
+  edge strips and descent guides.
+
+Residual, stated plainly: the fallback renderer does not
+reproduce the surface's vertex colours faithfully at driving
+angles (in its captures the road's top variously reads as the
+surface's near-black or the box underside's brown), so the
+band's readability is **not** established by these tallies — it
+is the owner's verdict on his device, like every visual in
+this project. And at the dip's descent-top sightline itself,
+the road ahead presents nearly edge-on: no surface marking of
+any width survives that projection. That sightline is a
+profile problem, of the same family as FP14's crest verdict,
+and belongs to the queued tracks pass (which also owns road
+width and banking) — along with the stilt tops that poke
+through the surface on pitched segments and cross the band
+every 10 m.
+
+### Yardsticks held
+
+Stage 30 touchdown spread floor 1.25 s and stage 26 pitch
+tolerance 0.18 stand as FP14 left them — not re-derived. The
+crane's drop behaviour is reported against FP14's numbers in
+Item 2 above. Steering lock scale ≤ 24 m/s untouched.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
