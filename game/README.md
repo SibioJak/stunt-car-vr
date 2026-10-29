@@ -2077,6 +2077,162 @@ unchanged), and stage 23, whose audit assertion is Item 2's
 inverted rule.
 
 
+## Fix Pass 17 — One Hand, One Control (+ throw telemetry)
+
+Base: FP16 final (ddf0612). Surgical pass, two items, ordered
+on the owner's tap after he read his own run-16 grab log
+(archived at `research/grab-log-run16.txt`). His grips in that
+log are healthy (latch 0.78–1.00 both hands, releases
+0.14–0.25), so FP16's thresholds (engage 0.55 / release 0.30)
+are untouched, no drive numbers moved, no commands were added
+(the controls list is unchanged), and the queued load (smoke
+puff, banner rename, tire story, toggle grip) is NOT in this
+pass. Tallies on the final tree: SMOKE 421/421, API GUARD
+70/70, RENDER PROOF 146/146. Everything below is
+probe-verified only — whether the lever finally behaves is
+the owner's verdict in the headset; what this pass guarantees
+is that one squeeze can no longer grab two controls, and
+that a failed pull now leaves evidence.
+
+### Item 1 — one hand, one control (commit 2368416)
+
+The conviction came from the owner's own lines: at T14.8 his
+left hand rim-attached (`L RIM ATT`) in the same instant it
+fired the drop lever (`L DRP FIRE`). FP16 grew the lever's
+grab radius to 0.20 m, and that tube overlaps the wheel's rim
+test beside the shaft — one squeeze, two grabs. Harmless in
+that fragment (the other hand drove, so the lever hand could
+only ride as passenger); with the wheel FREE, the same hand
+could latch the wheel and pull a steer instead of a drop —
+which fits his report exactly: first drop works (set up
+deliberately, wheel held), later drops iffy (recoveries,
+hands everywhere).
+
+THE RULE, as implemented (`_hand_owner` + arbitration in
+`_poll_grab`): a hand owns at most one control class at a
+time — wheel (driver), rim (passenger), drop lever, or a
+dash latch (one-shots and seat trims alike). Every
+acquisition is gated on the hand owning NOTHING, in both
+directions: a lever/dash hand cannot rim-attach or latch
+the wheel; a wheel/rim hand cannot latch the lever or a
+dash control; the driver-takeover is an acquisition too
+(a rim passenger may promote; a lever/dash owner may not
+be handed the wheel). Ownership ends only on grip release,
+never on a zone exit. The one exception is inside the dash
+family: a dash owner keeps FP9's squeeze-and-sweep between
+dash controls. When an unowned, held hand is inside several
+tests in the same frame, the NEAREST wins — the tests' own
+swept distances compared directly; exact ties resolve in
+poll order (lever, dash, wheel). Entries in different
+frames need no tiebreak: the first acquisition owns the
+hand, so later arrivals never evaluate. The loser records
+nothing — no latch, no attach, no event.
+
+Stage 47 stages the log's own script: (a1) T14.8 verbatim —
+driver + lever pull — now produces LAT+FIRE with ZERO rim/
+wheel events for the lever hand; (a2) the lever with the
+wheel free fires and latches nothing else; (b) a HELD wheel
+moved inside lever range keeps the wheel and the lever
+never latches; (b2) a fresh squeeze inside both volumes
+resolves to exactly one acquisition; (e) a seat-latched
+hand taken to the wheel gets nothing. FP16's both-hands
+case is preserved exactly (render proof: driver latches,
+passenger attaches and rides the rim, 146/146).
+
+Two staging notes, stated plainly. First, (b) is staged as
+a held wheel inside lever range rather than a fresh
+simultaneous squeeze: the geometry forbids the pure case —
+the lever segment's nearest point sits 0.422 m from the
+hub, so the overlap lens (within 0.20 m of the segment AND
+0.40 m of the hub) lies entirely on the lever's side of the
+bisector; no pose inside both volumes is nearer the hub
+than the segment, and (b2) covers the simultaneous entry
+that can actually occur (it resolves NEAREST: lever
+≈0.13 m over hub 0.30 m). Second, one FP16 staged
+expectation deliberately changed (the brief's flag): stage
+25's lever grab squeezed from a latch an earlier stage left
+held; arbitration requires a release between controls, as a
+real driver does, so stage 25's script gained one release
+poll before the grab. The grab it stages is unchanged.
+
+### Item 2 — throw telemetry (commit 6148c1b)
+
+FP16's log recorded LAT and FIRE but nothing of the pull
+between them — a pull that stalled short of the detent left
+no trace — and it truncated per launch, so the run-16
+upload carried only the owner's last short session. Both
+blind spots are closed:
+
+- Pull fraction (progress toward the detent, REST→DETENT)
+  logs its quarter crossings: `DRP PULL 0.25 / 0.50 / 0.75`,
+  each with the grip.
+- `DRP FIRE` gains the pull duration: `dt<seconds>` from
+  latch to detent.
+- A latch that ends unfired logs `DRP ORPHAN peak <fraction>
+  g<grip at release>`; FP16's EARLY witness (a real pull let
+  go early) is unchanged and fires alongside it.
+- Every lever release logs `DRP REL`; the seat trims, which
+  share the latch path, log `SEATUP REL` / `SEATDN REL`.
+- The log file APPENDS across launches under a per-launch
+  header (`=== SESSION FP17 (base ddf0612) <wall clock> ===`),
+  tail-trimmed to 256 KB, oldest lines first. Verified live
+  in this environment: three FP17 session headers
+  accumulated over the preserved FP16 content of the
+  previous file — the next upload carries every attempt
+  since the build landed.
+
+Before (FP16), a fired pull and a stalled pull:
+
+```
+T14.6 L DRP LAT g0.78
+T14.8 L DRP FIRE g1.00
+(stalled pull: LAT, then nothing — the blind spot)
+```
+
+After (FP17), from stage 47's staged runs in the shipped
+log (race clock reads 0.0 in staged manual polls; live lines
+carry real race times):
+
+```
+T0.0 R DRP LAT g1.00
+T0.0 R DRP PULL 0.25 g1.00
+T0.0 R DRP PULL 0.50 g1.00
+T0.0 R DRP PULL 0.75 g1.00
+T0.0 R DRP FIRE g1.00 dt0.00
+T0.0 R DRP REL g0.00
+T0.0 R DRP LAT g1.00
+T0.0 R DRP PULL 0.25 g1.00
+T0.0 R DRP ORPHAN peak 0.30 g0.00
+T0.0 R DRP EARLY g0.00 @0.15
+T0.0 R DRP REL g0.00
+```
+
+### Honest residuals
+
+- The arbitration is staged on synthetic poses like every
+  grab fix before it; the live proof is the owner's next
+  session — whose log now records latch, pull, fire/orphan
+  and release for every attempt, appended across launches,
+  so a surviving failure names its own shape.
+- NEAREST arbitration means a hand arriving exactly between
+  two controls takes the closer one. In the cockpit's real
+  geometry the volumes barely overlap (the lever/wheel lens
+  is the convicted case); if the owner ever grabs a
+  neighbour he didn't intend, the log will show which test
+  won and by how much is inferable from the pose he
+  describes — the thresholds and radii themselves were not
+  moved in this pass.
+- One full-suite attempt during this pass died silently at
+  stage 13 with no error in its log (harness session lost);
+  the identical tree then passed 421/421 clean, and the
+  stage-13 content (fall/cutoff physics) is untouched by
+  either item. Recorded here rather than smoothed over.
+- The session header's build tag is a per-pass constant
+  (GRAB_LOG_BUILD), updated by hand like this README's own
+  accounting; it names the pass and its base, not the
+  delivery commit, which cannot know its own hash.
+
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
