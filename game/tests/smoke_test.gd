@@ -2308,8 +2308,12 @@ func _run() -> void:
 	# Fix Pass 13 (Item 1): the prep switches' deletion moved
 	# the seat levers up the registration order - the control
 	# set is exactly [restart, lean, track, seatup, seatdn].
+	# Fix Pass 14 (Item 6): the amber VIEW button registers
+	# after them (idx 5) so none of these indices move.
 	check(sup_idx == 3 and sdn_idx == 4,
 		"stage22: seat levers registered after the dash buttons (idx %d/%d)" % [sup_idx, sdn_idx])
+	check(main.dash_ctl_kinds.find("view") == 5 and main.dash_ctl_kinds.size() == 6,
+		"stage22: the VIEW button registers last (idx %d of %d)" % [main.dash_ctl_kinds.find("view"), main.dash_ctl_kinds.size()])
 	main._apply_seat_trim(0.0)
 	main.test_hand_set = true
 	var seg_sup: Array = main._dash_ctl_segment(sup_idx)
@@ -3958,6 +3962,78 @@ func _run() -> void:
 	# frames, the slide frozen at its landing value
 	# (2.32 m/s vs the base model's 1.81).
 	check(crest_rec39 >= flat_rec39 + 20 and crest_rec39 >= int(1.25 * float(flat_rec39)), "stage39: the crest slide PERSISTS - bleed-out %d frames vs the flat's %d (low grip cannot heal it)" % [crest_rec39, flat_rec39])
+
+	# ---------- stage 40: Fix Pass 14 (Item 6) - VIEW A/B ----
+	# The view-coupling switch: A = the shipped 0.6x (the
+	# seat adds 0.6x of the spring pitch / corner roll on
+	# top of the placement basis, which carries both at
+	# 1.0x); B = 1.0x, camera = car. The view path holds no
+	# lag or smoothing state - the offsets are pure
+	# functions of the current physics state - so the A/B
+	# difference is amplitude only, and the stage asserts
+	# the RATIO on live samples in both modes, both toggle
+	# paths (amber dash button, G key), and the DIAG tag.
+	check(main.view_gain_mode == 0,
+		"stage40: boot default is A (0.6x) - the mode is session state, never persisted")
+	main._set_track("ribbon")
+	main.jitter_on = true
+	main.debug_warp_to_s(340.0)
+	main.test_throttle = 0.0
+	var ns40: int = 0
+	var worst40: float = 0.0
+	for f40: int in 400:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(32.0)
+		await physics_frame
+		if absf(main.pitch_extra) > 0.02 and main.view_node != null:
+			ns40 += 1
+			worst40 = maxf(worst40, absf(main.view_node.rotation.x - main.pitch_extra * 0.6))
+	check(ns40 >= 5 and worst40 < 0.004,
+		"stage40: A mode - view pitch = 0.6 x pitch_extra on %d crest samples (worst err %.4f rad)" % [ns40, worst40])
+	main._activate_dash_ctl("view")
+	check(main.view_gain_mode == 1,
+		"stage40: the amber VIEW dash button toggles to B (1.0x)")
+	ns40 = 0
+	worst40 = 0.0
+	for f40b: int in 400:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(32.0)
+		await physics_frame
+		if absf(main.pitch_extra) > 0.02 and main.view_node != null:
+			ns40 += 1
+			worst40 = maxf(worst40, absf(main.view_node.rotation.x - main.pitch_extra * 1.0))
+	check(ns40 >= 5 and worst40 < 0.004,
+		"stage40: B mode - view pitch = 1.0 x pitch_extra on %d crest samples (worst err %.4f rad)" % [ns40, worst40])
+	check(main.diag_block.contains("VIEW B"),
+		"stage40: the DIAG WHEEL line reports VIEW B in mode B")
+	# Roll ratio on the held straddle (stage 37's staging),
+	# B first, then back to A through the G key.
+	main.debug_warp_to_s(main.track_len - 260.0)
+	main.test_throttle = 0.0
+	for i40: int in 500:
+		autopilot_steer(6.35)
+		main.debug_pin_speed(12.0)
+		await physics_frame
+	var vr40: float = main.view_node.rotation.z if main.view_node != null else 0.0
+	check(absf(main.edge_roll) > 0.2 and absf(vr40 - main.edge_roll * 1.0) < 0.01,
+		"stage40: B mode - view roll = 1.0 x body roll on the straddle (view %.3f vs body %.3f rad)" % [vr40, main.edge_roll])
+	var ev40 := InputEventKey.new()
+	ev40.keycode = KEY_G
+	ev40.pressed = true
+	main._input(ev40)
+	check(main.view_gain_mode == 0,
+		"stage40: the G key toggles back to A")
+	for i40b: int in 30:
+		autopilot_steer(6.35)
+		main.debug_pin_speed(12.0)
+		await physics_frame
+	vr40 = main.view_node.rotation.z if main.view_node != null else 0.0
+	check(absf(main.edge_roll) > 0.2 and absf(vr40 - main.edge_roll * 0.6) < 0.01,
+		"stage40: A mode - view roll = 0.6 x body roll on the straddle (view %.3f vs body %.3f rad)" % [vr40, main.edge_roll])
+	check(main.diag_block.contains("VIEW A"),
+		"stage40: the DIAG WHEEL line reports VIEW A in mode A")
+	main.wheel_angle = 0.0
+	main.test_throttle = 0.0
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")

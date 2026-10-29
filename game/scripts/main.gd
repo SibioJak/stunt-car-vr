@@ -622,6 +622,7 @@ var contact_load_age: float = 0.0 # seconds since touchdown (the load ramp's clo
 # lean experiment
 var lean_on: bool = false
 var jitter_on: bool = true # Fix Pass 7 (Item 2): jitter experiment toggle, default ON
+var view_gain_mode: int = 0 # Fix Pass 14 (Item 6): the view-coupling A/B - 0 = A (0.6x, as shipped through FP13), 1 = B (1.0x, camera = car). Session state, NOT persisted: every boot starts at A and the owner flips it from the dash.
 var lean_neutral_x: float = 0.0
 var lean_value: float = 0.0
 var grip_mult: float = 1.0
@@ -2692,6 +2693,26 @@ func _build_cockpit() -> void:
 		# Fix Pass 13 (Item 5): the pivots are kept so the
 		# held lever can DEFLECT (see _update_ctl_articulation).
 		seat_pivots.append(spiv)
+	# Fix Pass 14 (Item 6): amber VIEW button - the
+	# view-coupling A/B toggle (0.6x <-> 1.0x, see
+	# _view_gain). Registered LAST of the dash controls so
+	# every earlier control's index (and the stages keyed
+	# on them) is untouched. It sits left of restart at the
+	# same 0.17 m spacing the restart/track pair uses;
+	# activation is nearest-control, so the closer wins.
+	var vwt := Node3D.new()
+	vwt.position = Vector3(-0.35, 0.95, -0.60) # on the dash (as restart)
+	car_body.add_child(vwt)
+	var vw_mi := MeshInstance3D.new()
+	var vw_m := CylinderMesh.new()
+	vw_m.top_radius = 0.045
+	vw_m.bottom_radius = 0.045
+	vw_m.height = 0.04
+	vw_mi.mesh = vw_m
+	vw_mi.material_override = _mat_unshaded(Color(0.95, 0.65, 0.10))
+	vw_mi.name = "ViewBtnMesh"
+	vwt.add_child(vw_mi)
+	_register_dash_ctl(vwt, "view")
 	# Fix Pass 13 (Item 2): the DROP LEVER at the CENTRE of
 	# the dash - the FP11 pod lever and FP12's forward
 	# gear-shifter placement are both superseded (the lever
@@ -2893,14 +2914,14 @@ func _panel_text() -> String:
 	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
 	lines.append("Call drone: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
-	lines.append("Dash buttons (GRIP): red restart, green lean, purple track")
+	lines.append("Dash buttons (GRIP): red restart, green lean, purple track, amber view A/B")
 	lines.append("Recenter: L stick click / BOTH grips")
 	lines.append("restart race: L Y button")
 	lines.append("Panels: R B button (show/hide)")
 	lines.append("-- DESKTOP --")
 	lines.append("W/S throttle/brake, A/D steer, SHIFT boost")
 	lines.append("SPACE release")
-	lines.append("TAB panels, L lift, T lean, J jitter, Q/E lean body")
+	lines.append("TAB panels, L lift, T lean, J jitter, G view A/B, Q/E lean body")
 	lines.append("PgUp/PgDn seat trim, R restart race")
 	lines.append("C recenter, V track")
 	# Fix Pass 4: the DIAG block no longer appends here - it renders
@@ -2951,7 +2972,7 @@ func _build_diag_block() -> String:
 	# the ANCHOR and ZONE lines are at the label's wrap width
 	# already (the proof's cockpit capture showed both wrapping
 	# when SEAT and the two new zone tags first landed).
-	lines.append("WHEEL %+d DEG JIT %s SEAT %+.2f" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF", seat_trim])
+	lines.append("WHEEL %+d DEG JIT %s SEAT %+.2f VIEW %s" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF", seat_trim, "B" if view_gain_mode == 1 else "A"])
 	# Fix Pass 13 (Item 1): the last touchdown's connection,
 	# same numbers the readout showed - so a capture carries
 	# the ruling with it.
@@ -2979,7 +3000,7 @@ func _diag_zone_line() -> String:
 	# lever is a dead CHANNEL (grip reads 0.00 above) or a
 	# hand that never entered the zone.
 	var short: Dictionary = {"restart": "RST", "lean": "LEAN", "track": "TRK",
-		"seatup": "SUP", "seatdn": "SDN"}
+		"seatup": "SUP", "seatdn": "SDN", "view": "VIEW"}
 	var near_l: int = _dash_ctl_near(_hand_pos("L"))
 	var near_r: int = _dash_ctl_near(_hand_pos("R"))
 	# Fix Pass 11 (Item 4): the drop lever's zone joins the
@@ -3333,6 +3354,8 @@ func _input(event: InputEvent) -> void:
 			_set_track("ribbon" if active_track == "circuit" else "circuit")
 		KEY_J:
 			_toggle_jitter()
+		KEY_G:
+			_toggle_view_gain()
 		KEY_R:
 			start_race()
 		KEY_TAB:
@@ -3557,6 +3580,24 @@ func _toggle_lean() -> void:
 
 func _toggle_jitter() -> void:
 	jitter_on = not jitter_on
+
+
+func _view_gain() -> float:
+	# Fix Pass 14 (Item 6): the A/B view-coupling gain. A is
+	# the shipped VIEW_PITCH_GAIN (the seat adds 0.6x of the
+	# spring pitch/roll on top of the placement basis, which
+	# already carries them at 1.0x); B makes the seat add the
+	# full motion - camera = car. The view path holds NO lag
+	# or smoothing state (the offsets are pure functions of
+	# the current physics state), so B's added lag over A is
+	# zero frames by construction; what changes is amplitude
+	# only. The heave channel and the body-spring layer are
+	# NOT scaled in either mode.
+	return 1.0 if view_gain_mode == 1 else VIEW_PITCH_GAIN
+
+
+func _toggle_view_gain() -> void:
+	view_gain_mode = 1 - view_gain_mode
 
 
 func _capture_lean_neutral() -> void:
@@ -3831,6 +3872,8 @@ func _activate_dash_ctl(kind: String) -> void:
 		_toggle_lean()
 	elif kind == "track":
 		_set_track("ribbon" if active_track == "circuit" else "circuit")
+	elif kind == "view":
+		_toggle_view_gain()
 
 
 # ---------------------------------------------------------------- actions
@@ -5489,16 +5532,16 @@ func _update_view_spring() -> void:
 	var v_y: float = 0.0
 	var v_roll: float = 0.0
 	if active:
-		v_pitch = pitch_extra * VIEW_PITCH_GAIN
+		v_pitch = pitch_extra * _view_gain()
 		v_y = -((c_f + c_r) * 0.5 - SUSP_REST) * VIEW_HEAVE_GAIN
 		# Fix Pass 14 (Item 3): the view also rides the
 		# suspension ROLL (edge_roll - corner-derived since
 		# this pass) through the same gained path the pitch
 		# uses: the placement basis already carries the roll
-		# at 1.0x, and the seat adds VIEW_PITCH_GAIN of it,
+		# at 1.0x, and the seat adds the A/B gain of it,
 		# exactly the pitch treatment. (Item 6's A/B switch
 		# scales this gain for pitch and roll together.)
-		v_roll = edge_roll * VIEW_PITCH_GAIN
+		v_roll = edge_roll * _view_gain()
 		if lean_on:
 			v_roll += -_lean_effective() * deg_to_rad(LEAN_TILT_STEP_DEG) * LEAN_VIEW_GAIN
 	if view_node != null:

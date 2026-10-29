@@ -278,15 +278,18 @@ func _run() -> void:
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call drone",
 			"restart", "lean", "track", "Recenter", "SPACE", "W/S", "V track",
 			"DIAG", "ANCHOR", "CAMH", "FRC", "Jitter", "JIT", "CONTACT",
-			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP LEVER", "Panels", "TAB"]:
+			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP LEVER", "Panels", "TAB",
+			"amber view", "G view"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)
 	check(main.wheel_node != null, "grab wheel exists")
 	# Fix Pass 13 (Item 1): the prep switches are deleted -
 	# the dash top is bare and exactly five dash controls
 	# survive (restart / lean / track buttons, seatup /
 	# seatdn levers).
-	check(main.dash_ctl_kinds == ["restart", "lean", "track", "seatup", "seatdn"],
-		"dash carries exactly the five surviving controls (%s)" % str(main.dash_ctl_kinds))
+	# Fix Pass 14 (Item 6): the amber VIEW A/B button joins
+	# them, registered last - six controls.
+	check(main.dash_ctl_kinds == ["restart", "lean", "track", "seatup", "seatdn", "view"],
+		"dash carries exactly the six controls (%s)" % str(main.dash_ctl_kinds))
 	check(main.state_label.text.length() > 0, "state label is live (%s)" % main.state_label.text)
 
 	# Fix Pass 2 anchor geometry: the fallback camera sits exactly on the
