@@ -949,7 +949,33 @@ const DROP_LEVER_DETENT_RAD: float = 0.50
 const DROP_LEVER_MAX_RAD: float = 0.70
 const DROP_LEVER_GRAB_RADIUS: float = 0.16
 const DROP_LEVER_SPRING_RATE: float = 3.5 # rad/s back to rest
+# Fix Pass 15 (Item 3): the lever leaves the dash TOP for the
+# dash FACE - the owner's run-14 placement, verbatim shape:
+# "on the side of the dash, facing player, up/down, right
+# side of wheel." The pivot sits on the slab's driver face
+# (face plane z = -0.55; the pivot stands 6 cm proud of it
+# on its bracket), right of the wheel hub, the shaft still
+# standing straight up at rest and pulling down toward the
+# driver through the same detent. A dash toggle (and the M
+# key) mirrors the pair to the left side for left-handed
+# drivers; the choice persists with the seat trim.
+# PLACEMENT IS ZONE-DRIVEN (found by smoke stage 25 in this
+# pass): the gripping hand rides the shaft 0.27 m out, and
+# that point must stay outside BOTH the wheel's grab radius
+# (0.40 about the hub) and every dash button's zone (0.15) -
+# the first candidate (0.40, 0.72, -0.49) put the grip point
+# 0.117 m from the RESTART button, so latching the lever
+# restarted the race. At (0.42, 0.70, -0.44) the grip point
+# clears restart by 0.162 and the wheel radius by 0.422 at
+# rest, more everywhere along the throw (stage 44 sweeps
+# the whole arc on both faces); the bracket reaches back
+# to the face plane so the mount reads as bolted on.
+const DROP_LEVER_FACE_X: float = 0.42 # |x| of the pivot on the face
+const DROP_LEVER_FACE_Y: float = 0.70
+const DROP_LEVER_FACE_Z: float = -0.44
 var drop_lever_pivot: Node3D
+var drop_lever_bracket: MeshInstance3D
+var drop_lever_left: bool = false # persisted mirror (lefty option)
 var drop_lever_angle: float = DROP_LEVER_REST_RAD
 var drop_lever_hand: String = "" # "" / "L" / "R" while gripped
 var drop_lever_fired: bool = false # detent latch for this pull
@@ -2871,39 +2897,72 @@ func _build_cockpit() -> void:
 	vw_mi.name = "ViewBtnMesh"
 	vwt.add_child(vw_mi)
 	_register_dash_ctl(vwt, "view")
-	# Fix Pass 13 (Item 2): the DROP LEVER at the CENTRE of
-	# the dash - the FP11 pod lever and FP12's forward
-	# gear-shifter placement are both superseded (the lever
-	# leaves the right pod entirely). The owner, run 13: "I
-	# want the drop lever where right controller is pointing,
-	# middle of dash, it should go up and down." A bracket
-	# on the dash's front-top edge carries the pivot at
-	# (0, 0.88, -0.70); the shaft (0.34 m, red knob at 0.36)
-	# stands straight UP at rest and the pull arcs it DOWN
-	# toward the driver through the detent (see the
-	# DROP_LEVER constants). The MECHANISM is untouched from
-	# FP11/12: per-hand latch, hand-arc follow (the pull
-	# reads the hand's angle about the pivot), spring-home,
-	# haptic pulse - only the pivot's home and the throw's
-	# angles moved. Either hand may work it (centre dash).
-	# Clearances, computed: the rest knob (0, 1.24, -0.70)
-	# is 0.44 m from the wheel hub (grab radius 0.40 - a hand
+	# Fix Pass 15 (Item 3): light-blue SIDE button - the
+	# drop-lever mirror toggle (right side <-> left side of
+	# the dash face, the lefty option). It takes the dash-top
+	# CENTRE the drop lever vacated in this same pass, and is
+	# registered LAST so no earlier control's index moves.
+	var sdt := Node3D.new()
+	sdt.position = Vector3(0.0, 0.95, -0.60) # on the dash (as restart)
+	car_body.add_child(sdt)
+	var sd_mi := MeshInstance3D.new()
+	var sd_m := CylinderMesh.new()
+	sd_m.top_radius = 0.045
+	sd_m.bottom_radius = 0.045
+	sd_m.height = 0.04
+	sd_mi.mesh = sd_m
+	sd_mi.material_override = _mat_unshaded(Color(0.35, 0.75, 0.95))
+	sd_mi.name = "SideBtnMesh"
+	sdt.add_child(sd_mi)
+	_register_dash_ctl(sdt, "side")
+	# Fix Pass 13 (Item 2) put the DROP LEVER at the CENTRE of
+	# the dash top; Fix Pass 15 (Item 3) moves it to the dash
+	# FACE at the owner's run-14 direction: "lever not where
+	# I want. its on top of dash, it want it on the side of
+	# the dash, facing player, up/down, right side of wheel"
+	# - and a game option mirrors it left for lefties (the
+	# SIDE button above / M key). The bracket stands proud of
+	# the slab's driver face; the pivot rides on it at
+	# (±DROP_LEVER_FACE_X, FACE_Y, FACE_Z); the shaft (0.34 m,
+	# red knob at 0.36) stands straight UP at rest against
+	# the face and the pull arcs it DOWN toward the driver
+	# through the detent (see the DROP_LEVER constants). The
+	# MECHANISM is untouched again: per-hand latch, hand-arc
+	# follow (the pull reads the hand's angle about the
+	# pivot, wherever the pivot stands), spring-home, haptic
+	# pulse - only the pivot's home moved, and it can now
+	# move at runtime (the mirror). Clearances, computed for
+	# the right placement: the rest knob (±0.40, 1.08, -0.49)
+	# is 0.42 m from the wheel hub (grab radius 0.40 - a hand
 	# on the knob does not also read as a wheel grab); the
-	# knob's arc stays >= ~6 cm off the wheel rim's plane;
-	# the lean needle moved left (below) out of the arc.
-	_box(car_body, Vector3(0.16, 0.06, 0.18), Vector3(0, 0.90, -0.70), _mat(Color(0.10, 0.10, 0.12)))
+	# shaft stands 1 cm clear of the slab face; the knob's
+	# arc clears the dash-top buttons (it swings in the face
+	# plane's z, forward of every button's box). Mirrored,
+	# the same numbers hold against the lean/view side.
+	drop_lever_bracket = _box(car_body, Vector3(0.18, 0.16, 0.16), Vector3(DROP_LEVER_FACE_X, DROP_LEVER_FACE_Y, DROP_LEVER_FACE_Z - 0.03), _mat(Color(0.10, 0.10, 0.12)))
 	drop_lever_pivot = Node3D.new()
 	drop_lever_pivot.name = "DropLever"
-	drop_lever_pivot.position = Vector3(0, 0.88, -0.70)
 	drop_lever_pivot.rotation.x = DROP_LEVER_REST_RAD
 	car_body.add_child(drop_lever_pivot)
 	_box(drop_lever_pivot, Vector3(0.05, 0.34, 0.05), Vector3(0, 0.17, 0), _mat(Color(0.55, 0.55, 0.58)))
 	_box(drop_lever_pivot, Vector3(0.10, 0.10, 0.10), Vector3(0, 0.36, 0), _mat_unshaded(Color(0.90, 0.12, 0.10)))
+	_apply_drop_lever_side()
 	# Lean indicator needle on the dash (experiment feedback)
 	# (rides up with the raised wheel so it stays clear of the rim)
 	# Fix Pass 13 (Item 2): shifted left off the centreline -
 	# the centre drop lever's arc sweeps the space it sat in.
-	lean_needle = _box(car_body, Vector3(0.03, 0.13, 0.02), Vector3(-0.18, 1.155, -0.615), _mat_unshaded(Color(0.2, 0.9, 1.0)))
+	# Fix Pass 15 (Item 3): the needle DROPS toward the
+	# dash (y 1.155 -> 1.04, mount x back to FP13's -0.18):
+	# the DIAG text grew in this pass (SIDE zone tag + DRP
+	# side readout), and the board's lower sightlines from
+	# the anchored eye pass through the needle's old float
+	# height (render proof sweep: 2 of 63 blocked; shifting
+	# the needle sideways only moved the block to the next
+	# column - the eye-to-board fan crosses its whole x
+	# span). Below y 1.105 every board sightline passes
+	# over it, and it reads as dash-mounted instead of
+	# floating. The FP13 x-centre stands.
+	lean_needle = _box(car_body, Vector3(0.03, 0.13, 0.02), Vector3(-0.18, 1.04, -0.615), _mat_unshaded(Color(0.2, 0.9, 1.0)))
 	# Big state label above the dash
 	state_label = Label3D.new()
 	state_label.position = Vector3(0, 1.52, -0.85)
@@ -3072,14 +3131,14 @@ func _panel_text() -> String:
 	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
 	lines.append("Call crane: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
-	lines.append("Dash buttons (GRIP): red restart, green lean, purple track, amber view A/B")
+	lines.append("Dash buttons (GRIP): red restart, green lean, purple track, amber view A/B, blue lever side")
 	lines.append("Recenter: L stick click / BOTH grips")
 	lines.append("restart race: L Y button")
 	lines.append("Panels: R B button (show/hide)")
 	lines.append("-- DESKTOP --")
 	lines.append("W/S throttle/brake, A/D steer, SHIFT boost")
 	lines.append("SPACE release")
-	lines.append("TAB panels, L lift, T lean, J jitter, G view A/B, Q/E lean body")
+	lines.append("TAB panels, L lift, T lean, J jitter, G view A/B, M lever side, Q/E lean body")
 	lines.append("PgUp/PgDn seat trim, R restart race")
 	lines.append("C recenter, V track")
 	# Fix Pass 4: the DIAG block no longer appends here - it renders
@@ -3130,7 +3189,7 @@ func _build_diag_block() -> String:
 	# the ANCHOR and ZONE lines are at the label's wrap width
 	# already (the proof's cockpit capture showed both wrapping
 	# when SEAT and the two new zone tags first landed).
-	lines.append("WHEEL %+d DEG JIT %s SEAT %+.2f VIEW %s" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF", seat_trim, "B" if view_gain_mode == 1 else "A"])
+	lines.append("WHEEL %+d DEG JIT %s SEAT %+.2f VIEW %s DRP %s" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF", seat_trim, "B" if view_gain_mode == 1 else "A", "L" if drop_lever_left else "R"])
 	# Fix Pass 13 (Item 1): the last touchdown's connection,
 	# same numbers the readout showed - so a capture carries
 	# the ruling with it.
@@ -3158,7 +3217,7 @@ func _diag_zone_line() -> String:
 	# lever is a dead CHANNEL (grip reads 0.00 above) or a
 	# hand that never entered the zone.
 	var short: Dictionary = {"restart": "RST", "lean": "LEAN", "track": "TRK",
-		"seatup": "SUP", "seatdn": "SDN", "view": "VIEW"}
+		"seatup": "SUP", "seatdn": "SDN", "view": "VIEW", "side": "SIDE"}
 	var near_l: int = _dash_ctl_near(_hand_pos("L"))
 	var near_r: int = _dash_ctl_near(_hand_pos("R"))
 	# Fix Pass 11 (Item 4): the drop lever's zone joins the
@@ -3602,6 +3661,8 @@ func _input(event: InputEvent) -> void:
 			_toggle_jitter()
 		KEY_G:
 			_toggle_view_gain()
+		KEY_M:
+			_toggle_drop_lever_side()
 		KEY_R:
 			start_race()
 		KEY_TAB:
@@ -3750,11 +3811,13 @@ func _load_settings() -> void:
 	if cfg.load("user://settings.cfg") == OK:
 		seat_trim = clampf(float(cfg.get_value("seat", "trim", 0.0)),
 			-SEAT_TRIM_MAX, SEAT_TRIM_MAX)
+		drop_lever_left = bool(cfg.get_value("lever", "left", false))
 
 
 func _save_settings() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("seat", "trim", seat_trim)
+	cfg.set_value("lever", "left", drop_lever_left)
 	cfg.save("user://settings.cfg")
 
 
@@ -3844,6 +3907,25 @@ func _view_gain() -> float:
 
 func _toggle_view_gain() -> void:
 	view_gain_mode = 1 - view_gain_mode
+
+
+# Fix Pass 15 (Item 3): the drop lever's side. _apply places
+# the pivot + bracket on the face at the current side (build,
+# toggle, and any future caller share it); _toggle flips,
+# applies, and persists with the seat trim.
+func _apply_drop_lever_side() -> void:
+	var sx: float = -DROP_LEVER_FACE_X if drop_lever_left else DROP_LEVER_FACE_X
+	if drop_lever_pivot != null:
+		drop_lever_pivot.position = Vector3(sx, DROP_LEVER_FACE_Y, DROP_LEVER_FACE_Z)
+	if drop_lever_bracket != null:
+		drop_lever_bracket.position = Vector3(sx, DROP_LEVER_FACE_Y, DROP_LEVER_FACE_Z - 0.03)
+
+
+func _toggle_drop_lever_side() -> void:
+	drop_lever_left = not drop_lever_left
+	_apply_drop_lever_side()
+	_save_settings()
+	_update_panel()
 
 
 func _capture_lean_neutral() -> void:
@@ -4120,6 +4202,8 @@ func _activate_dash_ctl(kind: String) -> void:
 		_set_track("ribbon" if active_track == "circuit" else "circuit")
 	elif kind == "view":
 		_toggle_view_gain()
+	elif kind == "side":
+		_toggle_drop_lever_side()
 
 
 # ---------------------------------------------------------------- actions

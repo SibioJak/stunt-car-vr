@@ -279,7 +279,7 @@ func _run() -> void:
 			"restart", "lean", "track", "Recenter", "SPACE", "W/S", "V track",
 			"DIAG", "ANCHOR", "CAMH", "FRC", "Jitter", "JIT", "CONTACT",
 			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP LEVER", "Panels", "TAB",
-			"amber view", "G view"]:
+			"amber view", "G view", "lever side", "M lever"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)
 	check(main.wheel_node != null, "grab wheel exists")
 	# Fix Pass 13 (Item 1): the prep switches are deleted -
@@ -288,8 +288,11 @@ func _run() -> void:
 	# seatdn levers).
 	# Fix Pass 14 (Item 6): the amber VIEW A/B button joins
 	# them, registered last - six controls.
-	check(main.dash_ctl_kinds == ["restart", "lean", "track", "seatup", "seatdn", "view"],
-		"dash carries exactly the six controls (%s)" % str(main.dash_ctl_kinds))
+	# Fix Pass 15 (Item 3): the blue lever-SIDE button joins
+	# at the vacated dash-top centre, registered last again -
+	# seven controls.
+	check(main.dash_ctl_kinds == ["restart", "lean", "track", "seatup", "seatdn", "view", "side"],
+		"dash carries exactly the seven controls (%s)" % str(main.dash_ctl_kinds))
 	check(main.state_label.text.length() > 0, "state label is live (%s)" % main.state_label.text)
 
 	# Fix Pass 2 anchor geometry: the fallback camera sits exactly on the
@@ -399,8 +402,9 @@ func _run() -> void:
 
 	# Fix Pass 13 (Item 1): the dash top AFTER the prep
 	# removal - a dedicated look down at the console: bare
-	# where the three switches stood, the three buttons and
-	# the centre drop lever (at rest, standing up) in frame.
+	# where the three switches stood, the buttons in frame.
+	# Fix Pass 15 (Item 3): the drop lever has left the top
+	# for the face; the blue SIDE button holds the centre.
 	var cam_dt := Camera3D.new()
 	main.car_body.add_child(cam_dt)
 	cam_dt.position = Vector3(0.0, 1.80, 0.55)
@@ -420,7 +424,11 @@ func _run() -> void:
 	# the CENTRE lever - pivot at the middle of the dash,
 	# posed mid-pull (0.45 rad; the detent is 0.50 now, so
 	# this is the loaded moment just before it lets go).
-	check(main.drop_lever_pivot != null, "the drop lever is built at the centre dash")
+	# Fix Pass 15 (Item 3): the portrait reframes on the FACE
+	# lever - pivot on the dash's driver face, right of the
+	# wheel, posed mid-pull; then the mirror is toggled and
+	# the LEFT face gets the same portrait.
+	check(main.drop_lever_pivot != null, "the drop lever is built on the dash face")
 	main.drop_lever_angle = 0.45
 	main.drop_lever_pivot.rotation.x = 0.45
 	var cam_dl := Camera3D.new()
@@ -428,9 +436,21 @@ func _run() -> void:
 	cam_dl.position = Vector3(0.95, 1.40, 0.15)
 	await physics_frame
 	await physics_frame
-	cam_dl.look_at(main.car_body.global_transform * Vector3(0, 1.02, -0.68), Vector3.UP)
+	cam_dl.look_at(main.car_body.global_transform * Vector3(0.40, 0.95, -0.35), Vector3.UP)
 	await snap(cam_dl, "drop_lever_view.png")
 	cam_dl.queue_free()
+	if not main.drop_lever_left:
+		main._toggle_drop_lever_side()
+	var cam_dl2 := Camera3D.new()
+	main.car_body.add_child(cam_dl2)
+	cam_dl2.position = Vector3(-0.95, 1.40, 0.15)
+	await physics_frame
+	await physics_frame
+	cam_dl2.look_at(main.car_body.global_transform * Vector3(-0.40, 0.95, -0.35), Vector3.UP)
+	await snap(cam_dl2, "drop_lever_view_left.png")
+	cam_dl2.queue_free()
+	if main.drop_lever_left:
+		main._toggle_drop_lever_side()
 	main.drop_lever_angle = main.DROP_LEVER_REST_RAD
 	main.drop_lever_pivot.rotation.x = main.DROP_LEVER_REST_RAD
 

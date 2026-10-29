@@ -2325,8 +2325,8 @@ func _run() -> void:
 	# after them (idx 5) so none of these indices move.
 	check(sup_idx == 3 and sdn_idx == 4,
 		"stage22: seat levers registered after the dash buttons (idx %d/%d)" % [sup_idx, sdn_idx])
-	check(main.dash_ctl_kinds.find("view") == 5 and main.dash_ctl_kinds.size() == 6,
-		"stage22: the VIEW button registers last (idx %d of %d)" % [main.dash_ctl_kinds.find("view"), main.dash_ctl_kinds.size()])
+	check(main.dash_ctl_kinds.find("view") == 5 and main.dash_ctl_kinds.size() == 7,
+		"stage22: the VIEW button keeps its FP14 index (idx %d of %d - FP15's SIDE registers after it)" % [main.dash_ctl_kinds.find("view"), main.dash_ctl_kinds.size()])
 	main._apply_seat_trim(0.0)
 	main.test_hand_set = true
 	var seg_sup: Array = main._dash_ctl_segment(sup_idx)
@@ -2469,13 +2469,16 @@ func _run() -> void:
 	main.dip_timer = 1000.0
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
 		"stage25: dangling for the lever test")
-	# Fix Pass 13 (Item 2): the lever's placement, measured:
-	# pivot at the CENTRE of the dash on its bracket, and the
-	# grab segment spans the upper shaft (0.19 m of segment on
-	# the 0.34 m shaft - the same upper-shaft-plus-knob span
-	# every placement has carried).
-	check(main.drop_lever_pivot.position == Vector3(0, 0.88, -0.70),
-		"stage25: drop lever pivot at the centre dash (0, 0.88, -0.70)")
+	# Fix Pass 13 (Item 2) put the pivot at the centre of the
+	# dash top; Fix Pass 15 (Item 3): the lever's placement,
+	# measured - pivot on the dash FACE on its bracket, at
+	# whichever side the persisted mirror says (stage 44 works
+	# the mirror itself), and the grab segment spans the upper
+	# shaft (0.19 m of segment on the 0.34 m shaft - the same
+	# upper-shaft-plus-knob span every placement has carried).
+	var want25: float = -main.DROP_LEVER_FACE_X if main.drop_lever_left else main.DROP_LEVER_FACE_X
+	check(main.drop_lever_pivot.position == Vector3(want25, main.DROP_LEVER_FACE_Y, main.DROP_LEVER_FACE_Z),
+		"stage25: drop lever pivot on the dash face (%.2f, %.2f, %.2f)" % [want25, main.DROP_LEVER_FACE_Y, main.DROP_LEVER_FACE_Z])
 	var seg25: Array = main.debug_drop_lever_segment()
 	check(seg25.size() == 2 and absf((seg25[0] as Vector3).distance_to(seg25[1]) - 0.19) < 0.01,
 		"stage25: grab segment spans the upper shaft (%.2f m)" % (
@@ -4446,6 +4449,96 @@ func _run() -> void:
 		and not main.scrape_player.playing,
 		"stage43: the teardown latch stops all five players")
 	main._set_audio_latched(false)
+
+	# ---------- stage 44: Fix Pass 15 (Item 3) - THE LEFTY MIRROR ----
+	# The SIDE dash button (production grip path) flips the
+	# drop lever across the dash face; the flip persists to
+	# settings; DIAG names the side; and the release mechanism
+	# works mirrored - the LEFT hand latches the lever on the
+	# left face and pulls it past the detent. The stage ends
+	# by toggling back to the right (the shipped default), so
+	# repeated suite runs stage identically.
+	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
+	await frames(4)
+	main.dip_timer = 1000.0
+	check(main.dash_ctl_kinds.size() == 7 and main.dash_ctl_kinds[6] == "side",
+		"stage44: the SIDE button is registered last of seven dash controls (%s)" % str(main.dash_ctl_kinds))
+	var side_was_left44: bool = main.drop_lever_left
+	if side_was_left44:
+		grip_press_ctl("side") # normalise to the right first
+		await frames(2)
+	grip_press_ctl("side")
+	check(main.drop_lever_left,
+		"stage44: the SIDE button mirrors the lever to the LEFT face")
+	check(main.drop_lever_pivot.position == Vector3(-main.DROP_LEVER_FACE_X, main.DROP_LEVER_FACE_Y, main.DROP_LEVER_FACE_Z),
+		"stage44: the pivot stands on the face at the left (%.2f)" % main.drop_lever_pivot.position.x)
+	check(absf(main.drop_lever_bracket.position.x + main.DROP_LEVER_FACE_X) < 0.001,
+		"stage44: the bracket mirrors with the pivot")
+	var cfg44 := ConfigFile.new()
+	check(cfg44.load("user://settings.cfg") == OK and bool(cfg44.get_value("lever", "left", false)),
+		"stage44: the mirror persists (settings lever/left = true)")
+	main.diag_block = main._build_diag_block()
+	check(main.diag_block.contains("DRP L") and main._panel_text().contains("lever side"),
+		"stage44: DIAG names the side (DRP L) and the panel lists the lever side control")
+	# The grip point's whole arc stays out of every dash zone
+	# and the wheel's grab radius, on BOTH faces - the first
+	# face placement (0.40, 0.72, -0.49) put the grip inside
+	# RESTART's zone, so latching the lever restarted the
+	# race (stage 25 caught it; this sweep is the guard).
+	var arc_clear44 = func() -> bool:
+		for th10: int in 15:
+			var ths: float = float(th10) * 0.05
+			var hp: Vector3 = main.car_body.global_transform * (main.drop_lever_pivot.position \
+				+ Basis(Vector3.RIGHT, ths) * Vector3(0, 0.27, 0))
+			if main._dash_ctl_near(hp) != -1:
+				return false
+			if hp.distance_to(main.car.global_transform * main._wheel_hub_local()) <= main.WHEEL_GRAB_RADIUS:
+				return false
+		return true
+	check(arc_clear44.call(), "stage44: the LEFT grip arc clears every dash zone and the wheel radius")
+	var lever_at44 = func(th: float) -> Vector3:
+		return main.car_body.global_transform * (main.drop_lever_pivot.position \
+			+ Basis(Vector3.RIGHT, th) * Vector3(0, 0.27, 0))
+	main.test_hand_set = true
+	main.test_hand_pos["R"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_hand_pos["L"] = lever_at44.call(main.drop_lever_angle)
+	main.test_grip["L"] = 1.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(main.drop_lever_hand == "L", "stage44: the LEFT hand latches the mirrored lever")
+	main.test_hand_pos["L"] = lever_at44.call(0.30)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(absf(main.drop_lever_angle - 0.30) < 0.06 and main.mode == main.MODE_HANG,
+		"stage44: the mirrored lever follows the hand below the detent (%.2f rad)" % main.drop_lever_angle)
+	main.test_hand_pos["L"] = lever_at44.call(0.55)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(main.mode == main.MODE_AIR,
+		"stage44: past the detent on the left face, the car lets go")
+	main.test_grip["L"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main.test_hand_set = false
+	var drv44: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv44, "stage44: the mirrored drop lands into DRIVE")
+	# toggle home to the right side (the shipped default)
+	main.start_race()
+	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
+	await frames(4)
+	main.dip_timer = 1000.0
+	grip_press_ctl("side")
+	check(not main.drop_lever_left and absf(main.drop_lever_pivot.position.x - main.DROP_LEVER_FACE_X) < 0.001,
+		"stage44: the toggle returns the lever to the RIGHT face")
+	check(arc_clear44.call(), "stage44: the RIGHT grip arc clears every dash zone and the wheel radius")
+	var cfg44b := ConfigFile.new()
+	check(cfg44b.load("user://settings.cfg") == OK and not bool(cfg44b.get_value("lever", "left", true)),
+		"stage44: the return persists (settings lever/left = false)")
+	# the desktop twin: M toggles the same mirror
+	var m_ev := InputEventKey.new()
+	m_ev.keycode = KEY_M
+	m_ev.pressed = true
+	main._input(m_ev)
+	check(main.drop_lever_left, "stage44: the M key mirrors the lever too")
+	grip_press_ctl("side")
+	check(not main.drop_lever_left, "stage44: and the button brings it home again")
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
