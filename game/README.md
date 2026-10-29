@@ -1411,6 +1411,238 @@ machine fetching the car, and the hang like hanging;
 and whether 14–16 s is now short enough, or the kept
 flare has to go back on the table.
 
+## Fix Pass 14 — the Tune Pass (rebound, settle, per-wheel, grip, view A/B)
+
+Eight items staged against the original's film study
+(`research/original-feel-notes.md`, §10). All numbers below are
+before → after, measured by the smoke stages cited (the suite
+is deterministic; the measurement harness reproduced the stage
+numbers exactly wherever both ran).
+
+**Item 1 — Rebound landings (energy-gated).** The film: every
+big jump lands and rebounds into a second flight ~½–⅔ the
+first; the original never sticks a big landing. Before: the
+gap flight went 0.98 s → 0.24 s contact → 0.28 s (0.29×).
+After: a landing at impact vy ≥ `REBOUND_GATE_VY` 4.5 m/s arms
+a one-shot return — the springs, compressed deeper than
+`REBOUND_RETURN_DEPTH` 0.24 m, work at `REBOUND_RETURN_K_MULT`
+3.0× stiffness with damping halved, and the throw caps at
+`REBOUND_THROW_FRAC` 0.62 of impact (cap `REBOUND_THROW_CAP`
+6.2 m/s). Circuit gap at 33 m/s: flight 1.20 s → 0.11 s
+contact → 0.52–0.59 s (0.43–0.49×, stage 35). A rebound's own
+landing never re-arms (chain guard, 0.5 s settled reset), and
+drone drops never arm at any sway — the Drop Start keeps its
+FP13 behaviour exactly (stage 30 re-verified below).
+
+**Item 2 — One-bounce settle.** The overshoot was a damping
+problem, not a stiffness problem: `SUSP_DAMP` 4.6 → 11.0
+(ζ 0.18 → ~0.44), stiffness untouched. Parked 0.30 m poke:
+4 overshoots / 2.18 s settle / return slamming to full droop
+(0.000 m) → 1 overshoot / 0.77 s / min compression 0.049 m
+(stage 36 stages the gentler 0.20 poke: 0–1 overshoots,
+13–69 frames). Two mechanism couplings surfaced: the spring
+throw route fired at full droop, which the damped ring never
+reaches — it now fires mid-stroke (mean c ≤ 0.16, extension
+velocity sum < −1.6, deep-hit ≥ 0.22 m within 0.5 s, chain
+guard as Item 1); and the landing window's `air_vel.y < 2.5`
+bound re-landed the mid-stroke throw on its first tick —
+now < 0.5. The staged hop off a poke reads 0.09 m (base
+0.16 m — the damped model's honest bounce).
+
+**Stage 30 re-derivation (Item 2's cost, stated plainly).**
+FP13's getaway spread floor (1.5 s) was measured when the
+CLEAN drop could not bounce (the old throw needed a droop
+slam a flat landing never reaches) while tilted sway
+landings could. The film (§4) gives every drop one soft
+bounce, so the clean getaway now spends 22 frames airborne:
+t20 1.82 → 2.09 s, spread 1.60 → 1.29 s, floor re-derived
+to 1.25 s. The sway cases match FP13 to 0.04 s and the
+grades are untouched. Stage 26's 34 m/s pitch tolerance
+widened 0.12 → 0.18 for the same reason (the drop bounce
+puts ~0.3 s of its settle window airborne).
+
+**Item 3 — Per-wheel suspension and view.** Sampling was
+per-wheel since FP9 but integration averaged each axle.
+Now `susp_c`/`susp_cv`/`susp_geom` are per-corner; `c_f`/`c_r`
+survive as the means. Body attitude derives from the four
+corner attach heights (heave = mean, pitch = front/rear,
+roll = right/left), replacing the separate lagged
+rise-difference roll channel — the springs are the lag now.
+Diagonal step-edge crossing: the leading front corner
+extends 2 frames before the trailing one (square control:
+0 — the phase is small because the crest load channel is
+per-axle; the rise channel carries it). Straddle: off-side
+corners 0.000/0.000 at full droop while the held side
+carries at 0.080/0.089 — a state the axle model could not
+represent; body roll −18.3°, view roll −0.191 rad (stage 37).
+
+**Item 4 — The crest drumbeat at 48 m/s: NOT ACHIEVED, and
+not a mechanism defect.** Census (stage 38): hump row at a
+pinned 48 — flights 1.67 s (vy0 7.4) and 2.16 s (vy0 11.3);
+at 32 — five flights of 1.19–1.29 s (vy0 ~5.0); at 20 — no
+separation at all (min load 0.14 > threshold). In the film's
+0.1–0.4 s band: zero, at every speed. The row's vertical
+curvature peaks at kv 0.021/m with ±15° slopes; separation
+(v²·kv crossing g) happens on the hump's face where the
+slope is already near peak, so vy0 = v·sin(φ_sep) is
+5–11 m/s. A 0.1–0.4 s hop at 48 needs vy0 ≤ 2 m/s — slopes
+≤ ~2.4° at separation, humps ~6× gentler (kv ~ 0.006).
+Producing the drumbeat means re-profiling the track, a
+design call; no hops are scripted. The sweeper-exit unload
+is likewise only half the film's story in this model: first
+unload frames FL 284 / FR 284 / RL 304 / RR 304 — the front
+axle lets go ~20 frames before the rear (wheelbase phase),
+but left and right go together. The crest load is a
+per-axle scalar from the centreline kv; the ribbon frame
+carries no per-side vertical curvature, so the film's
+downhill-side-first unload is **not expressible** here. The
+identified extension — per-wheel kv sampled at each wheel's
+own (s, lat) — is recorded in stage 38's comment.
+
+**Item 5 — Grip follows load.** The lateral bleed (rate
+7.0/s, cap 11.0) now scales by `load_grip`: the mean axle
+road load raised to `GRIP_LOAD_EXP` 0.35 — tire load
+sensitivity, sublinear so the factor holds ~1.0 near full
+load — floored at 0.15, capped at 1.15. During the FP13
+contact transient the factor is not applied (the transient's
+own ramp owns the load story there). Crest flick at 24
+(harness protocol): the factor floors at 0.15 mid-flick;
+the slide arrives at the landing at **2.32 m/s** (base
+1.81). Flat flick at 20 (stage 12b): 28 counter-steered /
+59 centred at base → **30 / 66**. The drift is the road's
+own confession: the "flat" home straight is a kv 0.006
+shallow crest whose load at 20 m/s is already 0.75.
+Stage 39 stages the persistence pair directly: the flat
+flick at 24 bleeds out in 75 frames (slide −4.75 m/s);
+the crest flick, factor min 0.37 in suite staging, builds
+−6.41 m/s and needs 98 frames (+31%) — and in the
+settled-entry harness run, whose car separates mid-flick,
+the slide lands aboard at the 2.32 above and takes 170
+frames against the flat's 89, the airborne slide unable
+to bleed at all. (Suite staging note, recorded in the
+stage: from the suite's history the flick's own scrub and
+the hump-face slope gravity pull the speed ~0.5 m/s under
+the separation line mid-flick, so the suite's car stays
+grounded — the grounded face of the same law.)
+Rejected carriers, on measurements: corner compression
+(36 / 87 — compression sags under slide geometry while the
+true load factor stays 1.00); a linear axle-load factor
+(34 / 79); support-weighted corners (79 / 34 — a flick
+recovery slides a front wheel past the support cutoff and
+zeroes its share); exponent 0.5 (31 / 69). R30 corner
+still cannot be taken at 24 (stage 12's saturation
+asserts hold).
+
+**Observed, out of scope:** at a pinned 40 m/s the
+descent-entry crest produces a micro-bounce limit cycle
+(sub-second 1-frame air entries on the landing window over
+a steepening slope). Pre-existing, Item-1-independent
+(the gate needs vy ≥ 4.5; these never arm), left for a
+future pass rather than bundled here.
+
+**Item 6 — View-coupling A/B.** Chris's standing question
+— the original's camera *is* the car; ours passed 0.6× of
+the spring pitch — is now a switch he flips himself:
+amber VIEW button on the dash (registered last, index 5,
+so no existing control moves), G key on desktop, DIAG
+WHEEL line reads VIEW A / VIEW B. A = 0.6× (the shipped
+feel; boot default every session — the mode is never
+persisted), B = 1.0× (camera = car). The gain scales the
+seat's pitch and corner-roll channels together; the heave
+channel and the FP6 body-spring layer are not scaled in
+either mode. The view path holds **no lag or smoothing
+state** — the offsets are pure functions of the current
+physics state — so B's added lag over A is zero frames by
+construction; only amplitude changes. Stage 40 asserts
+the ratio on live samples both ways: view pitch = gain ×
+pitch_extra over the hump row (worst error 0.0000 rad in
+both modes), view roll = gain × body roll on the held
+straddle (B: −0.426 vs −0.426 rad; A: −0.199 vs
+0.6 × −0.331), both toggle paths, both DIAG tags. His
+pick between A and B is a run-14 verdict; the default
+stays A until he says otherwise.
+
+**Item 7 — Guards, and flight attitude.** The guards
+first, both green: on the flat (stage 41, the harness
+protocol verbatim — home straight, pin 30, unsteered,
+jitter off, springs poked to rest) the view heave p2p is
+**0.11 mm** (base harness 0.7–1.9 mm) and the heading's
+max deviation from its mean is **0.0000°** — Items 1–6
+bought no flat-road noise, and nothing manufactures yaw.
+The attitude itself: at base the car's basis was *frozen*
+at the takeoff pitch through a flight (the +10° lip
+against the −3.4° landing slope, verbatim). Now the
+nose-down pitch builds quadratically from the takeoff
+basis — −½ × 0.349 rad/s² × t², capped at 0.489 rad —
+applied absolutely each airborne frame, so there is no
+integration drift to unwind, and `_land` reads the built
+basis for its tilt ruling: a slope-matched arrival grades
+like one. Circuit gap at 33: pitch **+9.74° → −3.61°**
+(13.35° of build over the 105-frame flight; the law
+predicts 13.7°) against a landing slope of −3.40° —
+slope-matched to 0.21°. Heading drift through the
+flight: 0.0000°. Drone drops are excluded
+(`air_from_release`): FP13's touchdown behaviour is the
+drop's contract, and a 0.44 s fall would only pick up
+~2° against the pendulum's own tilt story.
+
+**Item 8 — Hang wander; the short drop verified.** The
+base dangle's sway was a perfectly periodic Lissajous —
+fore half-period 2.36 s, min = max (harness census, dips
+frozen) — where the film's hang is irregular and nudged.
+The carrier's station target now wanders: hash-scheduled
+horizontal offsets (±0.28 m per axis, re-picked every
+1.2–2.2 s on the house hash, on its own cadence
+independent of the dip schedule), flown through the same
+P-law as every other carrier motion, so the pendulum is
+nudged by the *measured* carrier acceleration — the
+irregularity is flown, never scripted into the pendulum.
+Dangle phase only; the carry, the flare and the release
+are untouched. Stage 42 repeats the census with the
+wander live and the dips frozen: fore half-periods
+n = 12, mean **2.38 s** (the pendulum's own — the wander
+does not retune it), min 2.26, max 2.57 — spread
+**0.31 s** against the base's 0.01; lateral spread
+0.17 s. Drop fall **0.41 s** (base 0.44) — inside the
+film's 0.3–0.5 s band, so no hang shortening was needed
+or made (HANG_LEN unchanged).
+
+**Frame strips (dense visual proof, ≥10 fps at 90 Hz).**
+`tests/frame_strips.gd` (Xvfb, same harness family as the
+render proof) composites two strips into `tests/`:
+`rebound_strip.png` — the circuit gap at 40 m/s from a
+car-anchored tracking camera: lip, flight, contact, the
+rebound flight, settle (38 tiles); and
+`crest_edge_strip.png` — stage 37's diagonal step-edge
+crossing from a front-quarter anchor, the front corners
+reaching over the steps a beat apart (45 tiles).
+
+**Suites on the final tree:** smoke **335/335** with the
+XR API-surface guard **70/70**; render proof **129/129**.
+FP13's stages re-verified on the final tree as required:
+28 (drone split), 30 (touchdown spread 1.29 s — the
+Item 2 re-derivation above), 31 (wheel in the dangle),
+32 (hang gate), 34 (split transport) all pass; stage 19's
+3-lap census runs 19,204 frames to DONE. The one number
+that moved legitimately: stage 19 +9 frames (the wander
+nudges a recovery). Everything else that moved is
+re-derived in its item section above, with the reason.
+
+**What you're judging in run 14** (feel verdicts are
+yours; all Hal-side numbers are unverified until the
+headset says so): the rebound under big landings (does
+the second flight read as the original's, or as a
+pogo?), the one-bounce settle, whether the per-wheel
+phase shows at edges and straddles, the crest slide's
+persistence, VIEW A vs B (amber dash button / G — flip
+it mid-run and compare), the hang's new irregularity
+against your timing of the release, and Item 4's open
+call: the drumbeat needs a gentler hump profile
+(~6× softer) — a track design decision, not a tune
+number, left deliberately untouched.
+
+
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
