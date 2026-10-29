@@ -350,13 +350,15 @@ func _run() -> void:
 	# and the zones are drawn over the controls for the record -
 	# magenta markers along every activation segment (start,
 	# middle, end), photographed from the eye, then removed.
+	# Fix Pass 16 (Item 2): the audit's rule is INVERTED now -
+	# volumes contain meshes with margin (see stage 23).
 	var audit_rp: Dictionary = main.debug_dash_ctl_audit()
 	var viol_rp: Array = audit_rp["violations"]
 	check(viol_rp.is_empty(),
 		"zone audit clean in the proof pose (%d violations%s)" % [viol_rp.size(),
 			"" if viol_rp.is_empty() else ": " + str(viol_rp.slice(0, 2))])
-	check(float(audit_rp["worst"]) <= main.DASH_AUDIT_TOL,
-		"worst segment-to-handle deviation %.3f m (tol %.3f)" % [float(audit_rp["worst"]), main.DASH_AUDIT_TOL])
+	check(float(audit_rp["worst"]) <= -main.DASH_AUDIT_MARGIN,
+		"grab volumes contain their meshes (worst slack %.3f m, margin %.3f)" % [float(audit_rp["worst"]), main.DASH_AUDIT_MARGIN])
 	var to_body_rp: Transform3D = main.car_body.global_transform.affine_inverse()
 	var markers: Array[MeshInstance3D] = []
 	var mark_mat := StandardMaterial3D.new()

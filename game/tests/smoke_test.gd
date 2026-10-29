@@ -2374,18 +2374,21 @@ func _run() -> void:
 		"stage22: DIAG shows the seat trim")
 
 	# ---------- stage 23: Fix Pass 11 (Item 2) - zone geometry -----
-	# The PERMANENT audit (it stays in the suite): every control
-	# _poll_grab can fire has its activation segment ON its
-	# visible handle and no segment sample buried in other
-	# bodywork. The render proof asserts the same audit in its
-	# pose and draws the zones as markers over the controls.
+	# The PERMANENT audit (it stays in the suite). Fix Pass 16
+	# (Item 2) INVERTED its rule: volumes are decoupled from
+	# meshes (smaller furniture, generous capture), so now every
+	# grab volume must CONTAIN its control's mesh with margin -
+	# worst (mesh-point distance - radius) <= -DASH_AUDIT_MARGIN
+	# over every control and the drop lever - and no mesh point
+	# may be buried in foreign bodywork. The render proof
+	# asserts the same audit in its pose.
 	var audit23: Dictionary = main.debug_dash_ctl_audit()
 	var viol23: Array = audit23["violations"]
 	check(viol23.is_empty(),
 		"stage23: zone audit clean (%d violations%s)" % [viol23.size(),
 			"" if viol23.is_empty() else ": " + str(viol23.slice(0, 2))])
-	check(float(audit23["worst"]) <= main.DASH_AUDIT_TOL,
-		"stage23: worst segment-to-handle deviation %.3f m (tol %.3f)" % [float(audit23["worst"]), main.DASH_AUDIT_TOL])
+	check(float(audit23["worst"]) <= -main.DASH_AUDIT_MARGIN,
+		"stage23: every grab volume contains its mesh (worst slack %.3f m, margin %.3f)" % [float(audit23["worst"]), main.DASH_AUDIT_MARGIN])
 
 	# ---------- stage 24: Fix Pass 11 (Item 3) - the approach ----
 	# Production recovery: warp to circuit s 900, whose drop
@@ -2474,8 +2477,10 @@ func _run() -> void:
 	# measured - pivot on the dash FACE on its bracket, at
 	# whichever side the persisted mirror says (stage 44 works
 	# the mirror itself), and the grab segment spans the upper
-	# shaft (0.19 m of segment on the 0.34 m shaft - the same
-	# upper-shaft-plus-knob span every placement has carried).
+	# shaft (0.19 m of segment on the shaft - the same
+	# upper-shaft-plus-knob span every placement has carried;
+	# FP16 Item 2 shrank the shaft to 0.30 m and the segment
+	# to 0.13..0.32, span unchanged).
 	var want25: float = -main.DROP_LEVER_FACE_X if main.drop_lever_left else main.DROP_LEVER_FACE_X
 	check(main.drop_lever_pivot.position == Vector3(want25, main.DROP_LEVER_FACE_Y, main.DROP_LEVER_FACE_Z),
 		"stage25: drop lever pivot on the dash face (%.2f, %.2f, %.2f)" % [want25, main.DROP_LEVER_FACE_Y, main.DROP_LEVER_FACE_Z])

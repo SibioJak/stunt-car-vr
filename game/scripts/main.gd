@@ -2917,8 +2917,8 @@ func _build_cockpit() -> void:
 	car_body.add_child(rst)
 	var rst_mi := MeshInstance3D.new()
 	var rst_m := CylinderMesh.new()
-	rst_m.top_radius = 0.05
-	rst_m.bottom_radius = 0.05
+	rst_m.top_radius = 0.040 # FP16 (Item 2): was 0.05 - smaller furniture, the 0.15 volume stays
+	rst_m.bottom_radius = 0.040
 	rst_m.height = 0.04
 	rst_mi.mesh = rst_m
 	rst_mi.material_override = _mat_unshaded(Color(0.9, 0.1, 0.1))
@@ -2929,8 +2929,8 @@ func _build_cockpit() -> void:
 	car_body.add_child(lnt)
 	var ln_mi := MeshInstance3D.new()
 	var ln_m := CylinderMesh.new()
-	ln_m.top_radius = 0.045
-	ln_m.bottom_radius = 0.045
+	ln_m.top_radius = 0.036 # FP16 (Item 2): was 0.045
+	ln_m.bottom_radius = 0.036
 	ln_m.height = 0.04
 	ln_mi.mesh = ln_m
 	ln_mi.material_override = _mat_unshaded(Color(0.15, 0.75, 0.3))
@@ -2943,8 +2943,8 @@ func _build_cockpit() -> void:
 	car_body.add_child(trk)
 	var trk_mi := MeshInstance3D.new()
 	var trk_m := CylinderMesh.new()
-	trk_m.top_radius = 0.045
-	trk_m.bottom_radius = 0.045
+	trk_m.top_radius = 0.036 # FP16 (Item 2): was 0.045
+	trk_m.bottom_radius = 0.036
 	trk_m.height = 0.04
 	trk_mi.mesh = trk_m
 	trk_mi.material_override = _mat_unshaded(Color(0.55, 0.2, 0.85))
@@ -2970,8 +2970,8 @@ func _build_cockpit() -> void:
 		spiv.position = Vector3(-0.72, 0.69, seat_zs[si])
 		spiv.rotation_degrees = Vector3(-20, 0, 0)
 		car_body.add_child(spiv)
-		_box(spiv, Vector3(0.055, 0.20, 0.055), Vector3(0, 0.08, 0), _mat(Color(0.65, 0.65, 0.68)))
-		_box(spiv, Vector3(0.085, 0.06, 0.085), Vector3(0, 0.19, 0), _mat_unshaded(seat_cols[si]))
+		_box(spiv, Vector3(0.030, 0.15, 0.030), Vector3(0, 0.075, 0), _mat(Color(0.65, 0.65, 0.68))) # FP16 (Item 2): shaft was 0.055 x 0.20 at y 0.08; the base sits on the pivot plane, not sunk in the pod
+		_box(spiv, Vector3(0.052, 0.05, 0.052), Vector3(0, 0.145, 0), _mat_unshaded(seat_cols[si])) # FP16 (Item 2): cap was 0.085 x 0.06 at y 0.19; the grab SEGMENT (0.02..0.19) deliberately outlives the mesh
 		_register_dash_ctl(spiv, seat_kinds[si])
 		# Fix Pass 13 (Item 5): the pivots are kept so the
 		# held lever can DEFLECT (see _update_ctl_articulation).
@@ -2988,8 +2988,8 @@ func _build_cockpit() -> void:
 	car_body.add_child(vwt)
 	var vw_mi := MeshInstance3D.new()
 	var vw_m := CylinderMesh.new()
-	vw_m.top_radius = 0.045
-	vw_m.bottom_radius = 0.045
+	vw_m.top_radius = 0.036 # FP16 (Item 2): was 0.045
+	vw_m.bottom_radius = 0.036
 	vw_m.height = 0.04
 	vw_mi.mesh = vw_m
 	vw_mi.material_override = _mat_unshaded(Color(0.95, 0.65, 0.10))
@@ -3006,8 +3006,8 @@ func _build_cockpit() -> void:
 	car_body.add_child(sdt)
 	var sd_mi := MeshInstance3D.new()
 	var sd_m := CylinderMesh.new()
-	sd_m.top_radius = 0.045
-	sd_m.bottom_radius = 0.045
+	sd_m.top_radius = 0.036 # FP16 (Item 2): was 0.045
+	sd_m.bottom_radius = 0.036
 	sd_m.height = 0.04
 	sd_mi.mesh = sd_m
 	sd_mi.material_override = _mat_unshaded(Color(0.35, 0.75, 0.95))
@@ -3043,8 +3043,8 @@ func _build_cockpit() -> void:
 	drop_lever_pivot.name = "DropLever"
 	drop_lever_pivot.rotation.x = DROP_LEVER_REST_RAD
 	car_body.add_child(drop_lever_pivot)
-	_box(drop_lever_pivot, Vector3(0.05, 0.34, 0.05), Vector3(0, 0.17, 0), _mat(Color(0.55, 0.55, 0.58)))
-	_box(drop_lever_pivot, Vector3(0.10, 0.10, 0.10), Vector3(0, 0.36, 0), _mat_unshaded(Color(0.90, 0.12, 0.10)))
+	_box(drop_lever_pivot, Vector3(0.028, 0.30, 0.028), Vector3(0, 0.15, 0), _mat(Color(0.55, 0.55, 0.58))) # FP16 (Item 2): shaft was 0.05 x 0.34 at y 0.17
+	_box(drop_lever_pivot, Vector3(0.055, 0.055, 0.055), Vector3(0, 0.315, 0), _mat_unshaded(Color(0.90, 0.12, 0.10))) # FP16 (Item 2): knob was a 0.10 cube at y 0.36
 	_apply_drop_lever_side()
 	# Lean indicator needle on the dash (experiment feedback)
 	# (rides up with the raised wheel so it stays clear of the rim)
@@ -4081,7 +4081,7 @@ func debug_drop_lever_segment() -> Array:
 	if drop_lever_pivot == null:
 		return []
 	var xf: Transform3D = drop_lever_pivot.global_transform
-	return [xf * Vector3(0, 0.18, 0), xf * Vector3(0, 0.37, 0)]
+	return [xf * Vector3(0, 0.13, 0), xf * Vector3(0, 0.32, 0)] # FP16 (Item 2): was 0.18..0.37 on the 0.34 shaft; span kept 0.19
 
 
 func _hand_near_drop_lever(hand: String) -> bool:
@@ -6865,6 +6865,11 @@ func debug_stage_landing(s: float, height: float, fwd_speed: float) -> void:
 #       (inside its AABB shrunk by 5 mm) - the buried buttons and
 #       the below-the-console lever base of run 11, as a test.
 const DASH_AUDIT_TOL: float = 0.035
+# Fix Pass 16 (Item 2): the INVERTED audit's margin - a grab
+# volume must contain its mesh by at least this much (the
+# audit's worst reads (mesh distance - radius), so containment
+# with margin is worst <= -DASH_AUDIT_MARGIN).
+const DASH_AUDIT_MARGIN: float = 0.03
 const DASH_AUDIT_SAMPLES: int = 5
 
 
@@ -6888,61 +6893,70 @@ func _collect_meshes(n: Node, out: Array[MeshInstance3D]) -> void:
 		_collect_meshes(child, out)
 
 
+func _aabb_sample_points(a: AABB) -> Array[Vector3]:
+	# The 8 corners + centre of a mesh's local AABB - the
+	# extreme points the containment audit measures.
+	var pts: Array[Vector3] = []
+	for xi: int in 2:
+		for yi: int in 2:
+			for zi: int in 2:
+				pts.append(a.position + Vector3(
+					a.size.x * float(xi), a.size.y * float(yi), a.size.z * float(zi)))
+	pts.append(a.get_center())
+	return pts
+
+
 func debug_dash_ctl_audit() -> Dictionary:
+	# Fix Pass 16 (Item 2): THE RULE INVERTS. Through FP15 this
+	# audit kept grab zones honest against their meshes (no zone
+	# point floating off its control). Item 2 decouples the two
+	# on purpose - smaller furniture, generous volumes - so the
+	# guarantee that matters is the converse: every control's
+	# grab VOLUME must CONTAIN its mesh, with margin, or part of
+	# the visible control is a dead surface a hand can touch and
+	# miss. worst = the largest (mesh-point distance to the grab
+	# segment - the radius) over every sampled point of every
+	# mesh: contained-with-margin reads <= -DASH_AUDIT_MARGIN.
+	# The old buried rule survives: no mesh point inside foreign
+	# bodywork (an invisible control is still a defect).
+	var car_xf: Transform3D = car_body.global_transform
 	var all_meshes: Array[MeshInstance3D] = []
 	_collect_meshes(car_body, all_meshes)
-	var worst: float = 0.0
+	var worst: float = -1e9
 	var violations: Array[String] = []
 	for i: int in dash_ctl_nodes.size():
 		var node: Node3D = dash_ctl_nodes[i]
+		var seg: Array[Vector3] = _dash_ctl_segment(i)
+		var r: float = _dash_ctl_radius(i)
 		var own: Array[MeshInstance3D] = []
 		_collect_meshes(node, own)
-		if node is MeshInstance3D:
-			own.append(node as MeshInstance3D)
-		var seg: Array[Vector3] = _dash_ctl_segment(i)
-		for si: int in DASH_AUDIT_SAMPLES:
-			var t: float = float(si) / float(DASH_AUDIT_SAMPLES - 1)
-			var p: Vector3 = seg[0].lerp(seg[1], t)
-			var best: float = 1e9
-			for mi: MeshInstance3D in own:
-				var lp: Vector3 = mi.global_transform.affine_inverse() * p
-				best = minf(best, _pt_aabb_dist(lp, mi.get_aabb()))
-			worst = maxf(worst, best)
-			if best > DASH_AUDIT_TOL:
-				violations.append("%s sample %d: %.3f m from its own mesh" % [dash_ctl_kinds[i], si, best])
-			for mi2: MeshInstance3D in all_meshes:
-				if own.has(mi2):
-					continue
-				var lp2: Vector3 = mi2.global_transform.affine_inverse() * p
-				if _pt_in_aabb(lp2, mi2.get_aabb(), 0.005):
-					violations.append("%s sample %d: buried in %s" % [dash_ctl_kinds[i], si, mi2.name])
-	# Fix Pass 11 (Item 4): the drop lever's zone joins the
-	# audit, sampled at rest AND at full throw (the segment
-	# moves with the handle by construction; both poses must
-	# track its own shaft/knob and stay unburied).
+		for mi: MeshInstance3D in own:
+			for lp: Vector3 in _aabb_sample_points(mi.get_aabb()):
+				var wp: Vector3 = mi.global_transform * lp
+				worst = maxf(worst, _seg_point_dist(seg[0], seg[1], wp) - r)
+				for other: MeshInstance3D in all_meshes:
+					if own.has(other):
+						continue
+					var la: Vector3 = other.global_transform.affine_inverse() * wp
+					if other.get_aabb().grow(-0.01).has_point(la): # >1 cm inside on every axis - a base seated in its mount is not buried
+						violations.append("%s mesh point buried in %s" % [
+							dash_ctl_kinds[i], other.name])
+						break
+	# The drop lever answers the same inverted rule, at rest
+	# and at full throw (the volume rides the lever's arc).
 	if drop_lever_pivot != null:
-		var lown: Array[MeshInstance3D] = []
-		_collect_meshes(drop_lever_pivot, lown)
-		var saved_ang: float = drop_lever_pivot.rotation.x
-		for ang: float in [DROP_LEVER_REST_RAD, DROP_LEVER_MAX_RAD]:
-			drop_lever_pivot.rotation.x = ang
-			var lseg: Array = debug_drop_lever_segment()
-			if lseg.size() == 2:
-				for si2: int in DASH_AUDIT_SAMPLES:
-					var t2: float = float(si2) / float(DASH_AUDIT_SAMPLES - 1)
-					var p2: Vector3 = (lseg[0] as Vector3).lerp(lseg[1] as Vector3, t2)
-					var best2: float = 1e9
-					for mi3: MeshInstance3D in lown:
-						var lp3: Vector3 = mi3.global_transform.affine_inverse() * p2
-						best2 = minf(best2, _pt_aabb_dist(lp3, mi3.get_aabb()))
-					worst = maxf(worst, best2)
-					if best2 > DASH_AUDIT_TOL:
-						violations.append("droplever sample %d at %.2f rad: %.3f m from its own mesh" % [si2, ang, best2])
-					for mi4: MeshInstance3D in all_meshes:
-						if lown.has(mi4):
-							continue
-						var lp4: Vector3 = mi4.global_transform.affine_inverse() * p2
-						if _pt_in_aabb(lp4, mi4.get_aabb(), 0.005):
-							violations.append("droplever sample %d at %.2f rad: buried in %s" % [si2, ang, mi4.name])
+		var own_l: Array[MeshInstance3D] = []
+		_collect_meshes(drop_lever_pivot, own_l)
+		var saved_ang: float = drop_lever_angle
+		for th: float in [0.0, DROP_LEVER_MAX_RAD]:
+			drop_lever_angle = th
+			drop_lever_pivot.rotation.x = th
+			var seg_l: Array = debug_drop_lever_segment()
+			for mi2: MeshInstance3D in own_l:
+				for lp2: Vector3 in _aabb_sample_points(mi2.get_aabb()):
+					var wp2: Vector3 = mi2.global_transform * lp2
+					worst = maxf(worst, _seg_point_dist(seg_l[0], seg_l[1], wp2) - DROP_LEVER_GRAB_RADIUS)
+		drop_lever_angle = saved_ang
 		drop_lever_pivot.rotation.x = saved_ang
 	return {"worst": worst, "violations": violations}
+
