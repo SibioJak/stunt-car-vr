@@ -614,10 +614,22 @@ var test_hand_pos: Dictionary = {"L": Vector3.ZERO, "R": Vector3.ZERO}
 
 # Fix Pass 5 suspension state (per-axle spring model; see constants).
 # susp_x/susp_v are gone: compression lives in c_f/c_r now.
+# Fix Pass 14 (Item 3): the springs are PER-CORNER now -
+# susp_c/susp_cv in WHEEL_LOCALS order [FL, FR, RL, RR],
+# integrated by _susp_integrate_corners on the main track.
+# c_f/c_r/cv_f/cv_r remain as the corner MEANS: every pre-FP14
+# reader (air-entry tests, landing checks, view heave, the
+# body spring, the stages) reads the means unchanged, and the
+# axle integrator (spur, air, hang, done) still writes them -
+# and mirrors them into the corners, grouped by axle, so the
+# two states never desync.
 var c_f: float = SUSP_REST
 var c_r: float = SUSP_REST
 var cv_f: float = 0.0
 var cv_r: float = 0.0
+var susp_c: Array[float] = [SUSP_REST, SUSP_REST, SUSP_REST, SUSP_REST]
+var susp_cv: Array[float] = [0.0, 0.0, 0.0, 0.0]
+var susp_geom: Array[float] = [0.0, 0.0, 0.0, 0.0] # per-corner road rise (support rise + its axle's jitter delta)
 var geom_f: float = 0.0 # road rise at the front axle rel. centre plane
 var geom_r: float = 0.0
 var load_f: float = 1.0 # crest load factors (1 = fully planted)
@@ -3876,6 +3888,9 @@ func _reset_suspension() -> void:
 	c_r = SUSP_REST
 	cv_f = 0.0
 	cv_r = 0.0
+	susp_c = [SUSP_REST, SUSP_REST, SUSP_REST, SUSP_REST]
+	susp_cv = [0.0, 0.0, 0.0, 0.0]
+	susp_geom = [0.0, 0.0, 0.0, 0.0]
 	geom_f = 0.0
 	geom_r = 0.0
 	load_f = 1.0
@@ -4564,6 +4579,17 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	c_r = clampf(SUSP_REST + vy * 0.045 * 0.90, 0.0, SUSP_TRAVEL)
 	cv_f = vy * 0.35
 	cv_r = vy * 0.35
+	# Fix Pass 14 (Item 3): the impact sets the corners grouped
+	# by axle (a landing arrives as an axle event; the corners
+	# diverge from the next sampled frame onward).
+	susp_c[0] = c_f
+	susp_c[1] = c_f
+	susp_c[2] = c_r
+	susp_c[3] = c_r
+	susp_cv[0] = cv_f
+	susp_cv[1] = cv_f
+	susp_cv[2] = cv_r
+	susp_cv[3] = cv_r
 	# Fix Pass 6: the same impact arrives in the DRIVER a beat
 	# later - an impulse into the body spring, scaled by impact.
 	_body_impulse(vy)
@@ -5064,6 +5090,66 @@ func _susp_integrate(target_f: float, target_r: float, delta: float) -> void:
 	var attach_r: float = geom_r - c_r + (WHEEL_RAD_R - WHEEL_RAD_REF)
 	pitch_extra = atan2(attach_f - attach_r, WHEELBASE)
 	heave_off = (attach_f + attach_r) * 0.5 + SUSP_REST
+	# Fix Pass 14 (Item 3): the axle path (spur, air, hang,
+	# done) mirrors its state into the corners, grouped by
+	# axle, so the corner state never desyncs from the means.
+	susp_c[0] = c_f
+	susp_c[1] = c_f
+	susp_c[2] = c_r
+	susp_c[3] = c_r
+	susp_cv[0] = cv_f
+	susp_cv[1] = cv_f
+	susp_cv[2] = cv_r
+	susp_cv[3] = cv_r
+
+
+func _susp_integrate_corners(tw: Array, delta: float) -> void:
+	# Fix Pass 14 (Item 3): FOUR springs, one per wheel. The
+	# sampling has been per-wheel since Fix Pass 9 - support,
+	# rise and target are already computed per wheel in
+	# _update_suspension - but the INTEGRATION averaged the
+	# targets to two axle springs, so a diagonal crest-edge
+	# crossing compressed both front springs together though
+	# the wheels meet the edge a beat apart (the film's
+	# per-wheel independence, notes section 2, is a phase
+	# behaviour before it is anything else). Same rate and
+	# damping semantics as the axle integrator, including
+	# Item 1's gated return (per corner now: a corner deeper
+	# than REBOUND_RETURN_DEPTH works at the multiplied
+	# rate while the gate is live; the damping cut stays
+	# global to the gated landing, as staged).
+	# Body attitude derives from the four corner ATTACH
+	# heights (road rise - compression + tyre-radius term):
+	# pitch is the FP5 formula on the front/rear means,
+	# heave the four-mean, and ROLL is new as a derived
+	# quantity - atan2 of the right-mean minus left-mean
+	# attach over the wheel track - REPLACING the lagged
+	# rise-difference edge_roll the straddle used before:
+	# the springs' own dynamics are the lag now, and the
+	# roll answers compression, not just road shape (a
+	# corner that compresses rolls the body even on flat
+	# road - weight transfer made visible).
+	var gated: bool = rebound_gate_vy > 0.0 and mode == MODE_DRIVE and not on_spur
+	var damp: float = SUSP_DAMP * REBOUND_RETURN_DAMP_MULT if gated else SUSP_DAMP
+	for wi: int in 4:
+		var k: float = SUSP_K * REBOUND_RETURN_K_MULT if (gated and susp_c[wi] > REBOUND_RETURN_DEPTH) else SUSP_K
+		susp_cv[wi] += ((float(tw[wi]) - susp_c[wi]) * k - damp * susp_cv[wi]) * delta
+		susp_c[wi] = clampf(susp_c[wi] + susp_cv[wi] * delta, 0.0, SUSP_TRAVEL)
+	c_f = (susp_c[0] + susp_c[1]) * 0.5
+	c_r = (susp_c[2] + susp_c[3]) * 0.5
+	cv_f = (susp_cv[0] + susp_cv[1]) * 0.5
+	cv_r = (susp_cv[2] + susp_cv[3]) * 0.5
+	var at_fl: float = susp_geom[0] - susp_c[0] + (WHEEL_RAD_F - WHEEL_RAD_REF)
+	var at_fr: float = susp_geom[1] - susp_c[1] + (WHEEL_RAD_F - WHEEL_RAD_REF)
+	var at_rl: float = susp_geom[2] - susp_c[2] + (WHEEL_RAD_R - WHEEL_RAD_REF)
+	var at_rr: float = susp_geom[3] - susp_c[3] + (WHEEL_RAD_R - WHEEL_RAD_REF)
+	var at_f: float = (at_fl + at_fr) * 0.5
+	var at_r: float = (at_rl + at_rr) * 0.5
+	var at_l: float = (at_fl + at_rl) * 0.5
+	var at_ri: float = (at_fr + at_rr) * 0.5
+	pitch_extra = atan2(at_f - at_r, WHEELBASE)
+	heave_off = (at_f + at_r) * 0.5 + SUSP_REST
+	edge_roll = atan2(at_ri - at_l, WHEEL_TRACK_M)
 
 
 func _update_suspension(delta: float) -> void:
@@ -5151,8 +5237,9 @@ func _update_suspension(delta: float) -> void:
 		# Per-wheel targets: a supported wheel asks for the road's
 		# rise under it (its OWN rise now, not the axle mean - a
 		# straddling wheel's spring extends down the shoulder);
-		# an unsupported wheel asks for full droop. The axle
-		# spring integrates the mean, as before. The FP7 jitter
+		# an unsupported wheel asks for full droop. (FP14 Item 3:
+		# the corners now integrate these targets individually -
+		# before, the axle spring integrated their mean.) The FP7 jitter
 		# swap lives in geom_f/geom_r (the axle means), so each
 		# wheel's target also carries its axle's jitter delta -
 		# the difference between the swapped geom and the smooth
@@ -5168,16 +5255,21 @@ func _update_suspension(delta: float) -> void:
 				tw[wi2] = clampf((SUSP_REST + sup_rise[wi2] + jd) * ld + tr, 0.0, SUSP_TRAVEL)
 			else:
 				tw[wi2] = 0.0
-		var target_f: float = (tw[0] + tw[1]) * 0.5
-		var target_r: float = (tw[2] + tw[3]) * 0.5
-		_susp_integrate(target_f, target_r, delta)
-		# The straddle wobble: body roll toward the side whose
-		# support line sits lower, lagged so it wallows instead
-		# of snapping. Zero whenever all four wheels are home.
-		var rise_l: float = (sup_rise[0] + sup_rise[2]) * 0.5
-		var rise_r: float = (sup_rise[1] + sup_rise[3]) * 0.5
-		var er_target: float = atan2(rise_r - rise_l, WHEEL_TRACK_M)
-		edge_roll = lerpf(edge_roll, er_target, clampf(EDGE_ROLL_LAG * delta, 0.0, 1.0))
+		# Fix Pass 14 (Item 3): the corners integrate their
+		# OWN targets (the axle means survive as c_f/c_r -
+		# see _susp_integrate_corners). Each corner's road
+		# rise for the attach derivation is its own support
+		# rise plus its axle's jitter delta.
+		for wi3: int in 4:
+			susp_geom[wi3] = sup_rise[wi3] + (jit_f if wi3 < 2 else jit_r)
+		_susp_integrate_corners(tw, delta)
+		# The straddle wobble is now INSIDE the corner
+		# derivation: edge_roll comes from the corner attach
+		# heights (an unsupported side's corners droop, its
+		# attach line falls, the body rolls toward it - the
+		# FP9 mechanism with the springs themselves as the
+		# lag, replacing the separate lagged rise-difference
+		# channel that used to be computed here).
 		# Fix Pass 8 (Item 2): leaving the road is a LOAD decision,
 		# the same rule for both honest ways it happens - this
 		# REPLACES Fix Pass 5's peak-compression history gate,
@@ -5285,8 +5377,10 @@ func _refresh_car_visuals() -> void:
 		# Fix Pass 5: body pitch IS the suspension pitch (nose dives
 		# on landing, squats under power, works over slope breaks).
 		car_body.rotation.x = pitch_extra
-	# Fix Pass 5: wheel travel - each wheel rides its axle's spring:
+	# Fix Pass 5: wheel travel - each wheel rides its spring:
 	# compressed = up into the body, drooped = hanging low.
+	# Fix Pass 14 (Item 3): per-CORNER travel now (wheel_mis is
+	# WHEEL_LOCALS-ordered, so the corner index is the wheel's own).
 	# Fix Pass 13 (Item 3): the FRONT wheels also show the steer
 	# angle (until now they only travelled). The yaw is the drive
 	# model's own expression, so what the driver sees on the road
@@ -5298,8 +5392,7 @@ func _refresh_car_visuals() -> void:
 	# rolling toward -Z.
 	var fa_vis: float = clampf(wheel_angle / PI, -1.0, 1.0) * MAX_LOCK_RAD * _lock_scale(speed)
 	for wi: int in wheel_mis.size():
-		var c_axle: float = c_f if wheel_axle[wi] == 0 else c_r
-		wheel_mis[wi].position.y = WHEEL_RAD_REF + (c_axle - SUSP_REST)
+		wheel_mis[wi].position.y = WHEEL_RAD_REF + (susp_c[wi] - SUSP_REST)
 		if wheel_axle[wi] == 0:
 			wheel_mis[wi].rotation_degrees.y = -rad_to_deg(fa_vis)
 	_update_view_spring()
@@ -5337,7 +5430,8 @@ func _update_view_spring() -> void:
 	#   acceleration, dip under braking) at VIEW_PITCH_GAIN;
 	# - heave adds a fraction of the spring compression on top of the
 	#   body's own ride motion;
-	# - roll is the lean experiment's amplified tilt (Item 4): view
+	# - roll carries the suspension roll (FP14 Item 3, below)
+	#   plus the lean experiment's amplified tilt (Item 4): view
 	#   roll = -lean * step * gain (lean right tips the view right),
 	#   present only while the experiment is ON.
 	var active: bool = mode == MODE_DRIVE or mode == MODE_AIR
@@ -5347,8 +5441,16 @@ func _update_view_spring() -> void:
 	if active:
 		v_pitch = pitch_extra * VIEW_PITCH_GAIN
 		v_y = -((c_f + c_r) * 0.5 - SUSP_REST) * VIEW_HEAVE_GAIN
+		# Fix Pass 14 (Item 3): the view also rides the
+		# suspension ROLL (edge_roll - corner-derived since
+		# this pass) through the same gained path the pitch
+		# uses: the placement basis already carries the roll
+		# at 1.0x, and the seat adds VIEW_PITCH_GAIN of it,
+		# exactly the pitch treatment. (Item 6's A/B switch
+		# scales this gain for pitch and roll together.)
+		v_roll = edge_roll * VIEW_PITCH_GAIN
 		if lean_on:
-			v_roll = -_lean_effective() * deg_to_rad(LEAN_TILT_STEP_DEG) * LEAN_VIEW_GAIN
+			v_roll += -_lean_effective() * deg_to_rad(LEAN_TILT_STEP_DEG) * LEAN_VIEW_GAIN
 	if view_node != null:
 		view_node.rotation = Vector3(v_pitch, 0.0, v_roll)
 		view_node.position = Vector3(0.0, v_y, 0.0)

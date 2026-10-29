@@ -402,6 +402,10 @@ func measure_shelf(jit_window: bool) -> Array:
 	main.c_r = main.SUSP_REST
 	main.cv_f = 0.0
 	main.cv_r = 0.0
+	for kfix: int in 4:
+		main.susp_c[kfix] = [main.SUSP_REST, main.SUSP_REST, main.SUSP_REST, main.SUSP_REST][kfix]
+	for kfix: int in 4:
+		main.susp_cv[kfix] = [0.0, 0.0, 0.0, 0.0][kfix]
 	main.jitter_on = false
 	for i: int in 24:
 		autopilot()
@@ -2913,6 +2917,10 @@ func _run() -> void:
 		main.c_r = main.SUSP_REST
 		main.cv_f = 0.0
 		main.cv_r = 0.0
+		for kfix: int in 4:
+			main.susp_c[kfix] = [main.SUSP_REST, main.SUSP_REST, main.SUSP_REST, main.SUSP_REST][kfix]
+		for kfix: int in 4:
+			main.susp_cv[kfix] = [0.0, 0.0, 0.0, 0.0][kfix]
 		main.heave_off = 0.0
 		main.body_sink = 0.0
 		main.body_sink_v = 0.0
@@ -3503,6 +3511,10 @@ func _run() -> void:
 	main.c_r = main.SUSP_REST
 	main.cv_f = 0.0
 	main.cv_r = 0.0
+	for kfix: int in 4:
+		main.susp_c[kfix] = [main.SUSP_REST, main.SUSP_REST, main.SUSP_REST, main.SUSP_REST][kfix]
+	for kfix: int in 4:
+		main.susp_cv[kfix] = [0.0, 0.0, 0.0, 0.0][kfix]
 	for i36z: int in 10:
 		main.debug_pin_speed(0.0)
 		await physics_frame
@@ -3520,6 +3532,10 @@ func _run() -> void:
 	main.c_r = 0.20
 	main.cv_f = 0.0
 	main.cv_r = 0.0
+	for kfix: int in 4:
+		main.susp_c[kfix] = [0.20, 0.20, 0.20, 0.20][kfix]
+	for kfix: int in 4:
+		main.susp_cv[kfix] = [0.0, 0.0, 0.0, 0.0][kfix]
 	var over36: int = 0
 	var was36: bool = false
 	var settle36: int = -1
@@ -3561,6 +3577,10 @@ func _run() -> void:
 	main.c_r = main.SUSP_REST
 	main.cv_f = 0.0
 	main.cv_r = 0.0
+	for kfix: int in 4:
+		main.susp_c[kfix] = [main.SUSP_REST, main.SUSP_REST, main.SUSP_REST, main.SUSP_REST][kfix]
+	for kfix: int in 4:
+		main.susp_cv[kfix] = [0.0, 0.0, 0.0, 0.0][kfix]
 	for i36b: int in 10:
 		main.debug_pin_speed(0.0)
 		await physics_frame
@@ -3569,6 +3589,10 @@ func _run() -> void:
 	main.c_r = main.SUSP_REST
 	main.cv_f = 0.0
 	main.cv_r = 0.0
+	for kfix: int in 4:
+		main.susp_c[kfix] = [0.30, 0.30, main.SUSP_REST, main.SUSP_REST][kfix]
+	for kfix: int in 4:
+		main.susp_cv[kfix] = [0.0, 0.0, 0.0, 0.0][kfix]
 	var pover36: int = 0
 	var pwas36: bool = false
 	var psettle36: int = -1
@@ -3645,6 +3669,96 @@ func _run() -> void:
 		"stage36: a soft landing takes at most its one soft bounce (%d air episodes)" % lair36)
 	check(lsettle36 > 0 and lsettle36 <= 135,
 		"stage36: a soft landing is fully settled within 1.5 s (%d frames; base rang past 3 s)" % lsettle36)
+	main.test_throttle = 0.0
+
+	# ---------- stage 37: Fix Pass 14 (Item 3) - PER-WHEEL SUSPENSION ----
+	# Sampling was per-wheel since FP9, but the INTEGRATION
+	# averaged each axle's targets into one spring: the left
+	# and right corners of an axle could not move a beat
+	# apart. Now each corner integrates its own target and
+	# the attitude (heave/pitch/roll) derives from the four
+	# corner attach heights; c_f/c_r survive as the means.
+	# (a) A diagonal crest-edge crossing (the staircase's
+	# step edge, heading poked 0.45 rad off the frame): the
+	# leading front corner extends first. The offset is
+	# SMALL - 2 frames - and the stage says why in its
+	# print: the crest LOAD is an axle quantity in this
+	# model, so the big synchronous part of the target
+	# change is shared; the per-wheel rise channel carries
+	# the phase. The square control must show none.
+	main.debug_warp_to_s(main.stairs_s0 + 6.5)
+	main.test_throttle = 0.0
+	main.wheel_angle = 0.0
+	for i37: int in 40:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+	var fy37: float = main._frame_yaw(main._frame_at(main.car_s)["tan"])
+	main.car_heading = fy37 + 0.45
+	var cross37: Array = [-1, -1]
+	for i37b: int in 160:
+		main.debug_pin_speed(18.0)
+		await physics_frame
+		if cross37[0] < 0 and main.susp_c[0] < 0.08:
+			cross37[0] = i37b
+		if cross37[1] < 0 and main.susp_c[1] < 0.08:
+			cross37[1] = i37b
+		if cross37[0] >= 0 and cross37[1] >= 0:
+			break
+	print("stage37: diagonal step-edge crossing - FL extends at frame %d, FR at %d (offset %d; the axle load channel is shared, the rise channel carries the phase)" % [
+		int(cross37[0]), int(cross37[1]), int(cross37[1]) - int(cross37[0])])
+	check(cross37[0] >= 0 and cross37[1] > cross37[0] and cross37[1] - cross37[0] <= 6,
+		"stage37: the leading corner extends first on a diagonal edge (FL %d before FR %d)" % [int(cross37[0]), int(cross37[1])])
+	main.debug_warp_to_s(main.stairs_s0 + 6.5)
+	main.wheel_angle = 0.0
+	for i37c: int in 40:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+	var fy37b: float = main._frame_yaw(main._frame_at(main.car_s)["tan"])
+	main.car_heading = fy37b
+	var cross37s: Array = [-1, -1]
+	for i37d: int in 160:
+		main.debug_pin_speed(18.0)
+		await physics_frame
+		if cross37s[0] < 0 and main.susp_c[0] < 0.08:
+			cross37s[0] = i37d
+		if cross37s[1] < 0 and main.susp_c[1] < 0.08:
+			cross37s[1] = i37d
+		if cross37s[0] >= 0 and cross37s[1] >= 0:
+			break
+	check(cross37s[0] >= 0 and abs(int(cross37s[1]) - int(cross37s[0])) <= 1,
+		"stage37: the square crossing extends both front corners together (offset %d frames)" % abs(int(cross37s[1]) - int(cross37s[0])))
+	# (b) The straddle split, the per-wheel proof at full
+	# amplitude: held on the shoulder, the off side's
+	# corners sit at full droop while the held side's
+	# corners carry the car - a state the axle model cannot
+	# represent. (c) The view roll follows the corner-
+	# derived body roll at the pitch gain, same sign.
+	for side37: int in 2:
+		var tgt37: float = 6.35 if side37 == 0 else -6.35
+		main.debug_warp_to_s(main.track_len - 260.0)
+		main.test_throttle = 0.0
+		for i37e: int in 620:
+			autopilot_steer(tgt37)
+			main.debug_pin_speed(12.0)
+			await physics_frame
+		for i37f: int in 45:
+			autopilot_steer(tgt37)
+			main.debug_pin_speed(12.0)
+			await physics_frame
+		var off_a37: float = main.susp_c[1] if side37 == 0 else main.susp_c[0]
+		var off_b37: float = main.susp_c[3] if side37 == 0 else main.susp_c[2]
+		var hold_a37: float = main.susp_c[0] if side37 == 0 else main.susp_c[1]
+		var hold_b37: float = main.susp_c[2] if side37 == 0 else main.susp_c[3]
+		var vr37: float = main.view_node.rotation.z if main.view_node != null else 0.0
+		print("stage37: straddle %s - off-side corners %.3f/%.3f, held-side %.3f/%.3f, body roll %.1f deg, view roll %.3f" % [
+			"R" if side37 == 0 else "L", off_a37, off_b37, hold_a37, hold_b37,
+			rad_to_deg(main.edge_roll), vr37])
+		check(off_a37 <= 0.01 and off_b37 <= 0.01 and hold_a37 >= 0.06 and hold_b37 >= 0.06,
+			"stage37: straddle %s splits the corners (off %.3f/%.3f drooped, held %.3f/%.3f carrying)" % [
+				"R" if side37 == 0 else "L", off_a37, off_b37, hold_a37, hold_b37])
+		check(absf(main.edge_roll) > 0.2 and signf(vr37) == signf(main.edge_roll) and absf(vr37) >= 0.5 * absf(main.edge_roll),
+			"stage37: the view rolls with the corner-derived body roll (view %.3f vs body %.3f rad)" % [vr37, main.edge_roll])
+	main.wheel_angle = 0.0
 	main.test_throttle = 0.0
 
 	print("---")
