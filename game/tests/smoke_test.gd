@@ -2153,13 +2153,23 @@ func _run() -> void:
 	check(gap_ok20,
 		"stage20: circuit gap crossed under autopilot and the lap continues")
 
-	# ---------- stage 21: Fix Pass 10 (Item 4) - the loop spur ----
-	# Fast run: pinned at 30 m/s the car takes the fork, loops
-	# the ring (frame orientation continuous, ~360 deg of total
-	# pitch), merges at the join and the lap continues.
-	var spur21: Dictionary = main.track_data["circuit"]["spur"]
-	var ring0_21: float = float(spur21["ring_s0"])
-	var ring1_21: float = float(spur21["ring_s1"])
+	# ---------- stage 21: Fix Pass 23 - the loop is GONE --------
+	# Amended stage, FLAGGED (FP23): FP10's spur runs (fork
+	# capture, ring continuity at 30 m/s, slow-entry detach
+	# inside the ring) are deleted with the loop itself - the
+	# owner's verdict after run 19 ("nuke it, we'll deal with
+	# it later"). What this stage asserts now is the ABSENCE:
+	# no spur data on the circuit, none of its nodes on the
+	# circuit root, and the home straight driven as one clean
+	# line through the old fork span (s 170-330) - no capture,
+	# no branch, no swerve.
+	var circ21: Dictionary = main.track_data["circuit"]
+	check(not circ21.has("spur"),
+		"stage21: the circuit carries no spur data (the loop is removed)")
+	var circ_root21: Node3D = circ21["root"]
+	for gone21: String in ["SpurSurface", "SpurSkirt", "SpurEdges", "SpurGuide", "SpurChevrons", "GantryLOOP"]:
+		check(circ_root21.get_node_or_null(gone21) == null,
+			"stage21: no %s node on the circuit root" % gone21)
 	main._set_track("circuit")
 	await frames(3)
 	main.start_race()
@@ -2167,15 +2177,11 @@ func _run() -> void:
 	await frames(3)
 	main._do_release()
 	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 300)
-	var captured21: bool = false
-	var merged21: bool = false
-	var max_rot21: float = 0.0
-	var ring_rot21: float = 0.0
-	var prev_q21 := Quaternion.IDENTITY
-	var have_q21: bool = false
+	var passed21: bool = false
+	var max_lat21: float = 0.0
 	var drv_frames21: int = 0
 	var f21: int = 0
-	while f21 < 4500 and not merged21:
+	while f21 < 4500 and not passed21:
 		await physics_frame
 		f21 += 1
 		if main.mode == main.MODE_AIR:
@@ -2184,120 +2190,17 @@ func _run() -> void:
 			drv_frames21 += 1
 			if drv_frames21 > 45:
 				main.debug_pin_speed(30.0)
-			if main.on_spur:
-				captured21 = true
-				var frq21: Dictionary = main._spur_frame_at(main.spur_s + clampf(main.speed * 0.55, 6.0, 22.0))
-				var tp21: Vector3 = frq21["pos"]
-				var cp21: Vector3 = main.car.global_position
-				var des21: float = atan2(-(tp21.x - cp21.x), -(tp21.z - cp21.z))
-				if absf(Vector3(frq21["tan"]).y) > 0.45:
-					des21 = main._spur_frame_yaw(main._spur_frame_at(main.spur_s))
-				main.wheel_angle = clampf(-wrapf(des21 - main.car_heading, -PI, PI) * 1.6, -1.0, 1.0) * PI
-			else:
-				var tgt21: float = 0.0
-				if main.car_s > main.SPUR_ENTRY_S:
-					var uu21: float = clampf((main.car_s - 120.0) / 85.0, 0.0, 1.0)
-					tgt21 = -3.4 * (uu21 * uu21 * (3.0 - 2.0 * uu21))
-				autopilot_steer(tgt21)
-			if have_q21:
-				var q21: Quaternion = main.car.global_transform.basis.get_rotation_quaternion()
-				var drot21: float = rad_to_deg(prev_q21.angle_to(q21))
-				if main.on_spur:
-					max_rot21 = maxf(max_rot21, drot21)
-					if main.spur_s > ring0_21 and main.spur_s < ring1_21:
-						ring_rot21 += drot21
-				prev_q21 = q21
-			else:
-				prev_q21 = main.car.global_transform.basis.get_rotation_quaternion()
-				have_q21 = true
-			if captured21 and not main.on_spur and main.car_s > main.SPUR_JOIN_S - 20.0:
-				merged21 = true
+			autopilot_steer(0.0)
+			if main.car_s > 150.0 and main.car_s < 360.0:
+				max_lat21 = maxf(max_lat21, absf(main.car_lat))
+			if main.car_s >= 400.0:
+				passed21 = true
 		elif main.mode == main.MODE_HANG:
 			break
-	check(captured21, "stage21: the fork captures a car steered onto its line")
-	check(merged21, "stage21: fast run loops the ring and merges back (car_s %.0f)" % main.car_s)
-	check(max_rot21 < 3.5,
-		"stage21: orientation continuous on the spur (worst frame step %.2f deg)" % max_rot21)
-	check(ring_rot21 > 320.0 and ring_rot21 < 400.0,
-		"stage21: the ring turns the car through ~360 deg (%.0f)" % ring_rot21)
-	# Slow run: pinned 16 to the ring, then 10 m/s - below the
-	# top's sqrt(gR) ~= 10.4 - the load goes negative past
-	# vertical and the car detaches INSIDE the ring, falls,
-	# and the crane recovers it onto the MAIN track.
-	main._set_track("circuit")
-	await frames(3)
-	main.start_race()
-	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
-	await frames(3)
-	main._do_release()
-	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 300)
-	var air_in_ring21: bool = false
-	var was_spur21: bool = false
-	var last_spur_s21: float = 0.0
-	var drv_frames21b: int = 0
-	var f21b: int = 0
-	while f21b < 4500:
-		await physics_frame
-		f21b += 1
-		if main.mode == main.MODE_DRIVE:
-			drv_frames21b += 1
-			was_spur21 = main.on_spur
-			if main.on_spur:
-				last_spur_s21 = main.spur_s
-			if drv_frames21b > 45:
-				if main.on_spur and main.spur_s > ring0_21:
-					main.debug_pin_speed(10.0)
-				else:
-					main.debug_pin_speed(16.0)
-			if main.on_spur:
-				var frq21b: Dictionary = main._spur_frame_at(main.spur_s + clampf(main.speed * 0.55, 6.0, 22.0))
-				var tp21b: Vector3 = frq21b["pos"]
-				var cp21b: Vector3 = main.car.global_position
-				var des21b: float = atan2(-(tp21b.x - cp21b.x), -(tp21b.z - cp21b.z))
-				# Fix Pass 11: the yaw-law switch keys on the
-				# LOOKAHEAD frame's pitch, and near the ring top
-				# the lookahead tangent passes through level -
-				# the law chatters between pursuit bearing and
-				# frame yaw, the car's psi diverges, spur_s
-				# stalls just short of the both-axle detach
-				# window (traced: stall at 122.9, window opens
-				# at 123.0) and the car wallows at the top until
-				# the frame budget dies. Inside the ring span
-				# the frame yaw is the stable target throughout
-				# (the ring is planar); use it from 10 m out.
-				if absf(Vector3(frq21b["tan"]).y) > 0.45 or main.spur_s > ring0_21 - 10.0:
-					des21b = main._spur_frame_yaw(main._spur_frame_at(main.spur_s))
-				main.wheel_angle = clampf(-wrapf(des21b - main.car_heading, -PI, PI) * 1.6, -1.0, 1.0) * PI
-			else:
-				var tgt21b: float = 0.0
-				if main.car_s > main.SPUR_ENTRY_S:
-					var uu21b: float = clampf((main.car_s - 120.0) / 85.0, 0.0, 1.0)
-					tgt21b = -3.4 * (uu21b * uu21b * (3.0 - 2.0 * uu21b))
-				autopilot_steer(tgt21b)
-		elif main.mode == main.MODE_AIR:
-			# the detach counts only if the car left DRIVE from
-			# ON the spur, inside the ring span - a release
-			# rebound in the first frames must not fake it.
-			# Fix Pass 11: the break used to sit OUTSIDE the if,
-			# so ANY air - including that rebound, or a landing
-			# hop on the way to the fork - ended the run in a
-			# spurious failure (seen post-rake: exits at spur_s
-			# 0 and 115 with the detach itself verified at 123
-			# in clean runs). Mirror the fast run above: wait
-			# unrelated air out, break only on the ring detach.
-			if was_spur21 and last_spur_s21 >= ring0_21 and last_spur_s21 <= ring1_21 + 5.0:
-				air_in_ring21 = true
-				break
-			await wait_until(func() -> bool: return main.mode != main.MODE_AIR, 4000)
-		elif main.mode == main.MODE_HANG:
-			break
-	check(air_in_ring21 and main.mode == main.MODE_AIR,
-		"stage21: slow ring entry detaches inside the ring (spur_s %.0f of %.0f-%.0f)" % [last_spur_s21, ring0_21, ring1_21])
-	var hang21: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 6000)
-	check(hang21, "stage21: the fall ends in a crane recovery")
-	if hang21:
-		check(main._drop_piece_ok(main.drop_target_s) and main._drop_runup_ok(main.drop_target_s),
-			"stage21: recovery drop is a qualified MAIN-track piece (s %.0f)" % main.drop_target_s)
+	check(passed21,
+		"stage21: the home straight drives through the old fork span (reached s %.0f)" % main.car_s)
+	check(max_lat21 < 1.2,
+		"stage21: no swerve on the home straight (worst |lat| %.2f m across s 150-360)" % max_lat21)
 
 	# ---------- stage 22: Fix Pass 11 (Item 1) - seat + yaw cone ----
 	# (a) The trim funnel: the eye follows the trim, the live seat
@@ -2683,8 +2586,9 @@ func _run() -> void:
 	# centre, floor at its true global AABB min) must never
 	# intersect a ribbon box (surface-0.45..surface over
 	# +-HALF_WIDTH) or a stilt box (0.55 wide, surface down to
-	# the desert floor) of any sample near the rig - main
-	# track and spur alike. FP12 wrote this stage for the
+	# the desert floor) of any sample near the rig. (FP23:
+	# the spur's candidate samples are deleted with the
+	# spur.) FP12 wrote this stage for the
 	# drone's ROUTE (a 150-260 m carry at hang height, road
 	# and pylons mid-carry). Fix Pass 15 (Item 2): there is
 	# no route - the collection is off-stage and the crane's
@@ -2739,20 +2643,6 @@ func _run() -> void:
 			if near:
 				var frc: Dictionary = main._frame_at(float(i))
 				cands.append([p, Vector3(frc["side"]), Vector3(frc["tan"]), i % 10 == 0, 0.275])
-		var spur28: Dictionary = main.track_data["circuit"].get("spur", {})
-		if not spur28.is_empty():
-			var spts: Array = spur28["pts"]
-			var sside: Array = spur28["side"]
-			var stan: Array = spur28["tan"]
-			for i2: int in spts.size():
-				var p2: Vector3 = spts[i2]
-				var near2: bool = false
-				for cp2: Vector3 in corridor:
-					if Vector2(p2.x - cp2.x, p2.z - cp2.z).length() < 9.0:
-						near2 = true
-						break
-				if near2:
-					cands.append([p2, Vector3(sside[i2]), Vector3(stan[i2]), i2 % 12 == 0, 0.30])
 		var hits: int = 0
 		var brush: int = 0
 		var min_clear: float = 1e9
@@ -2915,7 +2805,7 @@ func _run() -> void:
 		"stage28: case G slew is collision-free (hits %d)" % hits_g)
 	print("stage28: case G fall->dangle %d frames from the recovery trigger; station brush %d frame-samples (see comment)" % [fg2, brush_g])
 
-	# ---------- stage 29: Fix Pass 12 (Items 5+6) ----------------
+	# ---------- stage 29: Fix Pass 12 (Item 5) --------------------
 	# Item 5: the air trigger. The convicted case first: a
 	# 48 m/s launch off the climb top (s 2125, rebound 2.0)
 	# flies 3.64 s and LANDS (the old bare 2.4 s timer snatched
@@ -2974,37 +2864,10 @@ func _run() -> void:
 	var lost29: Array = await fly_case.call(735.0, 2.0, 30.0)
 	check(not bool(lost29[0]) and int(lost29[1]) < 200,
 		"stage29: a lateral exit off the dip lip is genuinely lost - crane in %.2f s (lateral-exit rule)" % (float(lost29[1]) / 90.0))
-	# Item 6: the merge arrives aligned, and the garnishes exist.
-	var spur29: Dictionary = main.track_data["circuit"]["spur"]
-	var slen29: float = float(spur29["len"])
-	var end29: Dictionary = main._spur_frame_at(slen29)
-	var jfr29: Dictionary = main._frame_at(main.SPUR_JOIN_S)
-	var resid29: float = absf(rad_to_deg(wrapf(main._spur_frame_yaw(end29) - main._frame_yaw(Vector3(jfr29["tan"])), -PI, PI)))
-	check(resid29 <= 0.5,
-		"stage29: merge heading residual %.2f deg (was 2.54 before the blend)" % resid29)
-	var worst29: float = 0.0
-	var prev_yaw29: float = main._spur_frame_yaw(main._spur_frame_at(slen29 - 12.0))
-	for k29: int in range(11, -1, -1):
-		var yw29: float = main._spur_frame_yaw(main._spur_frame_at(slen29 - float(k29)))
-		worst29 = maxf(worst29, absf(rad_to_deg(wrapf(yw29 - prev_yaw29, -PI, PI))))
-		prev_yaw29 = yw29
-	check(worst29 <= 1.1,
-		"stage29: exit-leg unwind over the last 12 m peaks at %.2f deg/m (entry side: <= 1.00)" % worst29)
-	var circ_root29: Node3D = main.track_data["circuit"]["root"]
-	check(circ_root29.get_node_or_null("SpurGuide") != null,
-		"stage29: the amber guide strip is built on the capture corridor")
-	check(circ_root29.get_node_or_null("SpurChevrons") != null,
-		"stage29: descent chevrons are built")
-	check(circ_root29.get_node_or_null("GantryLOOP") != null,
-		"stage29: the LOOP gantry stands at s 158")
-	var skirt29: MeshInstance3D = circ_root29.get_node("SpurSkirt") as MeshInstance3D
-	var cols29: PackedColorArray = skirt29.mesh.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
-	var band29: int = 0
-	for c29: Color in cols29:
-		if absf(c29.r - 1.0) < 0.01 and absf(c29.g - 0.58) < 0.01 and absf(c29.b - 0.06) < 0.01:
-			band29 += 1
-	check(band29 > 200,
-		"stage29: the ring's rim band is painted (bright underside verts %d)" % band29)
+	# FP23: Item 6's spur checks (merge heading residual,
+	# exit-leg unwind, guide strip, chevrons, LOOP gantry,
+	# rim band) are deleted with the loop; stage 21 now
+	# asserts the absence instead.
 
 	# Stage 30 (Fix Pass 13, Item 1): TOUCHDOWN CONNECTION - the
 	# prep sequence is gone and the getaway is judged from the

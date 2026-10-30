@@ -949,139 +949,54 @@ func _run() -> void:
 	await snap(cam20, "rake_profile_view.png")
 	cam20.queue_free()
 
-	# Captures 17-19 (Fix Pass 10, Item 4): the loop spur.
-	# 17: the driver's view at the fork - the spur ribbon
-	# peeling left off the home straight.
-	main.debug_warp_to_s(185.0)
-	for i: int in 3:
-		await physics_frame
-	await snap(main.fallback_cam, "spur_fork_view.png")
-	# 18: the ring from trackside - a full vertical loop of
-	# ribbon standing off the straight.
-	var spur18: Dictionary = main.track_data["circuit"]["spur"]
-	var ring0_18: float = float(spur18["ring_s0"])
-	var frb18: Dictionary = main._spur_frame_at(ring0_18)
-	var centre18: Vector3 = Vector3(frb18["pos"]) + Vector3.UP * main.SPUR_RING_R
-	var cam18 := Camera3D.new()
-	main.add_child(cam18)
-	cam18.position = centre18 + Vector3(frb18["side"]) * 40.0 + Vector3.UP * 4.0
-	cam18.look_at(centre18, Vector3.UP)
-	await snap(cam18, "spur_ring_view.png")
-	cam18.queue_free()
-	# 19: cockpit mid-ring. Drive the spur with the smoke's
-	# pursuit discipline (pinned 30, settle first) and snap
-	# from the seat near the ring's top.
-	main._set_track("circuit")
-	for i: int in 10:
-		await physics_frame
-	main.debug_warp_to_s(60.0)
-	var drv19: int = 0
-	var f19: int = 0
-	var snapped19: bool = false
-	while f19 < 3000 and not snapped19:
-		await physics_frame
-		f19 += 1
-		if main.mode == main.MODE_AIR:
-			var w19: int = 0
-			while main.mode == main.MODE_AIR and w19 < 4000:
-				await physics_frame
-				w19 += 1
-		elif main.mode == main.MODE_DRIVE:
-			drv19 += 1
-			if drv19 > 5:
-				main.debug_pin_speed(30.0)
-			if main.on_spur:
-				var la19: float = clampf(main.speed * 0.55, 6.0, 22.0)
-				var fra19: Dictionary = main._spur_frame_at(main.spur_s + la19)
-				var tp19: Vector3 = fra19["pos"]
-				var cp19: Vector3 = main.car.global_position
-				var des19: float = atan2(-(tp19.x - cp19.x), -(tp19.z - cp19.z))
-				if absf(Vector3(fra19["tan"]).y) > 0.45:
-					des19 = main._spur_frame_yaw(main._spur_frame_at(main.spur_s))
-				main.wheel_angle = clampf(-wrapf(des19 - main.car_heading, -PI, PI) * 1.6, -1.0, 1.0) * PI
-				if main.spur_s > ring0_18 + 30.0:
-					await snap(main.fallback_cam, "spur_cockpit_ring_view.png")
-					snapped19 = true
-			else:
-				var tgt19: float = 0.0
-				if main.car_s > main.SPUR_ENTRY_S:
-					var uu19: float = clampf((main.car_s - 120.0) / 85.0, 0.0, 1.0)
-					tgt19 = -3.4 * (uu19 * uu19 * (3.0 - 2.0 * uu19))
-				var la19b: float = clampf(maxf(main.speed, 0.0) * 0.55, 6.0, 22.0)
-				var frt19: Dictionary = main._frame_at(main.car_s + la19b)
-				var tp19b: Vector3 = Vector3(frt19["pos"]) + Vector3(frt19["side"]) * tgt19
-				var cp19b: Vector3 = main.car.global_position
-				var des19b: float = atan2(-(tp19b.x - cp19b.x), -(tp19b.z - cp19b.z))
-				main.wheel_angle = clampf(-wrapf(des19b - main.car_heading, -PI, PI) * 1.6, -1.0, 1.0) * PI
-		elif main.mode == main.MODE_HANG:
-			break
-	check(snapped19, "capture 19: cockpit snapped mid-ring (spur_s %.0f)" % main.spur_s)
+	# FP23: captures 17-19 (the FP10 loop spur - fork view,
+	# ring view, cockpit mid-ring) are DELETED with the loop.
+	# The 20-22 series below re-shoots their approach stations
+	# as the home-straight absence series.
 
-	# Captures 20-22 (Fix Pass 12, Item 6): the loop approach
-	# from the driver's seat, boards HIDDEN (their spawn state
-	# - the toggle was left on for the label checks; turn it
-	# off through production), at 100 / 50 / 20 m before the
-	# entry: the LOOP gantry, the amber guide strip curving off
-	# the centreline, the ring's brightened rim beyond - and
-	# NOT the DIAG board that used to cover the ring's window.
+
+	# Captures 20-22 (Fix Pass 23): the home straight from the
+	# driver's seat, boards HIDDEN - the stations the FP12 loop
+	# approach series used (warps to s 70 / 120 / 168), re-shot
+	# after the loop's removal. What the frames must show is an
+	# absence: no LOOP gantry, no amber guide strip curving off
+	# the centreline, no ring on the horizon - one clean line.
 	if main.panels_visible:
 		main._toggle_panels()
 	check(not main.panel_root.visible and not main.diag_root.visible,
-		"FP12 approach series: boards hidden, as the owner drives")
-	# State hygiene: earlier captures leave the car on the
-	# SPUR (on_spur) or mid-hang, and a warp then places it on
-	# spur frames - the first two FP12 proof runs photographed
-	# the ring wall and a recovery instead of the approach.
-	# start_race is the production reset; the warp then parks
-	# the car on the MAIN road.
+		"FP23 home straight series: boards hidden, as the owner drives")
+	# State hygiene: earlier captures can leave the car
+	# mid-hang; start_race is the production reset, and the
+	# warp then parks the car on the road, pinned at 0 through
+	# the settle (a driverless roll photographed a recovery
+	# instead of the road in the FP12 series' first run).
 	main.start_race()
 	for i: int in 4:
 		await physics_frame
-	check(not main.on_spur, "FP12 approach series: car reset to the main track")
-	# The car is PARKED at each station (pin 0 every settle
-	# frame): the first FP12 proof run let it roll driverless
-	# through the settle, and by the 20 m frame it had left
-	# the road and was dangling in a recovery - the shot
-	# judged the drone, not the approach.
 	main.debug_warp_to_s(70.0)
 	for i: int in 30:
 		main.debug_pin_speed(0.0)
 		await physics_frame
-	await snap(main.fallback_cam, "loop_approach_100m.png")
+	await snap(main.fallback_cam, "home_straight_100m.png")
 	main.debug_warp_to_s(120.0)
 	for i: int in 30:
 		main.debug_pin_speed(0.0)
 		await physics_frame
-	await snap(main.fallback_cam, "loop_approach_50m.png")
-	# Fix Pass 13: the "20 m" station moved 150 -> 168, and
-	# the reason is a staging truth this pass exposed. The
-	# FP12 frame was snapped with the car still in the Drop
-	# Start dangle (its own state label reads PREP) - from
-	# 160 m back the whole entry, strip included, sits in one
-	# sightline and the check passed on that distant thread.
-	# With the FP13 reset the warp genuinely parks the car at
-	# each station, and from a parked s 150 the strip (which
-	# starts at s 160, just past the gantry and over the
-	# entry crest) does NOT read - measured 2 sampled px.
-	# From s 168, just inside the gantry with the entry
-	# ahead, it reads clearly (280 px in the band below,
-	# ~70 sampled). Reported in the pass README as an
-	# entrance-readability finding; the strip itself is
-	# unchanged since FP12.
+	await snap(main.fallback_cam, "home_straight_50m.png")
 	main.debug_warp_to_s(168.0)
 	for i: int in 30:
 		main.debug_pin_speed(0.0)
 		await physics_frame
-	await snap(main.fallback_cam, "loop_approach_20m.png")
-	# The guide strip is IN the 20 m frame: count its
-	# unshaded amber in the ROAD BAND (y 30-62%, x 30-75% -
-	# where the far road actually sits in this frame; the
-	# lower half is the car's nose and the near road before
-	# the strip starts, and the first FP12 proof run scanned
-	# exactly there and found the strip "missing" while a
-	# winding bug hid it - both fixed, the band is the honest
-	# one).
-	var img20: Image = Image.load_from_file(ProjectSettings.globalize_path("res://tests/loop_approach_20m.png"))
+	await snap(main.fallback_cam, "home_straight_20m.png")
+	# The FP12 guide-strip test, INVERTED (FP23): the amber
+	# family the guide strip and the ring's rim band were
+	# painted in must now be ABSENT from the ROAD BAND of the
+	# 20 m frame (y 30-62%, x 30-75% - where the far road sits;
+	# the lower half is the car's nose and the near road). The
+	# dashed edge strips (g ~0.72) sit outside the test's g
+	# window by construction; the strip read ~70 sampled px
+	# in this band when it existed.
+	var img20: Image = Image.load_from_file(ProjectSettings.globalize_path("res://tests/home_straight_20m.png"))
 	var guide_px: int = 0
 	if img20 != null:
 		for y20: int in range(int(img20.get_height() * 0.30), int(img20.get_height() * 0.62), 2):
@@ -1089,33 +1004,12 @@ func _run() -> void:
 				var pc20: Color = img20.get_pixel(x20, y20)
 				if absf(pc20.r - 1.0) < 0.06 and absf(pc20.g - 0.60) < 0.06 and pc20.b < 0.12:
 					guide_px += 1
-	check(guide_px > 40, "FP12: the amber guide strip reads in the 20 m approach frame (%d px)" % guide_px)
+	check(guide_px == 0, "FP23: no guide-strip/ring amber in the home straight frame (%d px)" % guide_px)
 
-	# Capture 23 (Item 6): the descent leg from a chase
-	# vantage above and behind - chevrons on the chute, the
-	# ring beyond. (The first FP12 proof stood trackside at
-	# skirt height and photographed the skirt: the chevrons
-	# live on the TOP surface, so the camera belongs above
-	# the chute looking down its length, as the driver sees
-	# them.)
-	var fr23: Dictionary = main._spur_frame_at(40.0)
-	var p23: Vector3 = fr23["pos"]
-	var cam23 := Camera3D.new()
-	main.add_child(cam23)
-	cam23.position = p23 + Vector3(fr23["up"]) * 4.0 - Vector3(fr23["tan"]) * 8.0
-	var fr23b: Dictionary = main._spur_frame_at(68.0)
-	cam23.look_at(Vector3(fr23b["pos"]), Vector3.UP)
-	await snap(cam23, "spur_descent_view.png")
-	cam23.queue_free()
-	var img23: Image = Image.load_from_file(ProjectSettings.globalize_path("res://tests/spur_descent_view.png"))
-	var chev_px: int = 0
-	if img23 != null:
-		for y23: int in range(0, img23.get_height(), 2):
-			for x23: int in range(0, img23.get_width(), 2):
-				var pc23: Color = img23.get_pixel(x23, y23)
-				if absf(pc23.r - 1.0) < 0.06 and absf(pc23.g - 0.80) < 0.06 and pc23.b < 0.30:
-					chev_px += 1
-	check(chev_px > 120, "FP12: descent chevrons read in the trackside frame (%d px)" % chev_px)
+
+	# FP23: capture 23 (the spur descent leg and its chevrons)
+	# is DELETED with the loop.
+
 
 	# Capture 24 (Item 4): the dip-valley sightline - the far
 	# read the fog cut and wider edge strips serve. Driver's
