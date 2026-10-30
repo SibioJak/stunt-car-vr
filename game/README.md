@@ -3271,6 +3271,147 @@ The grab log's session header now reads FP24.
   earners, road sections, the speed envelope, any
   change to boost power or the drain rate.
 
+## Fix Pass 25 — The Steering Connection (visual only)
+
+Base: FP24 final (92c523b). Ordered by the owner
+2026-10-29 10:04–10:05 CDT, GO given Fri 2026-10-30 09:26
+CDT: "there needs to be a visual connection between wheel
+and steering wheel" / "The tires are telling a story, with
+their wobbling and bouncing, but we gotta see it." This
+pass is PRESENTATION ONLY: no physics value moves, and the
+drive census below says so in numbers.
+
+### Item 1 — the sightline audit (measured BEFORE any remedy)
+
+A new section of the render proof classifies a sampled
+grid over each front tire's surface (86 points: both
+sidewall discs + the tread band) from the shipped eye
+anchor, through the fallback camera (whose frame is
+NARROWER than the Quest's — the audit is conservative):
+in-frame, and visible = in-frame with a clear sightline
+(the FP4 local-AABB segment test against every car mesh;
+the tire's own AABB counts, so its far side reads hidden,
+as it should). On the shipped geometry (0.30 m tires at
+WHEEL_LOCALS):
+
+- rest: 87% in-frame, **8% visible**
+- full compression: 100% in-frame, 21% visible
+- full droop: 74% in-frame, 7% visible
+
+Blockers at rest, per tire: the side pod 25 samples, the
+floor 17, the dash slab 12, the tire itself 11, the nose
+1. The tires were in the frame the whole time — behind
+the car's own bodywork. Gain alone cannot fix what can't
+be seen, so Item 4's condition was met.
+
+### Item 4 — tire presence (the audit demanded it)
+
+The remedy is on the tire, not the bodywork (pods, dash
+and floor are untouched): the front VISUAL tyre grows to
+0.33 m radius and steps 0.14 m outboard and 0.40 m
+forward — the Odd Rods dragster's long nose, the Pro
+promo's exposed wheels. Audit rounds, rest visibility:
+radius+outboard alone 9% (the pod still walled the
+sightlines); forward 0.25 m, 17%; **as shipped (forward
+0.40 m): rest 100% in-frame / 22% visible, full
+compression 35%, full droop 21%** — and of the surface an
+eye could ever reach (in-frame minus the self-hidden far
+side), roughly a third is visible at rest and half under
+compression. The remaining rest blockers: the tire itself
+~32, the dash slab 15, the pod 16, the floor 2.
+
+WHEEL_RAD_F is a physics constant (it sets the suspension
+attach heights) and did not move — the bigger radius is a
+mesh-only WHEEL_RAD_F_VIS. The visual centre rises by the
+radius growth PLUS the rake slope × the forward step, so
+the visual bottom stays on the model's contact plane:
+capture 20's planted-plane checks pass unamended (front
+bottom 0.329 m rel road, baseline 0.330; rears still
+dwarf the fronts, measured dia 0.99 vs 0.70 m). The dust
+emitters keep marking the TRUE contact patch at
+WHEEL_LOCALS; the travel delta the tire displays is the
+model's own (susp_c − SUSP_REST), unchanged.
+
+### Item 2 — the visual steer gain
+
+`_steer_display_angle()` is the only reader of the curve;
+the drive model keeps computing its own front_angle from
+wheel_angle and never reads the display. Gain =
+1 + (2.2 − 1) × (1 − smoothstep(0, 0.55, |steer|)):
+×2.20 at centre, honest from 55% lock up. Staged exact
+(new stage 55): a 0.3 rad wheel shows −6.45° against the
+honest −3.06° (×2.10); a quarter lock in the dangle
+(capture 26) shows −13.5° against −8.0° honest; full lock
+shows −32.09°, the model's own −32.09°. The dangle runs
+through the same gain (stage 31, amended — below): the
+promise the release keeps is the one the driver saw.
+
+### Item 3 — slip made visible
+
+In DRIVE the display adds the slip angle
+atan2(lat_vel, max(|speed|, 4.0)), honestly scaled, capped
+at ±0.18 rad (10.3°): the front tires yaw toward where the
+car is actually sliding. Stage 55 pokes it synchronously:
+2.0 m/s at 20 m/s shows −5.71° (atan2's own −5.71°), a
+leftward slide +5.71°, a violent 9.0 m/s at 6 m/s caps at
+−10.31°. Airborne and hanging, the term is zero — unloaded
+tires tell no slip story, the FP15 ruling in visual form.
+
+### Census
+
+The drive census prints are byte-identical to the FP24
+baseline run (stages 8, 12, 18, 19, 30, 49, 51, 53, 54 —
+lap times, air evidence, heading census, economy and both
+audit geographies print the same numbers) with three
+accounted exceptions, none of them physics: stage 9's
+wall-clock µs annotations jitter between any two runs
+(its step values and track positions are identical);
+stage 2f's mesh-measured body width prints 2.08 m (was
+1.92) — the outboard front tires are now the widest
+meshes on the car, which is Item 4 measured, and the
+road-proportion check beside it (6.0 × WHEEL_LOCALS
+track) is unmoved; stage 28's carry-clearance prints read
+0.44 / 0.38 m (was 0.57 / 0.51) because its merged-AABB
+sampler now bottoms on the bigger, forward visual tire
+during the carry — the asserted verdicts are identical
+(hits 0, station brush 0, same 603 frames end to end).
+
+### Amendments (flagged, never silent)
+
+- **Stage 31**: the front-wheel display expectation moves
+  from the honest −6.1° to the gained band around −11.4°
+  (measured −11.4°). The lock, the dangle's yaw authority
+  and the release checks in the same stage are unmoved.
+- **The audit helper** samples WHEEL_RAD_F_VIS — the mesh
+  the driver sees. The pre-remedy audit above was run when
+  the shipped mesh was the 0.30 m WHEEL_RAD_F, and its
+  numbers were recorded with that size.
+
+### Verification
+
+Smoke 503/503 (496 at FP24 + stage 55's 7), API guard
+70/70. Render proof 142/144 — the 2 failures are the same
+2 the UNMODIFIED baseline shows in this sandbox (137/139):
+the wheel-hub reach band reading 0.31 m because this
+sandbox's persisted seat trim puts the anchor at 1.284 m
+rather than 1.26, and wires_view's colour count under
+llvmpipe. All proof captures this pass rendered through
+the sandbox's Compatibility/llvmpipe stack — structure
+and geometry only, not colour truth.
+
+### What you're judging (run 21)
+
+The wheel↔tire connection at small inputs — a
+quarter-turn of the cockpit wheel now moves the front
+tires ~13.5° where it showed 8°; the tires yawing into a
+slide as it begins; the new stance — bigger front tires
+stepped out and forward, out from behind the pods; and
+the tires' bounce reading from the seat at last. NOT in:
+any feel change — there is none by construction (the
+census above); any bodywork change — the pods, dash and
+floor are exactly where they were; the tire moved, not
+the car.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
