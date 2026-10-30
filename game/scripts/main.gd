@@ -318,8 +318,8 @@ const VIEW_HEAVE_GAIN: float = 0.35
 # springs still sag to droop there, the rear extending at
 # ~0.57 m/s - droop + velocity alone cannot tell a bleed
 # from a bounce; the load level can).
-const AIR_LOAD_EPS: float = 0.03 # crest load factor that counts as unloaded
-const AIR_SUSTAIN_FRAMES: int = 3 # frames at ~zero load before separation
+const AIR_LOAD_EPS: float = 0.03 # load factor that counts as unloaded (FP21: per corner on the main track)
+const AIR_SUSTAIN_FRAMES: int = 3 # frames at ~zero load before separation (the spur's FP8 rule; the main track separates per corner since FP21, no sustain)
 const REBOUND_THROW_VEL: float = -1.6 # cv_f + cv_r (m/s) that counts as a throw (FP14: staged from the joint trace below)
 const REBOUND_LOAD_FLOOR: float = 0.8 # rebound route needs the road fully supporting
 # Fix Pass 14 (Item 2): the throw route's travel condition.
@@ -758,7 +758,7 @@ var rebound_gate_vy: float = 0.0 # FP14 (Item 1): impact vy of an armed energy r
 var deep_hit_age: float = 9.0 # FP14 (Item 2): seconds since the last deep compression (route-2 evidence)
 var bounce_chain: int = 0 # FP14 (Item 1): spring throws since the last settled ground run
 var grounded_t: float = 0.0 # FP14 (Item 1): continuous grounded seconds (chain re-arm clock)
-var air_load_frames: int = 0 # consecutive frames at ~zero crest load, both axles
+var air_load_frames: int = 0 # spur's sustain counter (FP8 form); the main track's separation is per-corner since FP21
 var wheel_mis: Array[MeshInstance3D] = []
 var wheel_axle: Array[int] = [] # 0 = front, 1 = rear, parallel to wheel_mis
 # Fix Pass 9 (Item 2, scope addition): per-WHEEL support state,
@@ -771,6 +771,23 @@ var wheel_axle: Array[int] = [] # 0 = front, 1 = rear, parallel to wheel_mis
 var sup_rise: Array[float] = [0.0, 0.0, 0.0, 0.0]
 var sup_ok: Array[bool] = [true, true, true, true]
 var sup_s: Array[float] = [0.0, 0.0, 0.0, 0.0] # each wheel's spine s (load sampling)
+var sup_lat: Array[float] = [0.0, 0.0, 0.0, 0.0] # Fix Pass 21: each wheel's lateral offset at its own s
+# Fix Pass 21 (Items 1+2): PER-CORNER load state. wheel_kv is
+# the vertical curvature of the surface AT the wheel's contact
+# patch (see _patch_kv - bank unwind and lateral surface fall
+# count, which the centreline kv cannot see); wheel_load is the
+# corner's own crest-load factor from it. load_f/load_r survive
+# as the corner MEANS of their axle (every pre-FP21 reader -
+# the FP15 telegraph, the rebound floor, the stages - keeps its
+# meaning). wheel_air is the corner's separation state: the
+# road at that patch is falling away faster than the corner's
+# ballistic arc (wheel_load ~zero), so the corner dangles at
+# full droop and carries nothing. wheel_air_frames is the
+# cumulative evidence counter the stages read.
+var wheel_kv: Array[float] = [0.0, 0.0, 0.0, 0.0]
+var wheel_load: Array[float] = [1.0, 1.0, 1.0, 1.0]
+var wheel_air: Array[bool] = [false, false, false, false]
+var wheel_air_frames: Array[int] = [0, 0, 0, 0]
 var edge_roll: float = 0.0
 var view_node: Node3D # seat-stack node carrying suspension view motion
 
@@ -2205,6 +2222,12 @@ func _update_suspension_spur(delta: float) -> void:
 	geom_r = (Vector3(fr_r["pos"]) - Vector3(fr_c["pos"])).dot(Vector3(fr_c["up"]))
 	load_f = clampf(Vector3(fr_f["up"]).y - speed * speed * float(fr_f["kv"]) / GRAV, 0.0, 1.25)
 	load_r = clampf(Vector3(fr_r["up"]).y - speed * speed * float(fr_r["kv"]) / GRAV, 0.0, 1.25)
+	# Fix Pass 21: the spur keeps its own physical load form;
+	# mirror it into the corner state (grouped by axle, no
+	# per-corner separation on the chute) so the corner
+	# readers never see main-track state frozen mid-flight.
+	wheel_load = [load_f, load_f, load_r, load_r]
+	wheel_air = [false, false, false, false]
 	if delta > 0.0:
 		var la: float = clampf((speed - prev_speed) / delta, -12.0, 12.0)
 		long_accel_f = lerpf(long_accel_f, la, 0.25)
@@ -2660,6 +2683,37 @@ func _frame_at(s: float) -> Dictionary:
 func _elev_smooth(s: float) -> float:
 	var p: Vector3 = _frame_at(s)["pos"]
 	return p.y
+
+
+func _surf_height_at(s: float, lat: float) -> float:
+	# Fix Pass 21: the road surface's world height at arc
+	# position s and lateral offset lat - the height of the
+	# surface point a wheel at that offset actually touches.
+	var frs: Dictionary = _frame_at(s)
+	return (Vector3(frs["pos"]) + Vector3(frs["side"]) * lat).y
+
+
+func _patch_kv(s_w: float, lat_w: float) -> float:
+	# Fix Pass 21 (Item 1): the vertical curvature of the
+	# surface AT a wheel's contact patch, from finite
+	# differences of the patch height along the wheel's own
+	# line (lat held - it changes slowly against a 5 m
+	# stencil). Same sign convention as t_kv: positive over a
+	# crest, where the road falls away. The centreline t_kv
+	# cannot see this quantity's lateral half: on a banked
+	# exit the surface under the outside wheels falls as the
+	# bank unwinds while the centreline runs level (kv = 0,
+	# axle load 1.00) - the owner's "inside flair" lived
+	# exactly there (conviction traces, FP21 README). The
+	# stencil spans 5 m, the same averaging scale the build's
+	# own t_kv smoothing uses (~a wheelbase).
+	var d: float = 2.5
+	var hm: float = _surf_height_at(s_w - d, lat_w)
+	var h0: float = _surf_height_at(s_w, lat_w)
+	var hp: float = _surf_height_at(s_w + d, lat_w)
+	var slope: float = (hp - hm) / (2.0 * d)
+	var hpp: float = (hp - 2.0 * h0 + hm) / (d * d)
+	return -hpp / pow(1.0 + slope * slope, 1.5)
 
 
 func _elev_quantised(s: float) -> float:
@@ -4825,6 +4879,11 @@ func _reset_suspension() -> void:
 	sup_ok = [true, true, true, true]
 	sup_s = [0.0, 0.0, 0.0, 0.0]
 	sup_over = [0.0, 0.0, 0.0, 0.0] # Fix Pass 15 (Item 1)
+	sup_lat = [0.0, 0.0, 0.0, 0.0] # Fix Pass 21
+	wheel_kv = [0.0, 0.0, 0.0, 0.0] # Fix Pass 21
+	wheel_load = [1.0, 1.0, 1.0, 1.0] # Fix Pass 21
+	wheel_air = [false, false, false, false] # Fix Pass 21
+	wheel_air_frames = [0, 0, 0, 0] # Fix Pass 21
 	edge_rumble_now = 0.0
 	edge_scrape_now = 0.0
 	tire_ratio = 0.0
@@ -6143,6 +6202,20 @@ func _update_suspension(delta: float) -> void:
 			else:
 				sup_ok[wi] = true
 				sup_rise[wi] = rise - maxf(over, 0.0) * EDGE_SLOPE
+			# Fix Pass 21 (Item 1): the corner's OWN load. The
+			# patch curvature at (sup_s, wlat) - not the
+			# centreline kv at an axle mean s - decides how
+			# hard the road can hold this corner: following
+			# the surface over a crest needs downward
+			# acceleration v^2 * kv_patch, and what gravity
+			# cannot supply unloads the corner. An
+			# unsupported (past-cutoff) corner carries
+			# nothing by definition.
+			sup_lat[wi] = wlat
+			wheel_kv[wi] = _patch_kv(sup_s[wi], wlat)
+			var tan_wy: float = Vector3(wfr["tan"]).y
+			var cos_w: float = maxf(sqrt(maxf(1.0 - tan_wy * tan_wy, 0.0)), 0.5)
+			wheel_load[wi] = clampf(1.0 - speed * speed * wheel_kv[wi] / (GRAV * cos_w), 0.0, 1.25) if sup_ok[wi] else 0.0
 		geom_f = (sup_rise[0] + sup_rise[1]) * 0.5
 		geom_r = (sup_rise[2] + sup_rise[3]) * 0.5
 		# Fix Pass 7 (Item 2): the suspension samples the QUANTISED
@@ -6161,15 +6234,35 @@ func _update_suspension(delta: float) -> void:
 			var e_c: float = _elev_quantised(car_s)
 			geom_f += (_elev_quantised(s_f) - e_c) - (_frame_at(s_f)["pos"].y - pos_c.y)
 			geom_r += (_elev_quantised(s_r) - e_c) - (_frame_at(s_r)["pos"].y - pos_c.y)
-		# Crest load: following the road over a crest needs downward
-		# acceleration v^2 * kv; what gravity cannot supply unloads
-		# the springs. Computed per axle from the road's own profile
-		# (sampled at the axle's mean wheel s, as the geom is).
-		var fr_f: Dictionary = _frame_at(s_f)
-		var fr_r: Dictionary = _frame_at(s_r)
-		var cos_phi: float = maxf(sqrt(maxf(1.0 - fr["tan"].y * fr["tan"].y, 0.0)), 0.5)
-		load_f = clampf(1.0 - speed * speed * float(fr_f["kv"]) / (GRAV * cos_phi), 0.0, 1.25)
-		load_r = clampf(1.0 - speed * speed * float(fr_r["kv"]) / (GRAV * cos_phi), 0.0, 1.25)
+		# Crest load: Fix Pass 21 (Item 1) - the load is
+		# computed PER CORNER in the sampling loop above
+		# (patch curvature at the wheel's own contact patch);
+		# the axle factors survive as the corner means, so
+		# every reader built on them (the FP15 telegraph, the
+		# rebound route's load floor, the stages) keeps its
+		# meaning. (Pre-FP21 this block computed the factors
+		# from the centreline kv at each axle's mean wheel s -
+		# the scalar that could not see a one-side unload.)
+		load_f = (wheel_load[0] + wheel_load[1]) * 0.5
+		load_r = (wheel_load[2] + wheel_load[3]) * 0.5
+		# Fix Pass 21 (Item 2): SEPARATION, per corner. A
+		# corner is airborne when its patch load sits at
+		# ~zero - the road there falls away faster than the
+		# corner's ballistic arc (v^2 * kv_patch >= g) - and
+		# it re-contacts the moment the load returns. No
+		# sustain counter, no history: the comparison IS
+		# the physics, sampled at the corner. Entry asks
+		# real speed (below it the load factor itself
+		# returns to ~1 as v^2 falls, so a slowing car
+		# re-contacts on its own); a corner past the edge
+		# cutoff belongs to the straddle, not to this.
+		for wi5: int in 4:
+			if sup_ok[wi5] and speed > 8.0 and wheel_load[wi5] <= AIR_LOAD_EPS:
+				wheel_air[wi5] = true
+			elif not sup_ok[wi5] or wheel_load[wi5] > AIR_LOAD_EPS:
+				wheel_air[wi5] = false
+			if wheel_air[wi5]:
+				wheel_air_frames[wi5] += 1
 		# Weight transfer from filtered longitudinal acceleration:
 		# accelerating loads the rear (squat), braking loads the
 		# front (dive).
@@ -6192,12 +6285,19 @@ func _update_suspension(delta: float) -> void:
 		var jit_r: float = geom_r - (sup_rise[2] + sup_rise[3]) * 0.5
 		var tw: Array[float] = [0.0, 0.0, 0.0, 0.0]
 		for wi2: int in 4:
-			if sup_ok[wi2]:
-				var ld: float = load_f if wi2 < 2 else load_r
+			if sup_ok[wi2] and not wheel_air[wi2]:
+				# Fix Pass 21 (Item 1): the corner's target
+				# scales by its OWN load now, not its axle's -
+				# on a centred, aligned car over centreline
+				# terrain the two agree; over a one-sided
+				# unload only the corner's own value is true.
+				var ld: float = wheel_load[wi2]
 				var tr: float = -transfer if wi2 < 2 else transfer
 				var jd: float = jit_f if wi2 < 2 else jit_r
 				tw[wi2] = clampf((SUSP_REST + sup_rise[wi2] + jd) * ld + tr, 0.0, SUSP_TRAVEL)
 			else:
+				# Unsupported (straddle) or separated (FP21):
+				# the corner asks for full droop and dangles.
 				tw[wi2] = 0.0
 		# Fix Pass 14 (Item 3): the corners integrate their
 		# OWN targets (the axle means survive as c_f/c_r -
@@ -6208,11 +6308,16 @@ func _update_suspension(delta: float) -> void:
 			susp_geom[wi3] = sup_rise[wi3] + (jit_f if wi3 < 2 else jit_r)
 		_susp_integrate_corners(tw, delta)
 		# Fix Pass 14 (Item 5): the load the tires actually
-		# carry this frame - the mean axle road load raised
-		# to GRIP_LOAD_EXP (a crest at full unload floors
-		# it). Feeds the lateral bleed in _update_drive (one
-		# frame stale, like bounce_pending).
-		load_grip = clampf(pow(maxf((load_f + load_r) * 0.5, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
+		# carry this frame - the mean road load raised to
+		# GRIP_LOAD_EXP (a crest at full unload floors it).
+		# Feeds the lateral bleed in _update_drive (one
+		# frame stale, like bounce_pending). Fix Pass 21:
+		# the mean is over the four CORNER loads - a
+		# two-wheel unload halves the carried load, which
+		# is what the contact patch count says. (The value
+		# equals the old axle-mean wherever the corners of
+		# an axle agree.)
+		load_grip = clampf(pow(maxf((wheel_load[0] + wheel_load[1] + wheel_load[2] + wheel_load[3]) * 0.25, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
 		# Fix Pass 15 (Item 1): THE EDGE FAMILY's strengths, read
 		# straight off the support state this loop just computed -
 		# the original's contact layer (Crammond had no skid, but
@@ -6256,6 +6361,17 @@ func _update_suspension(delta: float) -> void:
 		# axles, sustained - the surface falls away faster than
 		# gravity can pull the car after it (v^2*kv > g). No
 		# history: load level + duration are the whole rule.
+		# Fix Pass 21 (Item 2): route (1) is PER-CORNER now.
+		# The both-axle sustain rule is REPLACED on the main
+		# track: each corner separates on its own patch
+		# comparison (see the separation state above), and
+		# the CAR flies when all four corners have separated
+		# - the sustain counter's last job (waiting for the
+		# rear axle to arrive at the crest the front had
+		# already left) is exactly the glue the owner
+		# reported. The loop spur keeps the FP8 form in its
+		# own suspension; it is a different surface with a
+		# physical load form of its own.
 		# (2) REBOUND: the springs cross near-droop still throwing
 		# fast - stored energy leaving (FP14 Item 2: the crossing
 		# is the condition, not the droop stop - see
@@ -6275,10 +6391,9 @@ func _update_suspension(delta: float) -> void:
 		# rebound happens on flat/supporting road (load ~1), so
 		# it keeps its air. Smoke stage 10a is the negative
 		# control; stage 3 is the regression that found this.
-		if load_f <= AIR_LOAD_EPS and load_r <= AIR_LOAD_EPS and speed > 8.0:
-			air_load_frames += 1
-		else:
-			air_load_frames = 0
+		# Fix Pass 21: the FP8 sustain counter stood here;
+		# per-corner separation (above) replaced it on the
+		# main track. air_load_frames survives for the spur.
 		# Fix Pass 14 (Item 2): stored-energy evidence for the
 		# throw route - a deep compression inside the window.
 		if (c_f + c_r) * 0.5 >= REBOUND_DEEP_HIT:
@@ -6293,11 +6408,16 @@ func _update_suspension(delta: float) -> void:
 		# compression happens along later.
 		if rebound_gate_vy > 0.0 and grounded_t > REBOUND_GATE_EXPIRY_S:
 			rebound_gate_vy = 0.0
-		if air_load_frames >= AIR_SUSTAIN_FRAMES:
+		if wheel_air[0] and wheel_air[1] and wheel_air[2] and wheel_air[3] and speed > 8.0:
+			# Fix Pass 21 (Item 2): every corner has
+			# separated on its own comparison - nothing
+			# holds the car, so the car flies. Same entry
+			# terms as the FP8 geometry route (0.35 on top
+			# of the slope-following vertical the velocity
+			# already carries, see _enter_air).
 			bounce_pending = true
 			bounce_vy = 0.35
 			pending_rebound = false
-			air_load_frames = 0
 		elif (c_f + c_r) * 0.5 <= REBOUND_FIRE_TRAVEL and cv_f + cv_r < REBOUND_THROW_VEL \
 				and load_f >= REBOUND_LOAD_FLOOR and load_r >= REBOUND_LOAD_FLOOR \
 				and bounce_chain == 0 and deep_hit_age <= REBOUND_DEEP_HIT_WINDOW:
@@ -6325,6 +6445,7 @@ func _update_suspension(delta: float) -> void:
 		load_f = 1.0
 		load_r = 1.0
 		air_load_frames = 0
+		wheel_air = [false, false, false, false] # Fix Pass 21
 		edge_roll = lerpf(edge_roll, 0.0, clampf(EDGE_ROLL_LAG * delta, 0.0, 1.0))
 		edge_rumble_now = 0.0 # Fix Pass 15 (Item 1): no road contact, no edge voice
 		edge_scrape_now = 0.0
@@ -6337,6 +6458,7 @@ func _update_suspension(delta: float) -> void:
 		load_f = 1.0
 		load_r = 1.0
 		air_load_frames = 0
+		wheel_air = [false, false, false, false] # Fix Pass 21: separation is a DRIVE-frame state
 		edge_roll = lerpf(edge_roll, 0.0, clampf(EDGE_ROLL_LAG * delta, 0.0, 1.0))
 		edge_rumble_now = 0.0 # Fix Pass 15 (Item 1): airborne/hanging - the edge family is silent
 		edge_scrape_now = 0.0
