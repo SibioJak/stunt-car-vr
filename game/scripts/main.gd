@@ -237,8 +237,19 @@ const EDGE_ROLL_LAG: float = 7.0 # 1/s, the wobble is lagged, not a snap
 const DESERT_FLOOR_Y: float = -30.0 # ~60 m below the track datum (y=30)
 const RIBBON_DEPTH: float = 0.45 # box-section depth so the ribbon reads edge-on
 const CLEARANCE: float = 0.35
-const HANG_LEN: float = 5.5
-const HANG_CLEAR: float = 1.2
+# Fix Pass 26 (Item 2): the drop DOUBLES, on the owner's
+# run-20 order ("we need a higher crane drop by around x2 or
+# more"). The quantity that doubles is the air under the car
+# at the station - the wheel clearance HANG_CLEAR - CLEARANCE
+# goes 0.85 -> 1.70 m, so the staged fall runs ~0.41 -> ~0.59 s
+# (free fall over twice the distance). The chains lengthen
+# with it: HANG_LEN 5.5 -> 11.0, and both pendulum lengths
+# double (PEND_LEN_F/L below), so the sway period stretches
+# x1.41 (sqrt 2) with the FP15 gust/jib-flex character kept.
+# The crane post's height formula (HANG_LEN + HANG_CLEAR +
+# 1.1 in _place_crane) reads the new scale on its own.
+const HANG_LEN: float = 11.0
+const HANG_CLEAR: float = 2.05
 const GRAV: float = 9.8
 # Fix Pass 2: fixed driver eye anchor in car space. The seat offset rig
 # lands the player's HMD exactly here on spawn/recenter, so physical
@@ -444,8 +455,8 @@ const LEAN_TILT_STEP_DEG: float = 10.0
 # settles into a single-plane rhythm), light damping, plus drone dips:
 # the pivot drops briefly and corrects; on a big dip the lines go
 # slack and the car free-falls a beat before they catch.
-const PEND_LEN_F: float = 5.5
-const PEND_LEN_L: float = 3.9
+const PEND_LEN_F: float = 11.0 # FP26 (Item 2): doubled with the chains (was 5.5) - period x1.41
+const PEND_LEN_L: float = 7.8 # FP26 (Item 2): doubled with the chains (was 3.9)
 const PEND_DAMP: float = 0.10
 # Fix Pass 10 (Item 2) gave the hang a PIVOT-DRIVEN carrier:
 # real state - position (anchor_pos), velocity, measured
@@ -606,11 +617,27 @@ const PAY_FLASH_S: float = 0.35 # s the meter fill flashes after a payout lands
 # Fix Pass 24 (Item 3): the air audit's sector width - the
 # geography the audit maps a track's payable air onto.
 const AUDIT_SECTOR_M: float = 250.0
-# Fix Pass 24 (Item 2): the turbo meter bar on the dash face
-# (see _build_cockpit): TURBO_BAR_POS is the FILL's centre;
-# the trough sits 4 mm behind it on the slab face.
-const TURBO_BAR_W: float = 0.70
-const TURBO_BAR_POS: Vector3 = Vector3(0.0, 0.845, -0.543)
+# Fix Pass 24 (Item 2) put a fill BAR on the dash face at
+# (0, 0.845, -0.543). Fix Pass 26 (Item 1) DELETES it: from
+# the real seat the steering wheel hides it (the owner's
+# run-20 screenshot shows the blue fill as a sliver behind
+# a spoke). The meter is now a LIQUID FLASK set into the
+# dash-TOP button row (see _build_cockpit) - the row the
+# driver can actually see. FLASK_POS sits between the green
+# LEAN button (-0.52) and the amber VIEW button (-0.35):
+# sightlines from the eye anchor to that spot cross the
+# wheel plane at radius ~0.33-0.42 m, OUTSIDE the rim band
+# (0.155-0.245) and beyond the spokes' reach (0.20) at any
+# wheel angle - the render proof's capture-25 sweep asserts
+# it at centre and full lock both ways. The flask is a
+# gauge, never a control: it is not registered as a dash
+# control and has no grab zone.
+const FLASK_POS: Vector3 = Vector3(-0.435, 0.93, -0.60) # dash top surface, in the button row
+const FLASK_LIQ_MIN_H: float = 0.012 # m of liquid standing in the vessel at empty
+const FLASK_LIQ_MAX_H: float = 0.078 # m at capacity (never brim-full)
+const FLASK_SLOSH_K: float = 55.0 # the liquid spring, 1/s^2 (~1.2 Hz)
+const FLASK_SLOSH_C: float = 5.2 # its damping - underdamped: lags, overshoots a little, settles
+const FLASK_SLOSH_MAX_RAD: float = 0.26 # the surface's display cap
 # Fix Pass 7 (Item 2) - the Crammond jitter mechanism, reproduced
 # structurally (crammond-notes.md Q3): the original's road profiles
 # are smooth analytic ramps - its tire jitter EMERGES from faceted
@@ -699,13 +726,29 @@ var last_pay_units: float = 0.0
 var last_pay_air_s: float = 0.0
 var last_pay_grade: String = "-"
 # Fix Pass 24 (Item 2): the meter's rendered state - the
-# fill fraction (stock / capacity) the dash bar draws, and
+# fill fraction (stock / capacity) the meter draws, and
 # the payout flash's remaining seconds (set by
 # _pay_for_landing, decayed by _update_turbo_meter).
+# Fix Pass 26 (Item 1): what draws them is the flask - the
+# liquid's level (flask_level_h, mapped from the fraction)
+# and its slosh spring (flask_tilt / flask_tilt_vel, two
+# axes in rad, integrated in _update_turbo_meter from the
+# car's measured acceleration; test_flask_accel* is the
+# staging override, the test_pivot_accel pattern).
 var turbo_fill_frac: float = 0.5
 var pay_flash_t: float = 0.0
-var turbo_fill_mi: MeshInstance3D = null
-var turbo_fill_mat: StandardMaterial3D = null
+var flask_node: Node3D = null
+var flask_liquid_pivot: Node3D = null
+var flask_liquid_mi: MeshInstance3D = null
+var flask_liquid_mat: StandardMaterial3D = null
+var flask_level_h: float = 0.0
+var flask_tilt: Vector2 = Vector2.ZERO
+var flask_tilt_vel: Vector2 = Vector2.ZERO
+var flask_prev_pos: Vector3 = Vector3.ZERO
+var flask_prev_vel: Vector3 = Vector3.ZERO
+var flask_have_prev: bool = false
+var test_flask_accel_on: bool = false
+var test_flask_accel: Vector3 = Vector3.ZERO
 # Fix Pass 24 (Item 3): the air audit's recorder state (see
 # debug_audit_begin / _pay_for_landing / _enter_air). All
 # inert unless a test arms it - the shipped game never does.
@@ -989,6 +1032,7 @@ var crane_pad: MeshInstance3D
 var crane_jib: MeshInstance3D
 var crane_counter: MeshInstance3D
 var crane_trolley: MeshInstance3D
+var crane_spreader: Node3D
 var line_mis: Array[MeshInstance3D] = []
 
 var dash_ctl_nodes: Array[Node3D] = []
@@ -1062,8 +1106,20 @@ var seat_trim: float = 0.0
 # the 0.40 grab radius, so a press is never a wheel grab) and
 # >= 0.29 m from every dash-top button's point (outside
 # their 0.15 zones), mirrored on the left face.
+# Fix Pass 26 (Item 3): the button comes UP, on the owner's
+# run-20 order ("drop button needs to come up") - FACE_Y
+# 0.70 -> 0.85, the upper dash face, its bracket top flush
+# with the slab top. The zone math still holds at the new
+# point: 0.44 m from the hub (outside the grab radius),
+# 0.19 m from the nearest dash-top button's point (restart
+# right / view left, outside their 0.15 zones), 0.11 m clear
+# of the rim's outer edge in x (the wheel's sweep never
+# reaches it), and clear of the FP26 flask on the dash top
+# (0.21 m from the mirrored-left point). Mirroring and the
+# persisted side are untouched - _apply_drop_btn_side reads
+# these constants.
 const DROP_BTN_FACE_X: float = 0.42 # |x| of the button on the face (the lever's spot)
-const DROP_BTN_FACE_Y: float = 0.70
+const DROP_BTN_FACE_Y: float = 0.85 # FP26 (Item 3): raised to the upper dash face (was 0.70)
 const DROP_BTN_FACE_Z: float = -0.44
 var drop_btn_node: Node3D # the registered dash control node
 var drop_btn_bracket: MeshInstance3D
@@ -2647,9 +2703,11 @@ func _build_cockpit() -> void:
 	# its zone is the dash family's fat 0.15 m point volume,
 	# its latch the FP16 Schmitt one-shot, its dip the
 	# articulation's - along its facing (z), not down (y).
-	# Clearances at the point (0.42, 0.70, -0.44): 0.50 m
-	# from the wheel hub (a press never reads as a wheel
-	# grab), >= 0.29 m from every dash-top button point.
+	# Clearances at the point (0.42, 0.85, -0.44) since Fix
+	# Pass 26 raised it to the upper dash face (FP20's point
+	# was (0.42, 0.70, -0.44)): 0.44 m from the wheel hub (a
+	# press never reads as a wheel grab), >= 0.19 m from
+	# every dash-top button point.
 	drop_btn_bracket = _box(car_body, Vector3(0.18, 0.16, 0.09), Vector3(DROP_BTN_FACE_X, DROP_BTN_FACE_Y, DROP_BTN_FACE_Z - 0.065), _mat(Color(0.10, 0.10, 0.12)))
 	var dbt := Node3D.new()
 	dbt.name = "DropButton"
@@ -2668,32 +2726,62 @@ func _build_cockpit() -> void:
 	drop_btn_node = dbt
 	_register_dash_ctl(dbt, "drop")
 	_apply_drop_btn_side()
-	# Fix Pass 24 (Item 2): the TURBO METER - a fill bar on
-	# the dash face in the button cluster's row, built with
-	# the cockpit (NOT on either info panel: it never hides).
-	# The trough is the whole tank; the fill is a unit box
-	# _update_turbo_meter re-scales and re-centres each
-	# physics frame, anchored at the trough's left edge so
-	# the level reads against a fixed edge. Placement: the
-	# slab face (driver side z -0.55) below the dash-top
-	# buttons, clear of the drop button's bracket (its top
-	# is y 0.78; the bar rides at 0.845) and of the wheel
-	# rim's plane ahead of it.
-	# (Depths are 0.024, not a slim 0.010: the dash audit's
-	# buried test grows every car AABB by -0.01, and a thinner
-	# box goes negative under it - the engine errors and the
-	# mesh silently drops out of the audit. The bar reads as
-	# a raised gauge housing instead, which suits the dash.)
-	_box(car_body, Vector3(TURBO_BAR_W + 0.02, 0.034, 0.024), TURBO_BAR_POS + Vector3(0.0, 0.0, -0.004), _mat(Color(0.05, 0.05, 0.06)), "TurboTrough")
-	turbo_fill_mi = MeshInstance3D.new()
-	var tfm := BoxMesh.new()
-	tfm.size = Vector3(1.0, 0.024, 0.024)
-	turbo_fill_mi.mesh = tfm
-	turbo_fill_mi.name = "TurboFill"
-	turbo_fill_mat = _mat_unshaded(Color(0.25, 0.55, 0.95))
-	turbo_fill_mi.material_override = turbo_fill_mat
-	turbo_fill_mi.position = TURBO_BAR_POS
-	car_body.add_child(turbo_fill_mi)
+	# Fix Pass 26 (Item 1): the TURBO FLASK - the boost meter
+	# as a liquid vessel set into the dash-TOP button row,
+	# built with the cockpit (NOT on either info panel: it
+	# never hides). It replaces FP24's dash-face bar, which
+	# the steering wheel hid from the real seat. The owner's
+	# redesign, in his words: "a liquid flasky meter where
+	# one of those flat buttons is along the dash, like the
+	# green one. sloshes around with car movement, drains
+	# some on use." A squat tinted-glass vessel in a socket
+	# bezel, a collar at its neck - a gauge's silhouette,
+	# never a pressable button (no dash registration, no
+	# zone). Inside it the liquid: a narrow box on a pivot,
+	# its height the tank, its surface sloshing on the
+	# spring _update_turbo_meter integrates. Every part is
+	# >= 0.024 m in every dimension (the FP24 lesson: the
+	# dash audit's buried test grows AABBs by -0.01 and a
+	# thinner box goes negative under it).
+	flask_node = Node3D.new()
+	flask_node.name = "TurboFlask"
+	flask_node.position = FLASK_POS
+	car_body.add_child(flask_node)
+	var fbase := MeshInstance3D.new()
+	var fbm := CylinderMesh.new()
+	fbm.top_radius = 0.054
+	fbm.bottom_radius = 0.058
+	fbm.height = 0.024
+	fbase.mesh = fbm
+	fbase.position = Vector3(0.0, 0.012, 0.0)
+	fbase.material_override = _mat(Color(0.10, 0.10, 0.12))
+	fbase.name = "FlaskBase"
+	flask_node.add_child(fbase)
+	flask_liquid_pivot = Node3D.new()
+	flask_liquid_pivot.name = "FlaskLiquidPivot"
+	flask_liquid_pivot.position = Vector3(0.0, 0.024, 0.0)
+	flask_node.add_child(flask_liquid_pivot)
+	flask_liquid_mi = MeshInstance3D.new()
+	var flm := BoxMesh.new()
+	flm.size = Vector3(0.046, 1.0, 0.046) # unit height: the pivot scales it to the level
+	flask_liquid_mi.mesh = flm
+	flask_liquid_mi.name = "FlaskLiquid"
+	flask_liquid_mat = _mat_unshaded(Color(0.25, 0.55, 0.95))
+	flask_liquid_mi.material_override = flask_liquid_mat
+	flask_liquid_pivot.add_child(flask_liquid_mi)
+	var fglass := MeshInstance3D.new()
+	var fgm := BoxMesh.new()
+	fgm.size = Vector3(0.088, 0.095, 0.088)
+	fglass.mesh = fgm
+	fglass.position = Vector3(0.0, 0.0715, 0.0)
+	var fgmat := StandardMaterial3D.new()
+	fgmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	fgmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	fgmat.albedo_color = Color(0.75, 0.88, 1.0, 0.30)
+	fglass.material_override = fgmat
+	fglass.name = "FlaskGlass"
+	flask_node.add_child(fglass)
+	_box(flask_node, Vector3(0.056, 0.024, 0.056), Vector3(0.0, 0.131, 0.0), _mat(Color(0.55, 0.55, 0.58)), "FlaskCollar")
 	# Lean indicator needle on the dash (experiment feedback)
 	# (rides up with the raised wheel so it stays clear of the rim)
 	# Fix Pass 13 (Item 2): shifted left off the centreline -
@@ -2888,8 +2976,8 @@ func _panel_text() -> String:
 	lines.append("-- VR CONTROLS --")
 	lines.append("Grab wheel: GRIP near wheel, turn hand")
 	lines.append("Throttle R trigger / Brake L trigger")
-	lines.append("Boost: R A button (while driving)")
-	lines.append("Release: DROP BUTTON (dash face) - on chains it drops you, any time")
+	lines.append("Boost: R A button (while driving) - the dash-top FLASK's liquid is the tank; air pays it back")
+	lines.append("Release: DROP BUTTON (upper dash face) - on chains it drops you, any time")
 	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
 	lines.append("Call crane: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
@@ -3065,6 +3153,16 @@ func _build_crane() -> void:
 	crane_jib = _beam_instance(steel)
 	crane_counter = _beam_instance(dark)
 	crane_trolley = _box(crane, Vector3(0.55, 0.34, 0.55), Vector3.ZERO, dark)
+	# Fix Pass 26: the spreader frame the chains hang from -
+	# a car-proportioned rectangle (0.90 x 2.03 m) at the
+	# corners' plane, posed per frame in _update_crane_visual.
+	crane_spreader = Node3D.new()
+	crane_spreader.name = "CraneSpreader"
+	crane.add_child(crane_spreader)
+	_box(crane_spreader, Vector3(0.06, 0.06, 2.145), Vector3(-0.45, 0.0, 0.0), dark)
+	_box(crane_spreader, Vector3(0.06, 0.06, 2.145), Vector3(0.45, 0.0, 0.0), dark)
+	_box(crane_spreader, Vector3(0.96, 0.06, 0.06), Vector3(0.0, 0.0, -1.0125), dark)
+	_box(crane_spreader, Vector3(0.96, 0.06, 0.06), Vector3(0.0, 0.0, 1.0125), dark)
 	crane.add_child(crane_jib)
 	crane.add_child(crane_counter)
 	# 4 chains (unit cylinders, stretched between the trolley's
@@ -3147,10 +3245,25 @@ func _set_line(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
 # hung from the pivot in the jib's heading frame (same axis
 # order as _car_corners so the line pairing matches).
 func _crane_corners() -> Array[Vector3]:
+	# Fix Pass 26 (Item 2 consequence): the spreader rectangle
+	# is PROPORTIONAL to the car's attach rectangle (half
+	# 0.60 x 1.35) at the same 0.45 half-width - fore-aft half
+	# 0.45 x (1.35 / 0.60) = 1.0125. FP6's no-cross rule was
+	# proven for a SQUARE spreader (+-0.45 both axes), and the
+	# doubled chains broke it: the same diagonal hang displaces
+	# the car twice as far in plan, and past that displacement
+	# the diagonal pair's line order flips (the render proof's
+	# sweep counted 9 crossings at the staged 0.30/0.24 dangle,
+	# all the 1-2 pair at the fore turning point). Similar
+	# rectangles at the same yaw cannot cross at ANY
+	# displacement - the fan keeps its cyclic order by
+	# construction - and a car-sized spreader frame is what a
+	# real lift hangs a car from. The frame is built in
+	# _build_crane and posed with these corners.
 	var out: Array[Vector3] = []
 	var xf := Transform3D(Basis(Vector3.UP, carrier_yaw), pivot_pos)
 	for ax: float in [-0.45, 0.45]:
-		for az: float in [-0.45, 0.45]:
+		for az: float in [-1.0125, 1.0125]:
 			out.append(xf * Vector3(ax, -0.30, az))
 	return out
 
@@ -3176,10 +3289,15 @@ func _update_crane_visual() -> void:
 	var back: Vector3 = top + (top - hook).normalized() * 2.2 + Vector3(0.0, 0.1, 0.0)
 	_set_beam(crane_counter, top, back)
 	crane_trolley.global_position = pivot_pos
+	if crane_spreader != null:
+		crane_spreader.global_transform = Transform3D(
+			Basis(Vector3.UP, carrier_yaw), pivot_pos + Vector3(0.0, -0.30, 0.0))
 	# Fix Pass 6 (Item 4) wire rule holds: chain i runs trolley
 	# corner i -> car corner i and no pair can cross - the car's
 	# facing seeks this same carrier_yaw (with lag), so the two
-	# yaws never diverge past a few degrees.
+	# yaws never diverge past a few degrees, and (FP26) the
+	# spreader rectangle is proportional to the car's, so the
+	# fan keeps its order at any hang displacement.
 	var tops: Array[Vector3] = _crane_corners()
 	var bots: Array[Vector3] = _car_corners()
 	for i: int in 4:
@@ -6049,26 +6167,57 @@ func _update_suspension(delta: float) -> void:
 
 func _update_turbo_meter(delta: float) -> void:
 	# Fix Pass 24 (Item 2): the meter's per-frame state - the
-	# fill fraction the bar and the stages both read, the
-	# payout flash's decay, and the fill mesh + colour that
-	# render them. Bright at full, dark at empty, so the
-	# level reads in peripheral vision; while the flash runs
-	# the fill goes boost-bright, so a payout is SEEN in the
-	# same moment the landing is graded.
+	# fill fraction the meter and the stages both read, and
+	# the payout flash's decay. Bright at full, dark at
+	# empty, so the level reads in peripheral vision; while
+	# the flash runs the fill goes boost-bright, so a payout
+	# is SEEN in the same moment the landing is graded.
+	# Fix Pass 26 (Item 1): what renders that state is the
+	# flask's LIQUID. Its level is the fraction (a payout
+	# raises it in a chunk at the grading moment; boosting
+	# drains it visibly). Its surface SLOSHES: a two-axis
+	# damped spring chasing the effective-gravity direction
+	# in body space, driven by the car's MEASURED world
+	# acceleration (position-derived, so it answers in every
+	# mode - the hang's swing included) - underdamped, so it
+	# lags the car and settles like liquid, never a mirror.
 	turbo_fill_frac = clampf(boost_meter / BOOST_CAPACITY, 0.0, 1.0)
 	if pay_flash_t > 0.0:
 		pay_flash_t = maxf(pay_flash_t - delta, 0.0)
-	if turbo_fill_mi == null:
+	if flask_liquid_mi == null:
 		return
-	var w: float = TURBO_BAR_W * maxf(turbo_fill_frac, 0.001)
-	turbo_fill_mi.scale = Vector3(w, 1.0, 1.0)
-	turbo_fill_mi.position = Vector3(
-		TURBO_BAR_POS.x - TURBO_BAR_W * 0.5 + w * 0.5, TURBO_BAR_POS.y, TURBO_BAR_POS.z)
+	flask_level_h = lerpf(FLASK_LIQ_MIN_H, FLASK_LIQ_MAX_H, turbo_fill_frac)
+	flask_liquid_pivot.position.y = 0.024 + flask_level_h * 0.5
+	flask_liquid_mi.scale = Vector3(1.0, flask_level_h, 1.0)
 	if pay_flash_t > 0.0:
-		turbo_fill_mat.albedo_color = Color(0.85, 0.97, 1.0)
+		flask_liquid_mat.albedo_color = Color(0.85, 0.97, 1.0)
 	else:
-		turbo_fill_mat.albedo_color = Color(0.25, 0.55, 0.95).lerp(
+		flask_liquid_mat.albedo_color = Color(0.25, 0.55, 0.95).lerp(
 			Color(0.03, 0.05, 0.10), 1.0 - turbo_fill_frac)
+	# --- the slosh spring ---
+	var a_world: Vector3 = Vector3.ZERO
+	if test_flask_accel_on:
+		a_world = test_flask_accel
+		flask_have_prev = false # re-derive the measured state cleanly afterwards
+	elif flask_have_prev and delta > 0.0001:
+		var vel: Vector3 = (car.global_position - flask_prev_pos) / delta
+		a_world = (vel - flask_prev_vel) / delta
+		flask_prev_vel = vel
+		if a_world.length() > 40.0:
+			a_world = a_world.normalized() * 40.0 # warps/fixtures are not weather
+	flask_prev_pos = car.global_position
+	if not flask_have_prev:
+		flask_prev_vel = Vector3.ZERO
+		flask_have_prev = true
+	var g_eff: Vector3 = Vector3(0.0, -GRAV, 0.0) - a_world
+	var gb: Vector3 = car_body.global_transform.basis.transposed() * g_eff
+	var target := Vector2(
+		clampf(atan2(-gb.z, -gb.y), -FLASK_SLOSH_MAX_RAD, FLASK_SLOSH_MAX_RAD),
+		clampf(atan2(gb.x, -gb.y), -FLASK_SLOSH_MAX_RAD, FLASK_SLOSH_MAX_RAD))
+	flask_tilt_vel += ((target - flask_tilt) * FLASK_SLOSH_K
+		- flask_tilt_vel * FLASK_SLOSH_C) * delta
+	flask_tilt += flask_tilt_vel * delta
+	flask_liquid_pivot.rotation = Vector3(flask_tilt.x, 0.0, flask_tilt.y)
 
 
 func _refresh_car_visuals() -> void:
