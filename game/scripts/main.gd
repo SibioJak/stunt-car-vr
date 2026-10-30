@@ -951,57 +951,43 @@ var anchor_bake_yaw: bool = false
 # user:// writes anywhere); that one key is the whole file for
 # now. Reported as a brief/code mismatch in the pass report.
 var seat_trim: float = 0.0
-# --- Fix Pass 11 (Item 4): the drop lever ---
-# The recovery release is a big physical lever, in the
-# cockpit's lever-forward language: grab the upper shaft,
-# pull it through a real throw; past the DETENT the car lets
-# go. Let go of the grip earlier and it springs back and
-# nothing drops. Angles are the pivot's rotation.x
-# (lever-local +Y is the shaft).
-# Fix Pass 12 (Item 1) moved FP11's pod lever forward into a
-# gear shifter; Fix Pass 13 (Item 2) supersedes both
-# placements at the owner's run-13 direction: the lever now
-# stands at the CENTRE of the dash, where the right hand
-# naturally points, and the throw is VERTICAL - the knob
-# starts UP (rest = straight up off the dash face) and the
-# driver pulls it DOWN toward himself through the detent.
-# DOWN is the direction that reads as "release the load":
-# the crane-release pull. Rest 0.0, detent +0.50, max +0.70.
-const DROP_LEVER_REST_RAD: float = 0.0
-const DROP_LEVER_DETENT_RAD: float = 0.50
-const DROP_LEVER_MAX_RAD: float = 0.70
-const DROP_LEVER_GRAB_RADIUS: float = 0.20 # FP16 (Item 2): was 0.16 - the volume grows as the mesh shrinks
-const DROP_LEVER_SPRING_RATE: float = 3.5 # rad/s back to rest
-# Fix Pass 15 (Item 3): the lever leaves the dash TOP for the
-# dash FACE - the owner's run-14 placement, verbatim shape:
-# "on the side of the dash, facing player, up/down, right
-# side of wheel." The pivot sits on the slab's driver face
-# (face plane z = -0.55; the pivot stands 6 cm proud of it
-# on its bracket), right of the wheel hub, the shaft still
-# standing straight up at rest and pulling down toward the
-# driver through the same detent. A dash toggle (and the M
-# key) mirrors the pair to the left side for left-handed
-# drivers; the choice persists with the seat trim.
-# PLACEMENT IS ZONE-DRIVEN (found by smoke stage 25 in this
-# pass): the gripping hand rides the shaft 0.27 m out, and
-# that point must stay outside BOTH the wheel's grab radius
-# (0.40 about the hub) and every dash button's zone (0.15) -
-# the first candidate (0.40, 0.72, -0.49) put the grip point
-# 0.117 m from the RESTART button, so latching the lever
-# restarted the race. At (0.42, 0.70, -0.44) the grip point
-# clears restart by 0.162 and the wheel radius by 0.422 at
-# rest, more everywhere along the throw (stage 44 sweeps
-# the whole arc on both faces); the bracket reaches back
-# to the face plane so the mount reads as bolted on.
-const DROP_LEVER_FACE_X: float = 0.42 # |x| of the pivot on the face
-const DROP_LEVER_FACE_Y: float = 0.70
-const DROP_LEVER_FACE_Z: float = -0.44
-var drop_lever_pivot: Node3D
-var drop_lever_bracket: MeshInstance3D
-var drop_lever_left: bool = false # persisted mirror (lefty option)
-var drop_lever_angle: float = DROP_LEVER_REST_RAD
-var drop_lever_hand: String = "" # "" / "L" / "R" while gripped
-var drop_lever_fired: bool = false # detent latch for this pull
+# --- Fix Pass 20: the DROP BUTTON (the lever is retired) ---
+# History: FP11 built the release as a big physical lever;
+# FP12/13 moved it twice; FP15 put it on the dash face;
+# FP16/17 rebuilt its grab twice. The owner's run-18 verdict
+# retired the mechanism: "Lever is still not consistent...
+# Im sick of going round and round with the lever, make it
+# a button for now." The reason, for the record: a lever pull
+# is a MULTI-SAMPLE act - zone entry, squeeze threshold,
+# sustained grip, swept-hand tracking through a throw - and
+# every sample is a fresh chance for the live grip/tracking
+# stream to flicker, while staging's perfect 0/1 squeezes
+# could never reproduce a failure that lived between the
+# samples. A button is a SINGLE threshold event in a fat
+# zone: the one mechanism staging can certify honestly.
+# The button is a DASH CONTROL (kind "drop", registered
+# last so no earlier index moves) standing on the dash FACE
+# where the lever stood - same spot (the FP15 placement:
+# right of the wheel hub, on its bracket), same persisted
+# side (the settings key lever/left predates the button and
+# is kept), same SIDE toggle + M key. Its release semantics
+# live in _press_drop_button; the dash path gives it the fat
+# 0.15 m volume, the Schmitt latch and the dip for free.
+# PLACEMENT (zone-driven, as FP15 found): the button's point
+# (0.42, 0.70, -0.44) sits 0.50 m from the wheel hub (outside
+# the 0.40 grab radius, so a press is never a wheel grab) and
+# >= 0.29 m from every dash-top button's point (outside
+# their 0.15 zones), mirrored on the left face.
+const DROP_BTN_FACE_X: float = 0.42 # |x| of the button on the face (the lever's spot)
+const DROP_BTN_FACE_Y: float = 0.70
+const DROP_BTN_FACE_Z: float = -0.44
+const DROP_GRIND_S: float = 0.40 # the felt refusal's duration after an attach/carry press
+var drop_btn_node: Node3D # the registered dash control node
+var drop_btn_bracket: MeshInstance3D
+var drop_btn_left: bool = false # persisted mirror (lefty option)
+var drop_btn_base_z: float = DROP_BTN_FACE_Z # the dip's rest (articulation moves z, not y)
+var drop_grind: Dictionary = {"L": 0.0, "R": 0.0} # felt-refusal seconds left, per hand
+var drop_grind_tick: Dictionary = {"L": 0.0, "R": 0.0} # the grind train's pulse clock
 var xr_iface: XRInterface # stored at rig build for haptics
 # Fix Pass 3 live diagnostics (panel DIAG block, refreshed at ~5 Hz):
 # raw grip-channel values per hand, exactly as the runtime delivers.
@@ -1064,26 +1050,27 @@ var grab_events: Array[String] = []
 var grab_last_event: String = ""
 var grab_fire_count: int = 0
 var grab_wheel_count: int = 0
-var grab_lever_count: int = 0
+var grab_drop_count: int = 0 # FP20: the drop button's presses (was the lever's latch count)
 var grab_early_count: int = 0
 var grab_chatter_count: int = 0
 var grab_peak: Dictionary = {"L": 0.0, "R": 0.0}
 var grab_log_file: FileAccess = null
 var prev_zone: Dictionary = {"L": -1, "R": -1}
-# Fix Pass 17 (Item 2): throw telemetry for the drop lever -
-# when the current latch began, the peak pull fraction it has
-# reached, and which fraction crossings have been logged for
-# it (bitmask: 1 / 2 / 4 = crossed 0.25 / 0.50 / 0.75). Pull
-# fraction is progress toward the DETENT (REST -> DETENT rad),
-# the point that fires - a pull that stalls short of it is
-# exactly what FP16's log could not see.
-var drop_pull_t0: float = 0.0
-var drop_pull_peak: float = 0.0
-var drop_pull_marks: int = 0
+# Fix Pass 20 (Item 3): the last release's heading record -
+# the car's heading at the moment of release against the
+# drop section's travel direction, both degrees, and their
+# wrapped difference. Written by _do_release on EVERY drop
+# (and logged as a RELEASE grab event), so a backwards drop
+# leaves its ruling in the driver's own log instead of
+# vanishing. -1 / 0 until the first release.
+var last_release_s: float = -1.0
+var last_release_hdg_deg: float = 0.0
+var last_release_sec_deg: float = 0.0
+var last_release_err_deg: float = 0.0
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
-const GRAB_LOG_BUILD: String = "FP17 (base ddf0612)"
+const GRAB_LOG_BUILD: String = "FP20 (base 7377bc3)"
 const GRAB_LOG_MAX_BYTES: int = 262144 # 256 KB tail kept across launches
 
 
@@ -1146,7 +1133,7 @@ func _ready() -> void:
 			if not prior17.ends_with("\n"):
 				grab_log_file.store_line("")
 		grab_log_file.store_line("=== SESSION %s %s ===" % [GRAB_LOG_BUILD, Time.get_datetime_string_from_system()])
-		grab_log_file.store_line("grab log - events: LAT latch, FIRE activation (dt = pull duration), PULL pull-fraction crossings, ORPHAN unfired latch (peak = peak pull fraction), REL latch release, EARLY lever release, NOLAT zone entry unlatched, RIM passenger attach")
+		grab_log_file.store_line("grab log - events: LAT latch, FIRE activation, REL latch release, NOLAT zone entry unlatched, RIM passenger attach, BTN the drop button (FIRE at the dangle / SPENT in attach or carry / PRESS in drive or air), RELEASE the drop's heading record (HDG vs SEC travel direction, ERR the difference)")
 		grab_log_file.flush()
 	_load_settings()
 	_build_environment()
@@ -2449,37 +2436,18 @@ func _build_track_meshes(d: Dictionary) -> void:
 	var skirt_c := Color(1.0, 0.5, 0.05)
 	var bot_c := Color(0.55, 0.27, 0.03)
 	var edge_c := Color(1.0, 0.72, 0.10)
-	# Fix Pass 15 (Item 4): a CONTINUOUS centre band in the
-	# SpurGuide's amber, baked into the surface mesh itself
-	# (each surface quad is built as three: asphalt, band,
-	# asphalt). The invisible road is a contrast failure:
-	# the shaded surface reads brown against tan desert,
-	# and the dashed edges alias away with distance (FP12),
-	# so at the bottom of the dip the road ahead is one
-	# featureless sheet. Fog thinning was measured and
-	# rejected (no improvement at the dip sightline). An
-	# unbroken centre trace gives the eye the road's path
-	# at every range. Baked in, not a raised decal: a
-	# separate flat mesh floating +0.03 over the surface
-	# was built first and measured in the render proof's
-	# own renderer -- from driving angles it won ~0 pixels
-	# against the surface's depth (it rendered only alone
-	# in an empty scene, or lifted metres into the air).
-	# As part of the surface it cannot be depth-eaten; it
-	# shades and fogs with the road, which costs the
-	# unshaded punch of the guides but keeps the luminance
-	# step over the asphalt everywhere the road itself is
-	# visible. (FP18: over the grey field the step is ~2x
-	# luminance plus a strong hue separation - warm amber
-	# on cool grey - rather than the ~8x the near-black
-	# field gave; the band is also RENDERED only since
-	# FP18's winding fix - before that it existed in the
-	# mesh data but was culled with the rest of the top.) Width 1.1 m: at the guide's 0.55
-	# the trace would shrink to a hairline at dip ranges.
-	# Smoke stage 45 asserts the band's presence in the
-	# mesh (a third of the surface vertices, on the
-	# centreline) for both tracks.
-	var centre_c := Color(1.0, 0.60, 0.04)
+	# Fix Pass 15 (Item 4) baked a CONTINUOUS centre band
+	# into this surface (three strips per quad: asphalt,
+	# band, asphalt) against the invisible-road contrast
+	# failure. Fix Pass 20 (Item 2) REMOVES it on the owner's
+	# run-18 verdict - the band only became visible at all
+	# with FP18's winding fix, and what he saw was "one long
+	# stripe, not what I wanted. going down center." The
+	# surface is one full-width asphalt quad per segment
+	# again; the grey field + the dashed amber edge strips
+	# carry the road until the tracks pass designs the
+	# SECTIONED markings he actually asked for. Smoke stage
+	# 45 now asserts the band's ABSENCE for both tracks.
 	var seg_n: int = t_pts.size() if bool(d["closed"]) else t_pts.size() - 1
 	for i: int in seg_n:
 		var frame0: Dictionary = _frame_at(float(i))
@@ -2502,15 +2470,9 @@ func _build_track_meshes(d: Dictionary) -> void:
 		var br1: Vector3 = r1 - u1 * RIBBON_DEPTH
 		var up_avg: Vector3 = (u0 + u1) * 0.5
 		var side_avg: Vector3 = (s0 + s1) * 0.5
-		# the surface, in three strips across: asphalt, the
-		# FP15 centre band, asphalt (see centre_c above)
-		var cl0: Vector3 = p0 - s0 * 0.55
-		var cr0: Vector3 = p0 + s0 * 0.55
-		var cl1: Vector3 = p1 - s1 * 0.55
-		var cr1: Vector3 = p1 + s1 * 0.55
-		_add_quad_m(surf_pos, surf_nrm, surf_col, l0, cl0, cl1, l1, up_avg, surf_c)
-		_add_quad_m(surf_pos, surf_nrm, surf_col, cl0, cr0, cr1, cl1, up_avg, centre_c)
-		_add_quad_m(surf_pos, surf_nrm, surf_col, cr0, r0, r1, cr1, up_avg, surf_c)
+		# the surface: one full-width asphalt quad (FP20
+		# removed the FP15 centre band - see the note above)
+		_add_quad_m(surf_pos, surf_nrm, surf_col, l0, r0, r1, l1, up_avg, surf_c)
 		# box-section sides (skirts) + underside
 		_add_quad_m(skirt_pos, skirt_nrm, skirt_col, l0, l1, bl1, bl0, -side_avg, skirt_c)
 		_add_quad_m(skirt_pos, skirt_nrm, skirt_col, r1, r0, br0, br1, side_avg, skirt_c)
@@ -3002,7 +2964,8 @@ func _build_cockpit() -> void:
 	# on the dash top are DELETED with the prep sequence - the
 	# dash top is bare now. The dash controls that remain are
 	# the three buttons below (restart / lean / track), the
-	# seat levers on the left pod, and the centre drop lever.
+	# seat levers on the left pod, and (since Fix Pass 20) the
+	# DROP BUTTON on the dash face.
 	# Red RESTART button + green LEAN toggle button (physical dash controls)
 	# Fix Pass 10 (Item 3): restart shifts left (0.48 -> 0.40) to
 	# make room for the purple TRACK button at 0.57 - the pair
@@ -3098,9 +3061,10 @@ func _build_cockpit() -> void:
 	vwt.add_child(vw_mi)
 	_register_dash_ctl(vwt, "view")
 	# Fix Pass 15 (Item 3): light-blue SIDE button - the
-	# drop-lever mirror toggle (right side <-> left side of
-	# the dash face, the lefty option). It takes the dash-top
-	# CENTRE the drop lever vacated in this same pass, and is
+	# drop-control mirror toggle (right side <-> left side of
+	# the dash face, the lefty option; since Fix Pass 20 it
+	# mirrors the DROP BUTTON). It takes the dash-top CENTRE
+	# the drop lever vacated in this same pass, and is
 	# registered LAST so no earlier control's index moves.
 	var sdt := Node3D.new()
 	sdt.position = Vector3(0.0, 0.95, -0.60) # on the dash (as restart)
@@ -3115,38 +3079,38 @@ func _build_cockpit() -> void:
 	sd_mi.name = "SideBtnMesh"
 	sdt.add_child(sd_mi)
 	_register_dash_ctl(sdt, "side")
-	# Fix Pass 13 (Item 2) put the DROP LEVER at the CENTRE of
-	# the dash top; Fix Pass 15 (Item 3) moves it to the dash
-	# FACE at the owner's run-14 direction: "lever not where
-	# I want. its on top of dash, it want it on the side of
-	# the dash, facing player, up/down, right side of wheel"
-	# - and a game option mirrors it left for lefties (the
-	# SIDE button above / M key). The bracket stands proud of
-	# the slab's driver face; the pivot rides on it at
-	# (±DROP_LEVER_FACE_X, FACE_Y, FACE_Z); the shaft (0.34 m,
-	# red knob at 0.36) stands straight UP at rest against
-	# the face and the pull arcs it DOWN toward the driver
-	# through the detent (see the DROP_LEVER constants). The
-	# MECHANISM is untouched again: per-hand latch, hand-arc
-	# follow (the pull reads the hand's angle about the
-	# pivot, wherever the pivot stands), spring-home, haptic
-	# pulse - only the pivot's home moved, and it can now
-	# move at runtime (the mirror). Clearances, computed for
-	# the right placement: the rest knob (±0.40, 1.08, -0.49)
-	# is 0.42 m from the wheel hub (grab radius 0.40 - a hand
-	# on the knob does not also read as a wheel grab); the
-	# shaft stands 1 cm clear of the slab face; the knob's
-	# arc clears the dash-top buttons (it swings in the face
-	# plane's z, forward of every button's box). Mirrored,
-	# the same numbers hold against the lean/view side.
-	drop_lever_bracket = _box(car_body, Vector3(0.18, 0.16, 0.16), Vector3(DROP_LEVER_FACE_X, DROP_LEVER_FACE_Y, DROP_LEVER_FACE_Z - 0.03), _mat(Color(0.10, 0.10, 0.12)))
-	drop_lever_pivot = Node3D.new()
-	drop_lever_pivot.name = "DropLever"
-	drop_lever_pivot.rotation.x = DROP_LEVER_REST_RAD
-	car_body.add_child(drop_lever_pivot)
-	_box(drop_lever_pivot, Vector3(0.028, 0.30, 0.028), Vector3(0, 0.15, 0), _mat(Color(0.55, 0.55, 0.58))) # FP16 (Item 2): shaft was 0.05 x 0.34 at y 0.17
-	_box(drop_lever_pivot, Vector3(0.055, 0.055, 0.055), Vector3(0, 0.315, 0), _mat_unshaded(Color(0.90, 0.12, 0.10))) # FP16 (Item 2): knob was a 0.10 cube at y 0.36
-	_apply_drop_lever_side()
+	# Fix Pass 20 (Item 1): the DROP BUTTON stands where the
+	# lever stood - on the dash FACE, right of the wheel (the
+	# owner's run-14 placement, kept), mirrored left by the
+	# SIDE button above / M key for lefties. It is a BIG red
+	# dash button: a 0.07 m radius cylinder turned to face
+	# the driver, on the lever's bracket (re-based so its
+	# back meets the slab face). Registered LAST of the dash
+	# controls (index 7) so no earlier control's index moves;
+	# its zone is the dash family's fat 0.15 m point volume,
+	# its latch the FP16 Schmitt one-shot, its dip the
+	# articulation's - along its facing (z), not down (y).
+	# Clearances at the point (0.42, 0.70, -0.44): 0.50 m
+	# from the wheel hub (a press never reads as a wheel
+	# grab), >= 0.29 m from every dash-top button point.
+	drop_btn_bracket = _box(car_body, Vector3(0.18, 0.16, 0.09), Vector3(DROP_BTN_FACE_X, DROP_BTN_FACE_Y, DROP_BTN_FACE_Z - 0.065), _mat(Color(0.10, 0.10, 0.12)))
+	var dbt := Node3D.new()
+	dbt.name = "DropButton"
+	dbt.position = Vector3(DROP_BTN_FACE_X, DROP_BTN_FACE_Y, DROP_BTN_FACE_Z)
+	car_body.add_child(dbt)
+	var db_mi := MeshInstance3D.new()
+	var db_m := CylinderMesh.new()
+	db_m.top_radius = 0.07 # the big red button: twice the dash buttons' radius
+	db_m.bottom_radius = 0.07
+	db_m.height = 0.05
+	db_mi.mesh = db_m
+	db_mi.rotation_degrees = Vector3(90, 0, 0) # the cylinder's axis turns to face the driver
+	db_mi.material_override = _mat_unshaded(Color(0.90, 0.12, 0.10))
+	db_mi.name = "DropBtnMesh"
+	dbt.add_child(db_mi)
+	drop_btn_node = dbt
+	_register_dash_ctl(dbt, "drop")
+	_apply_drop_btn_side()
 	# Lean indicator needle on the dash (experiment feedback)
 	# (rides up with the raised wheel so it stays clear of the rim)
 	# Fix Pass 13 (Item 2): shifted left off the centreline -
@@ -3272,10 +3236,11 @@ func _register_dash_ctl(node: Node3D, kind: String) -> void:
 # --- Fix Pass 13 (Item 5): articulation ---
 # Run 13: "the seat levers actuate and work, but I notice the
 # lever doesn't actually move." The rule this item enforces:
-# every cockpit control that ACTUATES also ARTICULATES. The
-# drop lever already swings with the hand (and springs home);
-# the wheel spins and, since Item 3, the front road wheels
-# show the steer. The seat levers now DEFLECT while held -
+# every cockpit control that ACTUATES also ARTICULATES. (The
+# drop lever swung with the hand until Fix Pass 20 retired
+# it; the DROP BUTTON dips along its facing like the dash
+# buttons dip down.) The wheel spins and, since Item 3, the
+# front road wheels show the steer. The seat levers DEFLECT while held -
 # SEAT+ tips up (toward upright), SEAT- presses forward-down,
 # matching the seat's motion - and every dash BUTTON dips
 # 8 mm while a gripping hand holds it fired. Momentary
@@ -3308,6 +3273,13 @@ func _update_ctl_articulation(delta: float) -> void:
 		var dipped: bool = (bool(gripping["L"]) and int(dash_ctl_fired["L"]) == ci) \
 			or (bool(gripping["R"]) and int(dash_ctl_fired["R"]) == ci)
 		var node: Node3D = dash_ctl_nodes[ci]
+		if dash_ctl_kinds[ci] == "drop":
+			# Fix Pass 20 (Item 1): the drop button faces the
+			# driver off the dash face - its dip runs along its
+			# facing (into the face, -z), not down.
+			var tz: float = drop_btn_base_z - (BTN_DIP_M if dipped else 0.0)
+			node.position.z = move_toward(node.position.z, tz, 0.08 * delta)
+			continue
 		var ty: float = dash_ctl_base_y[ci] - (BTN_DIP_M if dipped else 0.0)
 		node.position.y = move_toward(node.position.y, ty, 0.08 * delta)
 
@@ -3327,18 +3299,18 @@ func _panel_text() -> String:
 	lines.append("Grab wheel: GRIP near wheel, turn hand")
 	lines.append("Throttle R trigger / Brake L trigger")
 	lines.append("Boost: R A button (while driving)")
-	lines.append("Release: pull the DROP LEVER down")
+	lines.append("Release: press the DROP BUTTON (dash face)")
 	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
 	lines.append("Call crane: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
-	lines.append("Dash buttons (GRIP): red restart, green lean, purple track, amber view A/B, blue lever side")
+	lines.append("Dash buttons (GRIP): red restart, green lean, purple track, amber view A/B, blue drop side")
 	lines.append("Recenter: L stick click / BOTH grips")
 	lines.append("restart race: L Y button")
 	lines.append("Panels: R B button (show/hide)")
 	lines.append("-- DESKTOP --")
 	lines.append("W/S throttle/brake, A/D steer, SHIFT boost")
 	lines.append("SPACE release")
-	lines.append("TAB panels, L lift, T lean, J jitter, G view A/B, M lever side, Q/E lean body")
+	lines.append("TAB panels, L lift, T lean, J jitter, G view A/B, M drop side, Q/E lean body")
 	lines.append("PgUp/PgDn seat trim, R restart race")
 	lines.append("C recenter, V track")
 	# Fix Pass 4: the DIAG block no longer appends here - it renders
@@ -3389,7 +3361,7 @@ func _build_diag_block() -> String:
 	# the ANCHOR and ZONE lines are at the label's wrap width
 	# already (the proof's cockpit capture showed both wrapping
 	# when SEAT and the two new zone tags first landed).
-	lines.append("WHEEL %+d DEG JIT %s SEAT %+.2f VIEW %s DRP %s" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF", seat_trim, "B" if view_gain_mode == 1 else "A", "L" if drop_lever_left else "R"])
+	lines.append("WHEEL %+d DEG JIT %s SEAT %+.2f VIEW %s DROP %s" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF", seat_trim, "B" if view_gain_mode == 1 else "A", "L" if drop_btn_left else "R"])
 	# Fix Pass 13 (Item 1): the last touchdown's connection,
 	# same numbers the readout showed - so a capture carries
 	# the ruling with it.
@@ -3420,18 +3392,13 @@ func _diag_zone_line() -> String:
 	# lever is a dead CHANNEL (grip reads 0.00 above) or a
 	# hand that never entered the zone.
 	var short: Dictionary = {"restart": "RST", "lean": "LEAN", "track": "TRK",
-		"seatup": "SUP", "seatdn": "SDN", "view": "VIEW", "side": "SIDE"}
+		"seatup": "SUP", "seatdn": "SDN", "view": "VIEW", "side": "SIDE", "drop": "DROP"}
 	var near_l: int = _dash_ctl_near(_hand_pos("L"))
 	var near_r: int = _dash_ctl_near(_hand_pos("R"))
-	# Fix Pass 11 (Item 4): the drop lever's zone joins the
-	# readout (DRP:L / DRP:R / DRP:-).
-	var drp: String = "-"
-	if _hand_near_drop_lever("L") and _hand_near_drop_lever("R"):
-		drp = "B"
-	elif _hand_near_drop_lever("L"):
-		drp = "L"
-	elif _hand_near_drop_lever("R"):
-		drp = "R"
+	# Fix Pass 20 (Item 1): the drop control is a dash control
+	# now, so its zone reads in the row like every other (the
+	# FP11 DRP tag, which existed because the lever was not
+	# one, is retired with it).
 	var tags: Array[String] = []
 	for i: int in dash_ctl_nodes.size():
 		var who: String = "-"
@@ -3442,7 +3409,6 @@ func _diag_zone_line() -> String:
 		elif near_r == i:
 			who = "R"
 		tags.append("%s:%s" % [String(short.get(dash_ctl_kinds[i], "?")), who])
-	tags.append("DRP:%s" % drp)
 	return "ZONE " + " ".join(tags)
 
 
@@ -3788,7 +3754,9 @@ func _recenter_allowed() -> bool:
 	# The stick-click recenter never consults this.
 	if mode == MODE_HANG:
 		return false
-	if drop_lever_hand != "" or grab_hand != "":
+	# Fix Pass 20 (Item 1): the lever's latch in this gate is
+	# now any dash latch (the drop button among them).
+	if int(dash_ctl_fired["L"]) >= 0 or int(dash_ctl_fired["R"]) >= 0 or grab_hand != "":
 		return false
 	return _seat_trim_held() == ""
 
@@ -3870,7 +3838,7 @@ func _input(event: InputEvent) -> void:
 		KEY_G:
 			_toggle_view_gain()
 		KEY_M:
-			_toggle_drop_lever_side()
+			_toggle_drop_btn_side()
 		KEY_R:
 			start_race()
 		KEY_TAB:
@@ -4019,13 +3987,13 @@ func _load_settings() -> void:
 	if cfg.load("user://settings.cfg") == OK:
 		seat_trim = clampf(float(cfg.get_value("seat", "trim", 0.0)),
 			-SEAT_TRIM_MAX, SEAT_TRIM_MAX)
-		drop_lever_left = bool(cfg.get_value("lever", "left", false))
+		drop_btn_left = bool(cfg.get_value("lever", "left", false))
 
 
 func _save_settings() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("seat", "trim", seat_trim)
-	cfg.set_value("lever", "left", drop_lever_left)
+	cfg.set_value("lever", "left", drop_btn_left) # the key predates the button (FP20) and is kept
 	cfg.save("user://settings.cfg")
 
 
@@ -4117,29 +4085,30 @@ func _toggle_view_gain() -> void:
 	view_gain_mode = 1 - view_gain_mode
 
 
-# Fix Pass 15 (Item 3): the drop lever's side. _apply places
-# the pivot + bracket on the face at the current side (build,
+# Fix Pass 15 (Item 3) set the side mechanism; Fix Pass 20
+# (Item 1) retargets it on the DROP BUTTON. _apply places the
+# button + bracket on the face at the current side (build,
 # toggle, and any future caller share it); _toggle flips,
 # applies, and persists with the seat trim.
-func _apply_drop_lever_side() -> void:
-	var sx: float = -DROP_LEVER_FACE_X if drop_lever_left else DROP_LEVER_FACE_X
-	if drop_lever_pivot != null:
-		drop_lever_pivot.position = Vector3(sx, DROP_LEVER_FACE_Y, DROP_LEVER_FACE_Z)
-	if drop_lever_bracket != null:
-		drop_lever_bracket.position = Vector3(sx, DROP_LEVER_FACE_Y, DROP_LEVER_FACE_Z - 0.03)
+func _apply_drop_btn_side() -> void:
+	var sx: float = -DROP_BTN_FACE_X if drop_btn_left else DROP_BTN_FACE_X
+	if drop_btn_node != null:
+		drop_btn_node.position = Vector3(sx, DROP_BTN_FACE_Y, DROP_BTN_FACE_Z)
+	if drop_btn_bracket != null:
+		drop_btn_bracket.position = Vector3(sx, DROP_BTN_FACE_Y, DROP_BTN_FACE_Z - 0.065)
 
 
-func _toggle_drop_lever_side() -> void:
-	drop_lever_left = not drop_lever_left
-	_apply_drop_lever_side()
+func _toggle_drop_btn_side() -> void:
+	drop_btn_left = not drop_btn_left
+	_apply_drop_btn_side()
 	_save_settings()
 	_update_panel()
 	# Fix Pass 16 (Item 4): the flip is ANNOUNCED on the
 	# touchdown readout (run 15's flip was silent and only
-	# discovered later). The DIAG DRP line and the persisted
+	# discovered later). The DIAG DROP line and the persisted
 	# setting already name the side; now the moment does too.
 	if contact_label != null:
-		contact_label.text = "LEVER SIDE: %s" % ("LEFT" if drop_lever_left else "RIGHT")
+		contact_label.text = "DROP SIDE: %s" % ("LEFT" if drop_btn_left else "RIGHT")
 		contact_readout_t = 2.5
 
 
@@ -4177,69 +4146,65 @@ func _hand_wheel_angle(hand: String) -> float:
 	return atan2(local.dot(_wheel_plane_v()), local.x)
 
 
-## Fix Pass 11 (Item 4): the drop lever's grab segment in
-## world space - the upper shaft and knob. Shared by the
-## grab test, Item 2's audit and the render proof's
-## overlay. Fix Pass 12 (Item 1): the shifter's shaft is
-## 0.33 m, so the segment is pivot-local (0, 0.17, 0) to
-## (0, 0.36, 0) - still the upper shaft plus the knob
-## (knob centre 0.35, span 0.295..0.405).
-## Fix Pass 13 (Item 2): the centre lever's shaft is
-## 0.34 m with the knob at 0.36 - the segment re-bases to
-## the same upper-shaft-plus-knob span, (0, 0.18, 0) to
-## (0, 0.37, 0).
-func debug_drop_lever_segment() -> Array:
-	if drop_lever_pivot == null:
-		return []
-	var xf: Transform3D = drop_lever_pivot.global_transform
-	return [xf * Vector3(0, 0.13, 0), xf * Vector3(0, 0.32, 0)] # FP16 (Item 2): was 0.18..0.37 on the 0.34 shaft; span kept 0.19
+## Fix Pass 20 (Item 1): the drop button's point in world
+## space - the dash family's point measure runs on it (the
+## FP11-FP19 lever had a grab SEGMENT here; a button has a
+## point, and its volume is the dash radius about it).
+## Shared by the stages and the render proof's overlay.
+func debug_drop_btn_point() -> Vector3:
+	if drop_btn_node == null:
+		return Vector3.ZERO
+	return drop_btn_node.global_position
 
 
-func _hand_near_drop_lever(hand: String) -> bool:
-	var seg: Array = debug_drop_lever_segment()
-	if seg.size() != 2:
-		return false
-	return _seg_point_dist(seg[0], seg[1], _hand_pos(hand)) <= DROP_LEVER_GRAB_RADIUS
-
-
-func _update_drop_lever_pull(hand: String) -> void:
-	# The lever follows the gripped hand along its arc: the
-	# hand's angle about the pivot, measured in car space on
-	# the lever's own swing plane (fore-aft), clamped to the
-	# throw. Crossing the detent fires the release once.
-	var lp: Vector3 = car_body.global_transform.affine_inverse() * _hand_pos(hand)
-	var v: Vector3 = lp - drop_lever_pivot.position
-	var ang: float = clampf(atan2(v.z, v.y), DROP_LEVER_REST_RAD, DROP_LEVER_MAX_RAD)
-	drop_lever_angle = ang
-	# Fix Pass 17 (Item 2): throw telemetry - the pull's
-	# progress toward the detent, logged at the quarter
-	# crossings; the peak rides along for the ORPHAN line if
-	# this latch never fires.
-	var frac17: float = clampf((ang - DROP_LEVER_REST_RAD) / (DROP_LEVER_DETENT_RAD - DROP_LEVER_REST_RAD), 0.0, 1.0)
-	drop_pull_peak = maxf(drop_pull_peak, frac17)
-	var marks17: Array[float] = [0.25, 0.50, 0.75]
-	for mi17: int in marks17.size():
-		if frac17 >= marks17[mi17] and (drop_pull_marks & (1 << mi17)) == 0:
-			drop_pull_marks |= (1 << mi17)
-			_grab_event("%s DRP PULL %.2f g%.2f" % [hand, marks17[mi17], float(diag_grip[hand])])
-	if ang >= DROP_LEVER_DETENT_RAD and not drop_lever_fired:
-		drop_lever_fired = true
-		_grab_event("%s DRP FIRE g%.2f dt%.2f" % [hand, float(diag_grip[hand]), race_time - drop_pull_t0]) # FP16 (Item 5); FP17: the pull's duration
+func _press_drop_button(hand: String) -> void:
+	# Fix Pass 20 (Item 1): the drop button's one press, with
+	# the owner's law applied - "a thing that doesn't
+	# interact is boring and frustrating": the press REGISTERS
+	# in every phase (the dip, the tick, and a BTN line in the
+	# grab log, phase-tagged), and what it DOES is the
+	# context:
+	#   dangle       -> FIRE: the release, downstream
+	#                   identical to the retired lever's
+	#                   detent fire.
+	#   attach/carry -> SPENT: the chains hold, and the
+	#                   refusal is FELT - a grind of controller
+	#                   rumble stepped by _update_drop_grind -
+	#                   never silence (the grind floor).
+	#   drive/air    -> PRESS: it answers (a dull tick) and
+	#                   does nothing. It never sits mute.
+	var g20: float = float(diag_grip[hand])
+	if mode == MODE_HANG and hang_phase == "dangle":
+		_grab_event("%s BTN FIRE dangle g%.2f" % [hand, g20])
 		_pulse_detent(hand)
-		_do_release() # self-gated: only a dangle lets go
+		_do_release()
+	elif mode == MODE_HANG:
+		_grab_event("%s BTN SPENT %s g%.2f" % [hand, hang_phase, g20])
+		drop_grind[hand] = DROP_GRIND_S
+		drop_grind_tick[hand] = 0.0
+		_pulse_hand(hand, 0.65, 0.10)
+	else:
+		var ph20: String = "drive" if mode == MODE_DRIVE else ("air" if mode == MODE_AIR else "done")
+		_grab_event("%s BTN PRESS %s g%.2f" % [hand, ph20, g20])
+		_pulse_hand(hand, 0.25, 0.05)
 
 
-func _update_drop_lever(delta: float) -> void:
-	# Spring home when ungripped (early release = no drop),
-	# and the single writer of the pivot's rotation.
-	if drop_lever_hand == "":
-		if drop_lever_angle > DROP_LEVER_REST_RAD:
-			drop_lever_angle = maxf(DROP_LEVER_REST_RAD,
-				drop_lever_angle - DROP_LEVER_SPRING_RATE * delta)
-		if drop_lever_angle < DROP_LEVER_DETENT_RAD - 0.10:
-			drop_lever_fired = false
-	if drop_lever_pivot != null:
-		drop_lever_pivot.rotation.x = drop_lever_angle
+func _update_drop_grind(delta: float) -> void:
+	# Fix Pass 20 (Item 1): the grind floor, stepped from
+	# _physics_process. While a hand's refusal time runs, its
+	# controller gets a train of short strong pulses - the
+	# press straining against the chains, felt in the hand
+	# that made it. Headless there is no interface and
+	# _pulse_hand no-ops; the state is what the stages assert.
+	# (Whether the train is PERCEPTIBLE on the live rig is
+	# the owner's verdict - unverifiable headless.)
+	for hand20: String in ["L", "R"]:
+		if float(drop_grind[hand20]) > 0.0:
+			drop_grind[hand20] = maxf(0.0, float(drop_grind[hand20]) - delta)
+			drop_grind_tick[hand20] = float(drop_grind_tick[hand20]) - delta
+			if float(drop_grind_tick[hand20]) <= 0.0:
+				drop_grind_tick[hand20] = 0.07
+				_pulse_hand(hand20, 0.55, 0.05)
 
 
 func _pulse_hand(hand: String, amp: float, dur: float) -> void:
@@ -4279,23 +4244,25 @@ func _grab_event(ev: String) -> void:
 func _hand_owner(hand: String) -> String:
 	# Fix Pass 17 (Item 1): hand ownership - the grab path's
 	# arbitration state. A hand owns at most one control class
-	# at a time: the wheel (driver), the rim (passenger), the
-	# drop lever, or a dash latch (one-shots and the seat trims
-	# alike). Every acquisition in _poll_grab is gated on the
-	# hand owning NOTHING - or the dash class itself, for
-	# Fix Pass 9's squeeze-and-sweep between dash controls.
-	# Ownership ends only on grip release (the FP16 latches'
-	# own clearing), never on a zone exit. The owner's own run-16
-	# log convicted the need: at T14.8 one squeeze both fired
-	# the drop lever and rim-attached (L RIM ATT + L DRP FIRE) -
+	# at a time: the wheel (driver), the rim (passenger), or a
+	# dash latch (one-shots and the seat trims alike). Every
+	# acquisition in _poll_grab is gated on the hand owning
+	# NOTHING - or the dash class itself, for Fix Pass 9's
+	# squeeze-and-sweep between dash controls. Ownership ends
+	# only on grip release (the FP16 latches' own clearing),
+	# never on a zone exit. The owner's own run-16 log
+	# convicted the need: at T14.8 one squeeze both fired the
+	# drop lever and rim-attached (L RIM ATT + L DRP FIRE) -
 	# with the wheel free, that hand could have latched the
 	# WHEEL and pulled a steer instead of a drop.
+	# Fix Pass 20 (Item 1): the drop control is a dash latch
+	# now, so the "lever" owner class is retired with the
+	# lever - a button press and a rim attach can no more
+	# share a squeeze than the pull and the attach could.
 	if grab_hand == hand:
 		return "wheel"
 	if bool(rim_attach[hand]):
 		return "rim"
-	if drop_lever_hand == hand:
-		return "lever"
 	if int(dash_ctl_fired[hand]) >= 0:
 		return "dash"
 	return ""
@@ -4379,21 +4346,17 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	# acquisitions they gate); entries in different frames are
 	# ordered by ownership itself - the first acquisition owns
 	# the hand until release, so later arrivals never evaluate.
-	# Exact ties resolve in this poll's own order: lever, dash,
-	# wheel (strict <, first minimum kept). The loser records
+	# Exact ties resolve in this poll's own order: dash, wheel
+	# (strict <, first minimum kept). The loser records
 	# nothing: no latch, no attach, no event.
+	# Fix Pass 20 (Item 1): the drop lever's own candidate is
+	# gone - the DROP BUTTON is a dash control, so it competes
+	# inside the dash distance like every other button.
 	var owner17: String = _hand_owner(hand)
 	var win17: String = ""
 	if held and owner17 == "":
-		var d_lever17: float = 1e9
 		var d_dash17: float = 1e9
 		var d_wheel17: float = 1e9
-		if drop_lever_hand == "" and mode == MODE_HANG and hang_phase == "dangle":
-			var lseg17: Array = debug_drop_lever_segment()
-			if lseg17.size() == 2:
-				d_lever17 = _seg_seg_dist(prev, pos, lseg17[0], lseg17[1])
-				if d_lever17 > DROP_LEVER_GRAB_RADIUS:
-					d_lever17 = 1e9
 		var cd17: Array = _dash_ctl_near_swept_d(prev, pos)
 		if int(cd17[0]) >= 0:
 			d_dash17 = float(cd17[1])
@@ -4404,9 +4367,6 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 			if d_wheel17 >= WHEEL_GRAB_RADIUS:
 				d_wheel17 = 1e9
 		var best17: float = 1e9
-		if d_lever17 < best17:
-			best17 = d_lever17
-			win17 = "lever"
 		if d_dash17 < best17:
 			best17 = d_dash17
 			win17 = "dash"
@@ -4423,51 +4383,10 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 			_grab_event("%s ZONE %s g%.2f NOLAT" % [hand,
 				dash_ctl_kinds[zone_now].to_upper(), grip_v])
 		prev_zone[hand] = zone_now
-	# --- THE DROP LEVER (Fix Pass 11's mechanism, Item 1's latch) ---
-	# Latched per hand: the lever follows the hand along its
-	# arc at ANY distance (the pull reads an angle, not a
-	# radius); crossing the detent fires the release once per
-	# pull. The latch ends only on grip release - and an early
-	# release after a real pull is WITNESSED (event + a release
-	# tick), never silent. Releasing early leaves the lever to
-	# spring home in _update_drop_lever - no drop.
-	if drop_lever_hand == hand:
-		if not held:
-			# Fix Pass 17 (Item 2): the latch's end is always on
-			# the record. An unfired latch logs ORPHAN with the
-			# peak pull fraction reached and the grip at release
-			# (a stalled pull leaves a trace now), and every
-			# lever release logs DRP REL. FP16's EARLY witness
-			# (a real pull let go early: event + count + tick)
-			# is unchanged, between the two.
-			if not drop_lever_fired:
-				_grab_event("%s DRP ORPHAN peak %.2f g%.2f" % [hand, drop_pull_peak, grip_v])
-			if not drop_lever_fired and drop_lever_angle > 0.15:
-				grab_early_count += 1
-				_grab_event("%s DRP EARLY g%.2f @%.2f" % [hand, grip_v, drop_lever_angle])
-				_pulse_hand(hand, 0.30, 0.08)
-			_grab_event("%s DRP REL g%.2f" % [hand, grip_v])
-			drop_lever_hand = ""
-		else:
-			_update_drop_lever_pull(hand)
-	# Fix Pass 13 (Item 6): the latch arms only in the DANGLE
-	# - during carrier transport (and every other mode) a hand
-	# on the lever is inert; nothing is hanging by it yet.
-	# Fix Pass 13 (Item 2): a hand holding the WHEEL cannot
-	# also latch the lever - the two grabs never fight over
-	# one hand. FP16: the proximity test is the swept segment.
-	elif held and drop_lever_hand == "" and _hand_near_drop_lever_swept(prev, pos) \
-			and mode == MODE_HANG and hang_phase == "dangle" and grab_hand != hand \
-			and win17 == "lever": # FP17 (Item 1): arbitration - an owned hand, or a nearer wheel/dash win, never latches the lever
-		drop_lever_hand = hand
-		drop_lever_fired = false
-		drop_pull_t0 = race_time # FP17 (Item 2): the throw clock starts at the latch
-		drop_pull_peak = 0.0
-		drop_pull_marks = 0
-		grab_lever_count += 1
-		_grab_event("%s DRP LAT g%.2f" % [hand, grip_v])
-		_pulse_hand(hand, 0.35, 0.06)
-		_update_drop_lever_pull(hand)
+	# --- (the drop lever's latch block stood here FP11-FP19;
+	# Fix Pass 20 (Item 1) deleted it with the lever. The DROP
+	# BUTTON is a dash control: its press is the "drop" case
+	# in the dash branch below.) ---
 	# --- DASH CONTROLS (Fix Pass 9's level activation, Item 1's latch) ---
 	# A gripping hand inside a control's volume fires it ONCE
 	# per latch (dash_ctl_fired); the latch now clears ONLY on
@@ -4490,12 +4409,22 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 		dash_ctl_fired[hand] = -1
 		side_hold_t[hand] = 0.0
 	elif ctl_now >= 0 and (owner17 == "dash" or win17 == "dash"):
-		# FP17 (Item 1): a hand owning the wheel, the rim or the
-		# drop lever cannot take a dash control mid-squeeze; a
-		# dash owner keeps the FP9 sweep, and an unowned hand
-		# takes the control only when the dash won arbitration.
+		# FP17 (Item 1): a hand owning the wheel or the rim
+		# cannot take a dash control mid-squeeze; a dash owner
+		# keeps the FP9 sweep, and an unowned hand takes the
+		# control only when the dash won arbitration.
 		var kind: String = dash_ctl_kinds[ctl_now]
-		if kind == "side" and int(dash_ctl_fired[hand]) != ctl_now:
+		if kind == "drop" and int(dash_ctl_fired[hand]) != ctl_now:
+			# Fix Pass 20 (Item 1): the DROP BUTTON's press. The
+			# latch is the dash one-shot (one press per squeeze,
+			# clears on release); what the press DOES is the
+			# phase's business (see _press_drop_button) - the
+			# generic FIRE line would lie about two of the
+			# three outcomes, so the button logs its own.
+			dash_ctl_fired[hand] = ctl_now
+			grab_drop_count += 1
+			_press_drop_button(hand)
+		elif kind == "side" and int(dash_ctl_fired[hand]) != ctl_now:
 			side_hold_t[hand] = float(side_hold_t[hand]) + _delta
 			if float(side_hold_t[hand]) >= SIDE_HOLD_S:
 				dash_ctl_fired[hand] = ctl_now
@@ -4563,9 +4492,9 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 			var d: float = wrapf(ang - grab_prev_ang, -PI, PI)
 			wheel_angle = clampf(wheel_angle + d, -PI, PI)
 			grab_prev_ang = ang
-	elif held and grab_hand == "" and drop_lever_hand != hand \
+	elif held and grab_hand == "" \
 			and _seg_point_dist(prev, pos, hub_w) < WHEEL_GRAB_RADIUS \
-			and win17 == "wheel": # FP17 (Item 1): arbitration - see the candidate block above
+			and win17 == "wheel": # FP17 (Item 1): arbitration - see the candidate block above (FP20: the lever-hand term is gone with the lever; arbitration carries the exclusion)
 		# Fix Pass 16 (Item 3): the latch takes only a FREE wheel.
 		# FP15's branch let a second gripping hand STEAL the
 		# wheel (re-basing grab_prev_ang to its own angle), so
@@ -4591,8 +4520,6 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	if zone_now >= 0:
 		ck = "dash"
 		cc = zone_now
-	elif _hand_near_drop_lever(hand):
-		ck = "lever"
 	elif pos.distance_to(hub_w) < WHEEL_GRAB_RADIUS:
 		ck = "wheel"
 	if ck != String(cand_kind[hand]):
@@ -4638,13 +4565,6 @@ func _seg_seg_dist(p1: Vector3, q1: Vector3, p2: Vector3, q2: Vector3) -> float:
 				t = 1.0
 				s = clampf((b - c) / a, 0.0, 1.0)
 	return (p1 + d1 * s - (p2 + d2 * t)).length()
-
-
-func _hand_near_drop_lever_swept(a: Vector3, b: Vector3) -> bool:
-	var seg: Array = debug_drop_lever_segment()
-	if seg.size() != 2:
-		return false
-	return _seg_seg_dist(a, b, seg[0], seg[1]) <= DROP_LEVER_GRAB_RADIUS
 
 
 func _dash_ctl_near_swept(a: Vector3, b: Vector3) -> int:
@@ -4695,10 +4615,11 @@ func _update_rim_attach(hand: String, held: bool, pos: Vector3) -> void:
 	var other: String = "R" if hand == "L" else "L"
 	var want: bool = held and grab_hand == other \
 		and pos.distance_to(car.global_transform * _wheel_hub_local()) < WHEEL_GRAB_RADIUS \
-		and drop_lever_hand != hand and int(dash_ctl_fired[hand]) < 0
+		and int(dash_ctl_fired[hand]) < 0
 	# FP17 (Item 1): the attach is gated on the hand owning
 	# nothing else - run 16's T14.8 (RIM ATT in the same instant
-	# as DRP FIRE) cannot recur: a lever hand never attaches.
+	# as DRP FIRE) cannot recur: a dash-latched hand (FP20: the
+	# drop button's press included) never attaches.
 	if want and not bool(rim_attach[hand]):
 		rim_attach[hand] = true
 		rim_local[hand] = wheel_spin.global_transform.affine_inverse() * pos
@@ -4777,7 +4698,7 @@ func _activate_dash_ctl(kind: String) -> void:
 	elif kind == "view":
 		_toggle_view_gain()
 	elif kind == "side":
-		_toggle_drop_lever_side()
+		_toggle_drop_btn_side()
 
 
 # ---------------------------------------------------------------- actions
@@ -4788,9 +4709,9 @@ func start_race() -> void:
 	# fires, latches, early releases, rescued chatter dips, and
 	# each hand's session squeeze peak (a channel that never
 	# rises, or a squeeze that never peaks, reads here).
-	if grab_fire_count + grab_wheel_count + grab_lever_count + grab_chatter_count > 0:
-		_grab_event("SUMMARY fire %d wheel %d lever %d early %d chatter %d peak L %.2f R %.2f" % [
-			grab_fire_count, grab_wheel_count, grab_lever_count,
+	if grab_fire_count + grab_wheel_count + grab_drop_count + grab_chatter_count > 0:
+		_grab_event("SUMMARY fire %d wheel %d drop %d early %d chatter %d peak L %.2f R %.2f" % [
+			grab_fire_count, grab_wheel_count, grab_drop_count,
 			grab_early_count, grab_chatter_count,
 			float(grab_peak["L"]), float(grab_peak["R"])])
 	mode = MODE_HANG
@@ -5113,6 +5034,19 @@ func _do_release() -> void:
 	# settled dangle equals the drop section's direction).
 	# The horizontal air velocity becomes the velocity vector.
 	car_heading = orient_yaw
+	# Fix Pass 20 (Item 3): SURFACE THE RULING - every release
+	# records its heading against the drop section's travel
+	# direction and logs it (the grab log file, the event ring,
+	# and the DIAG GRAB line all carry it; last_release_* holds
+	# it for the stages). The run-18 backwards drop left no
+	# trace anywhere; from this pass on, a wrong-way release
+	# states its own error in the driver's log.
+	last_release_s = drop_target_s
+	last_release_hdg_deg = rad_to_deg(car_heading)
+	last_release_sec_deg = rad_to_deg(_frame_yaw(fr["tan"]))
+	last_release_err_deg = rad_to_deg(wrapf(car_heading - _frame_yaw(fr["tan"]), -PI, PI))
+	_grab_event("RELEASE s%.0f HDG %+.1f SEC %+.1f ERR %+.1f" % [
+		last_release_s, last_release_hdg_deg, last_release_sec_deg, last_release_err_deg])
 	yaw_rate = 0.0
 	vel2 = Vector2(air_vel.x, air_vel.z)
 	mode = MODE_AIR
@@ -5149,7 +5083,7 @@ func _physics_process(delta: float) -> void:
 		slip_state = 0.0 # tires unloaded: no slip, no skid
 		tire_ratio = 0.0 # Fix Pass 15 (Item 1): and no telegraph either
 		tire_band = 0.0
-	_update_drop_lever(delta) # Fix Pass 11 (Item 4): spring + pose
+	_update_drop_grind(delta) # Fix Pass 20 (Item 1): the felt refusal's pulse train
 	_update_ctl_articulation(delta) # Fix Pass 13 (Item 5): seat levers + button dips
 	_update_lean_reading()
 	_update_suspension(delta)
@@ -6438,7 +6372,7 @@ func _refresh_car_visuals() -> void:
 		var dot1: MeshInstance3D = rep_dot.get(h1)
 		if dot1 == null:
 			continue
-		var latched1: bool = grab_hand == h1 or drop_lever_hand == h1 \
+		var latched1: bool = grab_hand == h1 \
 			or bool(rim_attach[h1]) \
 			or (bool(gripping[h1]) and int(dash_ctl_fired[h1]) >= 0)
 		var s1: float = 2.1 if latched1 else (1.5 if String(cand_kind[h1]) != "" else 1.0)
@@ -7072,6 +7006,30 @@ func debug_set_hang_dangle() -> void:
 		orient_yaw_v = 0.0
 
 
+func debug_force_fall_at(s: float) -> void:
+	# Fix Pass 20 (Item 3): stage a fall FROM s through the
+	# production loss path - the car is placed in AIR 20 m
+	# below the road at s with air_start_s = s, so
+	# _update_air's lost trigger charges the recovery from s:
+	# the same state a real fall reaches, entered the way
+	# debug_stage_landing enters its landings. Everything
+	# downstream - the drop search, the crane recovery, the
+	# hang, the release - is production.
+	var frf: Dictionary = _frame_at(s)
+	mode = MODE_AIR
+	air_from_gap = false
+	air_from_release = false
+	air_from_rebound = false
+	air_time = 0.0
+	air_s_est = s
+	air_start_s = s
+	air_exit_y = float(frf["pos"].y)
+	below_band_t = 0.0
+	lost_lat_t = 0.0
+	air_vel = Vector3(0.0, -6.0, 0.0)
+	car.global_position = frf["pos"] - Vector3.UP * 20.0
+
+
 func debug_body_width_m() -> float:
 	# Fix Pass 10 (Item 3): the car BODY's widest extent in
 	# metres, measured off the built meshes (every mesh instance
@@ -7214,21 +7172,9 @@ func debug_dash_ctl_audit() -> Dictionary:
 						violations.append("%s mesh point buried in %s" % [
 							dash_ctl_kinds[i], other.name])
 						break
-	# The drop lever answers the same inverted rule, at rest
-	# and at full throw (the volume rides the lever's arc).
-	if drop_lever_pivot != null:
-		var own_l: Array[MeshInstance3D] = []
-		_collect_meshes(drop_lever_pivot, own_l)
-		var saved_ang: float = drop_lever_angle
-		for th: float in [0.0, DROP_LEVER_MAX_RAD]:
-			drop_lever_angle = th
-			drop_lever_pivot.rotation.x = th
-			var seg_l: Array = debug_drop_lever_segment()
-			for mi2: MeshInstance3D in own_l:
-				for lp2: Vector3 in _aabb_sample_points(mi2.get_aabb()):
-					var wp2: Vector3 = mi2.global_transform * lp2
-					worst = maxf(worst, _seg_point_dist(seg_l[0], seg_l[1], wp2) - DROP_LEVER_GRAB_RADIUS)
-		drop_lever_angle = saved_ang
-		drop_lever_pivot.rotation.x = saved_ang
+	# Fix Pass 20 (Item 1): the drop lever's own audit block
+	# stood here (it answered the rule at rest and at full
+	# throw, its volume riding the arc). The DROP BUTTON is a
+	# dash control, so the loop above audits it like the rest.
 	return {"worst": worst, "violations": violations}
 
