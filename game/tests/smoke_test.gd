@@ -3501,8 +3501,21 @@ func _run() -> void:
 			fl35b.append(int(e35b[1]))
 		else:
 			ct35b.append(int(e35b[1]))
-	check(fl35b.size() >= 3 and ct35b.size() >= 2,
-		"stage35: the hump row at 48 keeps its flight/contact rhythm (%d flights)" % fl35b.size())
+	# Fix Pass 21 AMENDMENT (flagged, not silent): the count
+	# floor drops from 3 flights to 2. With per-corner
+	# separation the row's rhythm at 48 re-phases - measured
+	# sequence: contact 22 / flight 164 / contact 5 / flight
+	# 163 / contact 6, the third flight starting past this
+	# stage's window edge (contacts are shorter now: a
+	# re-contact is a four-corner event, and the next crest
+	# separates the corners again within frames). The
+	# pattern this stage exists to lock (flight -> real
+	# contact -> flight, second check below) is intact, and
+	# stage 38 independently locks the row at 48 (3 flights,
+	# all jumps). The FP14-era >= 3 count was calibrated to
+	# the old both-axle gate's phase alignment.
+	check(fl35b.size() >= 2 and ct35b.size() >= 2,
+		"stage35: the hump row at 48 keeps its flight/contact rhythm (%d flights, %d contacts - FP21 amendment)" % [fl35b.size(), ct35b.size()])
 	if fl35b.size() >= 2 and ct35b.size() >= 1:
 		check(int(ct35b[0]) >= 9 and int(ct35b[0]) <= 40 and int(fl35b[1]) >= 45,
 			"stage35: hump row - first contact %d frames, second flight %.2f s (a real contact, a real second flight)" % [
@@ -3735,10 +3748,24 @@ func _run() -> void:
 			cross37[1] = i37b
 		if cross37[0] >= 0 and cross37[1] >= 0:
 			break
-	print("stage37: diagonal step-edge crossing - FL extends at frame %d, FR at %d (offset %d; the axle load channel is shared, the rise channel carries the phase)" % [
+	print("stage37: diagonal step-edge crossing - FL extends at frame %d, FR at %d (offset %d; FP21: the load channel is per-corner now - see the check)" % [
 		int(cross37[0]), int(cross37[1]), int(cross37[1]) - int(cross37[0])])
-	check(cross37[0] >= 0 and cross37[1] > cross37[0] and cross37[1] - cross37[0] <= 6,
-		"stage37: the leading corner extends first on a diagonal edge (FL %d before FR %d)" % [int(cross37[0]), int(cross37[1])])
+	# Fix Pass 21 AMENDMENT (flagged, not silent): FP14 wrote
+	# this check against a SHARED axle load channel, so the
+	# rise channel carried the whole phase and the leading
+	# corner necessarily extended first (measured offset +2).
+	# FP21's load channel is per-corner, sampled through a
+	# +-2.5 m patch stencil: the trailing corner's load can
+	# fall a frame before its rise arrives, because its
+	# stencil already sees the edge (measured offset -1:
+	# FR 19, FL 20). The property this stage exists to lock
+	# - the corners move A BEAT APART on a diagonal, never
+	# in lockstep (the square control below) - is intact;
+	# the order inside a one-frame stencil lead is not the
+	# physics being judged. Amended: |offset| <= 6 with at
+	# most a one-frame lead for the trailing corner.
+	check(cross37[0] >= 0 and cross37[1] >= 0 and int(cross37[1]) - int(cross37[0]) >= -1 and int(cross37[1]) - int(cross37[0]) <= 6,
+		"stage37: the corners extend a beat apart on a diagonal edge (FL %d, FR %d - FP21 amendment)" % [int(cross37[0]), int(cross37[1])])
 	main.debug_warp_to_s(main.stairs_s0 + 6.5)
 	main.wheel_angle = 0.0
 	for i37c: int in 40:
@@ -3870,14 +3897,21 @@ func _run() -> void:
 		"stage38: at 20 m/s the row never separates (min load 0.14 > threshold) - the band is skipped from below too (%d flights)" % real38b)
 	# The sweeper exit: per-corner load traces at the exit
 	# crest. The front axle lets go ~20 frames before the
-	# rear (the wheelbase phase), but LEFT and RIGHT go
-	# together: the crest load is a per-axle scalar from
-	# the centreline kv - the ribbon frame carries no
-	# per-side vertical curvature, so the film's downhill-
-	# side-first unload is NOT EXPRESSIBLE in this model
-	# (the identified extension is per-wheel kv sampled at
-	# each wheel's own (s, lat)). The stage locks the
-	# symmetry as the documented limit.
+	# rear (the wheelbase phase). Fix Pass 14 locked the
+	# LEFT/RIGHT SYMMETRY here as a documented limit (the
+	# crest load was a per-axle scalar from the centreline
+	# kv, so the film's downhill-side-first unload was NOT
+	# EXPRESSIBLE; the identified extension was per-wheel
+	# kv sampled at each wheel's own (s, lat)).
+	# Fix Pass 21 AMENDMENT (flagged, not silent): FP21 IS
+	# that extension - per-corner load from the patch
+	# curvature at each wheel's own (s, lat). The limit is
+	# retired and the check below is INVERTED: the unload
+	# is now asymmetric, the falling (outside, bank-
+	# unwinding) side first - measured FL 229 / FR 249 /
+	# RL 237 / RR 259: the left side leads by ~20 frames
+	# at both axles, the wheelbase phase (second check)
+	# unchanged.
 	main.debug_warp_to_s(main.sweeper_s0 - 30.0)
 	main.test_throttle = 0.0
 	var first38: Array = [-1, -1, -1, -1]
@@ -3895,8 +3929,8 @@ func _run() -> void:
 			break
 	print("stage38: sweeper exit - first unload (load < 0.35) frames FL %d FR %d RL %d RR %d" % [
 		int(first38[0]), int(first38[1]), int(first38[2]), int(first38[3])])
-	check(first38[0] > 0 and abs(int(first38[1]) - int(first38[0])) <= 3 and abs(int(first38[3]) - int(first38[2])) <= 3,
-		"stage38: the exit unload is left/right symmetric in this model (documented limit - per-axle load channel)")
+	check(first38[0] > 0 and int(first38[1]) - int(first38[0]) > 3 and int(first38[3]) - int(first38[2]) > 3,
+		"stage38: the exit unload is LEFT-FIRST asymmetric (FP21: per-corner load retired the documented symmetry limit)")
 	check(int(first38[2]) > int(first38[0]) and int(first38[3]) > int(first38[1]),
 		"stage38: the front axle unloads before the rear at the exit crest (wheelbase phase)")
 	main.wheel_angle = 0.0
@@ -4973,6 +5007,135 @@ func _run() -> void:
 		var drv49: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 900)
 		check(drv49, "stage49: %s - the drop lands into DRIVE" % str(case49[0]))
 	print("stage49: census complete - worst release heading error %.1f deg" % worst49)
+
+	# ---------- stage 51: Fix Pass 21 - AIR (per-corner load + separation) ----
+	# The owner's run-18 report, staged in his terms:
+	# (a) THE FLAIR - out of the banked curve A, the falling
+	# side's wheels should catch air across the bank unwind
+	# while the held side stays loaded and the car does NOT
+	# fully leave (a two-wheel event); (b) THE HILLS - the
+	# circuit hump row at cruise throws drumbeat-band hops
+	# now, not only jumps; (c) the climb-top bend at cruise
+	# stays a NEGATIVE control (partial load, no separation -
+	# honestly below the ballistic threshold at cruise);
+	# (d) the flat home straight separates NOTHING (the
+	# dead-steady guard).
+	main._set_track("circuit")
+	var feats51: Dictionary = main.track_data["circuit"]["features"]
+	# (a) curve A exit: warp in, autopilot through the unwind
+	# (curve A ends s=720; the shaped unwind runs to ~740).
+	main.debug_warp_to_s(360.0)
+	main.test_throttle = 0.0
+	var snap51a: Array = [0, 0, 0, 0]
+	var took51a: bool = false
+	var air51a: bool = false
+	var t51a: int = 0
+	while main.car_s < 745.0 and t51a < 3000:
+		autopilot()
+		await physics_frame
+		t51a += 1
+		if not took51a and main.car_s >= 712.0:
+			took51a = true
+			snap51a = main.wheel_air_frames.duplicate()
+		if took51a and main.mode == main.MODE_AIR:
+			air51a = true
+		if main.mode == main.MODE_HANG:
+			break
+	var d51: Array = [0, 0, 0, 0]
+	for w51: int in 4:
+		d51[w51] = main.wheel_air_frames[w51] - int(snap51a[w51])
+	print("stage51: curve A unwind - corner air frames in window FL %d FR %d RL %d RR %d, full-air %s" % [
+		int(d51[0]), int(d51[1]), int(d51[2]), int(d51[3]), str(air51a)])
+	check(int(d51[1]) >= 4 and int(d51[3]) >= 4,
+		"stage51: the flair - the falling (right) side's wheels catch air at the curve A exit (FR %d, RR %d frames)" % [int(d51[1]), int(d51[3])])
+	check(not air51a,
+		"stage51: the flair is a two-wheel event - the car never fully leaves at the exit")
+	check(int(d51[1]) + int(d51[3]) > int(d51[0]) + int(d51[2]),
+		"stage51: the exit separation is asymmetric (right %d frames vs left %d)" % [int(d51[1]) + int(d51[3]), int(d51[0]) + int(d51[2])])
+	# (b) the circuit hump row at cruise (pinned 24, the
+	# stage-10b idiom): count flights and the drumbeat band.
+	var hx51: float = float(feats51["ext_s0"])
+	var hx51b: float = float(feats51["hump_s1"])
+	main.debug_warp_to_s(hx51 - 10.0)
+	main.test_throttle = 0.0
+	var eps51: Array = []
+	var inair51: bool = false
+	var start51: int = 0
+	var t51b: int = 0
+	while main.car_s < hx51b and t51b < 2500:
+		if main.mode == main.MODE_DRIVE:
+			autopilot_steer()
+			main.debug_pin_speed(24.0)
+		await physics_frame
+		t51b += 1
+		if main.mode == main.MODE_AIR and not main.air_from_gap:
+			if not inair51:
+				inair51 = true
+				start51 = t51b
+		elif inair51:
+			inair51 = false
+			eps51.append(float(t51b - start51) / 90.0)
+		if main.mode == main.MODE_HANG:
+			break
+	if inair51:
+		eps51.append(float(t51b - start51) / 90.0)
+	var band51: int = 0
+	var total51: float = 0.0
+	for e51: float in eps51:
+		total51 += e51
+		if e51 >= 0.1 and e51 <= 0.4:
+			band51 += 1
+	print("stage51: circuit humps @24 - flights %s (band %d, total %.2f s)" % [str(eps51), band51, total51])
+	check(eps51.size() >= 5,
+		"stage51: the hump row at cruise flies repeatedly (%d flights)" % eps51.size())
+	check(band51 >= 2,
+		"stage51: the DRUMBEAT exists at cruise (%d flights in the 0.1-0.4 s band)" % band51)
+	check(total51 >= 2.0,
+		"stage51: total hump air at cruise %.2f s (floor 2.0)" % total51)
+	# (c) the climb-top bend at cruise: negative control.
+	var cs51: float = float(feats51["climb_s0"])
+	var cs51b: float = float(feats51["climb_s1"])
+	main.debug_warp_to_s(cs51 - 60.0)
+	main.test_throttle = 0.0
+	var air51c: bool = false
+	var min51c: float = 9.0
+	var t51c: int = 0
+	while main.car_s < cs51b + 20.0 and t51c < 3000:
+		autopilot()
+		await physics_frame
+		t51c += 1
+		if main.car_s > cs51b - 45.0:
+			min51c = minf(min51c, minf(main.load_f, main.load_r))
+			if main.mode == main.MODE_AIR:
+				air51c = true
+		if main.mode == main.MODE_HANG:
+			break
+	check(not air51c,
+		"stage51: NEGATIVE CONTROL - no separation at the climb-top bend at cruise")
+	check(min51c > 0.2 and min51c < 0.9,
+		"stage51: climb-top load at cruise stays partial (min %.2f)" % min51c)
+	# (d) the flat guard: the home straight separates nothing.
+	main.debug_warp_to_s(60.0)
+	main.test_throttle = 0.0
+	var waf51d: Array = main.wheel_air_frames.duplicate()
+	var min51d: float = 9.0
+	var t51d: int = 0
+	while main.car_s < 300.0 and t51d < 2000:
+		autopilot()
+		main.debug_pin_speed(34.0)
+		await physics_frame
+		t51d += 1
+		for w51d: int in 4:
+			min51d = minf(min51d, main.wheel_load[w51d])
+		if main.mode == main.MODE_HANG:
+			break
+	var sum51d: int = 0
+	for w51e: int in 4:
+		sum51d += main.wheel_air_frames[w51e] - int(waf51d[w51e])
+	check(sum51d == 0 and min51d > 0.9,
+		"stage51: the flat home straight separates nothing (corner air frames %d, min corner load %.2f)" % [sum51d, min51d])
+	main.test_throttle = 0.0
+	main.wheel_angle = 0.0
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
