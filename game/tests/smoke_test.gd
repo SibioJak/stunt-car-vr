@@ -343,9 +343,9 @@ func grip_press_ctl(kind: String, hand: String = "R") -> void:
 	main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
 	main.test_grip[hand] = 1.0
 	if kind == "side":
-		var side_was: bool = main.drop_lever_left
+		var side_was: bool = main.drop_btn_left
 		var polls16: int = 0
-		while main.drop_lever_left == side_was and polls16 < 90:
+		while main.drop_btn_left == side_was and polls16 < 90:
 			main._poll_grab(hand, main.hand_ctrl[hand], 1.0 / 90.0)
 			polls16 += 1
 	else:
@@ -2335,8 +2335,10 @@ func _run() -> void:
 	# after them (idx 5) so none of these indices move.
 	check(sup_idx == 3 and sdn_idx == 4,
 		"stage22: seat levers registered after the dash buttons (idx %d/%d)" % [sup_idx, sdn_idx])
-	check(main.dash_ctl_kinds.find("view") == 5 and main.dash_ctl_kinds.size() == 7,
-		"stage22: the VIEW button keeps its FP14 index (idx %d of %d - FP15's SIDE registers after it)" % [main.dash_ctl_kinds.find("view"), main.dash_ctl_kinds.size()])
+	# Fix Pass 20 (Item 1): the DROP BUTTON registers after
+	# SIDE - eight controls; VIEW's own index does not move.
+	check(main.dash_ctl_kinds.find("view") == 5 and main.dash_ctl_kinds.size() == 8,
+		"stage22: the VIEW button keeps its FP14 index (idx %d of %d - FP15's SIDE, then FP20's DROP, register after it)" % [main.dash_ctl_kinds.find("view"), main.dash_ctl_kinds.size()])
 	main._apply_seat_trim(0.0)
 	main.test_hand_set = true
 	var seg_sup: Array = main._dash_ctl_segment(sup_idx)
@@ -2470,89 +2472,57 @@ func _run() -> void:
 	var drv24b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv24b, "stage24: release after the aligned arrival resumes driving")
 
-	# ---------- stage 25: Fix Pass 11 (Item 4) - the drop lever ----
-	# Production path only: posed test hands through _poll_grab.
-	# (a) grab + pull past the detent = the car lets go;
-	# (b) grab + partial pull + release the grip = the lever
-	# springs home and nothing drops; (c) the panel names the
-	# lever as THE release (the XR trigger release is retired).
+	# ---------- stage 25: Fix Pass 20 (Item 1) - the DROP BUTTON ----
+	# REPLACED EXPECTATIONS, FLAGGED: stage 25 was the drop
+	# lever's stage FP11-FP19 (latch on the shaft, follow below
+	# the detent, fire past it, spring home on an early
+	# release). The lever is retired; the button is staged
+	# through the same production path (posed test hands
+	# through _poll_grab, via grip_press_ctl): (a) the button
+	# stands on the dash face at the lever's spot, registered
+	# last of the dash controls, and the panel names it as
+	# THE release; (b) a press at the dangle lets the car go
+	# (and logs BTN FIRE + the release's heading record);
+	# (c) a press in DRIVE registers (BTN PRESS) and does
+	# nothing - the button always answers.
 	main.start_race()
 	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	main.dip_timer = 1000.0
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
-		"stage25: dangling for the lever test")
-	# Fix Pass 13 (Item 2) put the pivot at the centre of the
-	# dash top; Fix Pass 15 (Item 3): the lever's placement,
-	# measured - pivot on the dash FACE on its bracket, at
-	# whichever side the persisted mirror says (stage 44 works
-	# the mirror itself), and the grab segment spans the upper
-	# shaft (0.19 m of segment on the shaft - the same
-	# upper-shaft-plus-knob span every placement has carried;
-	# FP16 Item 2 shrank the shaft to 0.30 m and the segment
-	# to 0.13..0.32, span unchanged).
-	var want25: float = -main.DROP_LEVER_FACE_X if main.drop_lever_left else main.DROP_LEVER_FACE_X
-	check(main.drop_lever_pivot.position == Vector3(want25, main.DROP_LEVER_FACE_Y, main.DROP_LEVER_FACE_Z),
-		"stage25: drop lever pivot on the dash face (%.2f, %.2f, %.2f)" % [want25, main.DROP_LEVER_FACE_Y, main.DROP_LEVER_FACE_Z])
-	var seg25: Array = main.debug_drop_lever_segment()
-	check(seg25.size() == 2 and absf((seg25[0] as Vector3).distance_to(seg25[1]) - 0.19) < 0.01,
-		"stage25: grab segment spans the upper shaft (%.2f m)" % (
-			(seg25[0] as Vector3).distance_to(seg25[1]) if seg25.size() == 2 else -1.0))
-	check(main._panel_text().contains("DROP LEVER"),
-		"stage25: the panel names the DROP LEVER as the release")
-	# The hand poses on the lever's shaft - 0.27 m out the
-	# pivot (inside the 0.34 m shaft's working reach).
-	var lever_at = func(th: float) -> Vector3:
-		return main.car_body.global_transform * (main.drop_lever_pivot.position \
-			+ Basis(Vector3.RIGHT, th) * Vector3(0, 0.27, 0))
+		"stage25: dangling for the button test")
+	var want25: float = -main.DROP_BTN_FACE_X if main.drop_btn_left else main.DROP_BTN_FACE_X
+	check(main.drop_btn_node.position == Vector3(want25, main.DROP_BTN_FACE_Y, main.DROP_BTN_FACE_Z),
+		"stage25: drop button on the dash face at the lever's spot (%.2f, %.2f, %.2f)" % [want25, main.DROP_BTN_FACE_Y, main.DROP_BTN_FACE_Z])
+	check(main.dash_ctl_kinds.find("drop") == main.dash_ctl_kinds.size() - 1,
+		"stage25: the button is a dash control, registered last (idx %d of %d)" % [main.dash_ctl_kinds.find("drop"), main.dash_ctl_kinds.size()])
+	check(main._panel_text().contains("DROP BUTTON"),
+		"stage25: the panel names the DROP BUTTON as the release")
+	var ev25 = func(from_i: int) -> String:
+		var parts25: Array[String] = []
+		for ei25: int in range(from_i, main.grab_events.size()):
+			parts25.append(main.grab_events[ei25])
+		return " ".join(parts25)
 	main.test_hand_set = true
 	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
-	main.test_hand_pos["R"] = lever_at.call(main.drop_lever_angle)
-	# Fix Pass 17 (Item 1) staging amendment: FP16's script
-	# squeezed from whatever latch an earlier stage left held -
-	# arbitration (one hand, one control) now requires the hand
-	# to RELEASE between controls, as a real driver does. One
-	# release poll restores the staged intent; the lever grab
-	# itself is unchanged.
-	main.test_grip["R"] = 0.0
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	main.test_grip["R"] = 1.0
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(main.drop_lever_hand == "R", "stage25: grip near the shaft latches the lever")
-	main.test_hand_pos["R"] = lever_at.call(0.30)
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(absf(main.drop_lever_angle - 0.30) < 0.06 and main.mode == main.MODE_HANG,
-		"stage25: lever follows the hand below the detent (%.2f rad), no drop" % main.drop_lever_angle)
-	main.test_hand_pos["R"] = lever_at.call(0.55)
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	var mark25: int = main.grab_events.size()
+	grip_press_ctl("drop", "R")
 	check(main.mode == main.MODE_AIR,
-		"stage25: past the detent (%.2f rad) the car lets go" % main.drop_lever_angle)
-	main.test_grip["R"] = 0.0
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+		"stage25: a press at the dangle lets the car go")
+	var evs25: String = ev25.call(mark25)
+	check(evs25.contains("R BTN FIRE dangle") and evs25.contains("RELEASE"),
+		"stage25: the press logs BTN FIRE and the release's heading record")
 	main.test_hand_set = false
 	var drv25: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
-	check(drv25, "stage25: the lever's drop lands into DRIVE")
-	# (b) partial pull, early release
-	main.start_race()
-	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
-	await frames(4)
-	main.dip_timer = 1000.0
+	check(drv25, "stage25: the button's drop lands into DRIVE")
+	# (c) a press in DRIVE registers and does nothing
+	var mark25b: int = main.grab_events.size()
 	main.test_hand_set = true
-	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
-	main.test_hand_pos["R"] = lever_at.call(main.drop_lever_angle)
-	main.test_grip["R"] = 1.0
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	main.test_hand_pos["R"] = lever_at.call(0.15)
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	var pulled25: float = main.drop_lever_angle
-	main.test_grip["R"] = 0.0
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	grip_press_ctl("drop", "R")
 	main.test_hand_set = false
-	check(absf(pulled25 - 0.15) < 0.06 and main.drop_lever_hand == "" and main.mode == main.MODE_HANG,
-		"stage25: partial pull (%.2f rad) held, grip released, car still hangs" % pulled25)
-	await frames(40)
-	check(absf(main.drop_lever_angle - main.DROP_LEVER_REST_RAD) < 0.03 and main.mode == main.MODE_HANG,
-		"stage25: lever springs home (%.2f rad), no drop" % main.drop_lever_angle)
+	var evs25b: String = ev25.call(mark25b)
+	check(evs25b.contains("R BTN PRESS drive") and main.mode == main.MODE_DRIVE,
+		"stage25: a press in DRIVE answers (BTN PRESS) and changes nothing")
 
 	# ---------- stage 26: Fix Pass 11 (Item 5) - the speed envelope --
 	# (a) the lock scale: EXACTLY the FP10 expression at and
@@ -3316,10 +3286,11 @@ func _run() -> void:
 	# ---------- stage 34: Fix Pass 13 (Item 6) - the pickup, FP15 the crane ----
 	# (a) Drop Start is a pickup: the car starts ON THE PAD
 	# beside the start line, the crane attaches, lifts and
-	# slews it to the station; nothing arms during the journey
-	# (wheel and drop lever polls are inert in attach/carry),
-	# and the pendulum state crosses the carry->dangle
-	# transition untouched. (b) Two staged falls'
+	# slews it to the station; the wheel stays gated during
+	# the journey and (since Fix Pass 20) the DROP BUTTON
+	# presses there - registered, refused, felt - while the
+	# pendulum state crosses the carry->dangle transition
+	# untouched. (b) Two staged falls'
 	# trigger->dangle seconds, printed against the FP12
 	# retrace numbers the drone era left behind.
 	main._set_track("ribbon")
@@ -3331,20 +3302,29 @@ func _run() -> void:
 	pickup34.y = float(fr34["pos"].y) + 0.4
 	check(main.car.global_position.distance_to(pickup34) < 0.05,
 		"stage34: the car starts on the service pad at the pickup point beside the start line")
-	# inert controls during transport (attach here; the same
-	# gates cover carry - the lever/wheel latch conditions
-	# test the dangle phase itself)
-	var dseg34: Array = main.debug_drop_lever_segment()
+	# REPLACED EXPECTATION, FLAGGED (FP20): FP13-FP19 staged
+	# "the drop lever does not latch during transport" - the
+	# phase freeze the owner's interactivity law repealed
+	# ("a thing that doesn't interact is boring and
+	# frustrating"). The BUTTON presses during transport: it
+	# registers (BTN SPENT), the refusal grind runs, and
+	# nothing drops. The wheel's transport gate was never
+	# the owner's complaint and stands, probed as before.
 	main.test_hand_set = true
 	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
-	main.test_hand_pos["R"] = (dseg34[0] as Vector3).lerp(dseg34[1] as Vector3, 0.5)
 	main.test_grip["L"] = 0.0
-	main.test_grip["R"] = 1.0
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(main.drop_lever_hand == "",
-		"stage34: the drop lever does not latch during transport")
+	var mark34: int = main.grab_events.size()
+	grip_press_ctl("drop", "R")
+	var ev34: String = ""
+	for ei34: int in range(mark34, main.grab_events.size()):
+		ev34 += main.grab_events[ei34] + " "
+	check(ev34.contains("R BTN SPENT attach") and main.mode == main.MODE_HANG and main.hang_phase == "attach",
+		"stage34: a press during transport registers as SPENT - the chains hold, nothing drops")
+	check(float(main.drop_grind["R"]) > 0.0,
+		"stage34: the refused press GRINDS (refusal time %.2f s still running)" % float(main.drop_grind["R"]))
 	var hub34: Vector3 = main._wheel_hub_local()
 	var pv34: Vector3 = main._wheel_plane_v()
+	main.test_grip["R"] = 1.0
 	main.test_hand_pos["R"] = main.car.global_transform * (hub34 + 0.21 * Vector3.RIGHT)
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	check(main.grab_hand == "",
@@ -4474,72 +4454,64 @@ func _run() -> void:
 	main._set_audio_latched(false)
 
 	# ---------- stage 44: Fix Pass 15 (Item 3) - THE LEFTY MIRROR ----
-	# The SIDE dash button (production grip path) flips the
-	# drop lever across the dash face; the flip persists to
-	# settings; DIAG names the side; and the release mechanism
-	# works mirrored - the LEFT hand latches the lever on the
-	# left face and pulls it past the detent. The stage ends
-	# by toggling back to the right (the shipped default), so
-	# repeated suite runs stage identically.
+	# REWRITTEN for Fix Pass 20 (Item 1), FLAGGED: FP15-FP19
+	# staged the lever's mirror (pivot + bracket positions,
+	# the grip arc's clearance sweep, a LEFT-hand pull past
+	# the detent). The button inherits the mechanism whole:
+	# the SIDE dash button (production grip path) flips the
+	# DROP BUTTON across the dash face; the flip persists to
+	# settings; DIAG names the side; the button's POINT
+	# clears every other dash zone and the wheel radius on
+	# BOTH faces (the FP15 placement lesson, as a point check
+	# in place of the arc sweep); and the release works
+	# mirrored - a LEFT-hand press on the left face lets the
+	# car go. The stage ends toggled back to the right (the
+	# shipped default), so repeated suite runs stage
+	# identically.
 	main.start_race()
 	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	main.dip_timer = 1000.0
-	check(main.dash_ctl_kinds.size() == 7 and main.dash_ctl_kinds[6] == "side",
-		"stage44: the SIDE button is registered last of seven dash controls (%s)" % str(main.dash_ctl_kinds))
-	var side_was_left44: bool = main.drop_lever_left
+	check(main.dash_ctl_kinds.size() == 8 and main.dash_ctl_kinds[6] == "side" and main.dash_ctl_kinds[7] == "drop",
+		"stage44: SIDE is seventh of eight dash controls, the DROP BUTTON last (%s)" % str(main.dash_ctl_kinds))
+	var side_was_left44: bool = main.drop_btn_left
 	if side_was_left44:
 		grip_press_ctl("side") # normalise to the right first
 		await frames(2)
 	grip_press_ctl("side")
-	check(main.drop_lever_left,
-		"stage44: the SIDE button mirrors the lever to the LEFT face")
-	check(main.drop_lever_pivot.position == Vector3(-main.DROP_LEVER_FACE_X, main.DROP_LEVER_FACE_Y, main.DROP_LEVER_FACE_Z),
-		"stage44: the pivot stands on the face at the left (%.2f)" % main.drop_lever_pivot.position.x)
-	check(absf(main.drop_lever_bracket.position.x + main.DROP_LEVER_FACE_X) < 0.001,
-		"stage44: the bracket mirrors with the pivot")
+	check(main.drop_btn_left,
+		"stage44: the SIDE button mirrors the drop button to the LEFT face")
+	check(main.drop_btn_node.position == Vector3(-main.DROP_BTN_FACE_X, main.DROP_BTN_FACE_Y, main.DROP_BTN_FACE_Z),
+		"stage44: the button stands on the face at the left (%.2f)" % main.drop_btn_node.position.x)
+	check(absf(main.drop_btn_bracket.position.x + main.DROP_BTN_FACE_X) < 0.001,
+		"stage44: the bracket mirrors with the button")
 	var cfg44 := ConfigFile.new()
 	check(cfg44.load("user://settings.cfg") == OK and bool(cfg44.get_value("lever", "left", false)),
 		"stage44: the mirror persists (settings lever/left = true)")
 	main.diag_block = main._build_diag_block()
-	check(main.diag_block.contains("DRP L") and main._panel_text().contains("lever side"),
-		"stage44: DIAG names the side (DRP L) and the panel lists the lever side control")
-	# The grip point's whole arc stays out of every dash zone
-	# and the wheel's grab radius, on BOTH faces - the first
-	# face placement (0.40, 0.72, -0.49) put the grip inside
-	# RESTART's zone, so latching the lever restarted the
-	# race (stage 25 caught it; this sweep is the guard).
-	var arc_clear44 = func() -> bool:
-		for th10: int in 15:
-			var ths: float = float(th10) * 0.05
-			var hp: Vector3 = main.car_body.global_transform * (main.drop_lever_pivot.position \
-				+ Basis(Vector3.RIGHT, ths) * Vector3(0, 0.27, 0))
-			if main._dash_ctl_near(hp) != -1:
+	check(main.diag_block.contains("DROP L") and main._panel_text().contains("drop side"),
+		"stage44: DIAG names the side (DROP L) and the panel lists the drop side control")
+	# The button's point stays out of every OTHER control's
+	# zone and the wheel's grab radius, on BOTH faces - the
+	# first face placement (0.40, 0.72, -0.49) put the
+	# lever's grip inside RESTART's zone, so latching the
+	# lever restarted the race (FP15's catch; this point
+	# check is its guard now).
+	var clear44 = func() -> bool:
+		var p44: Vector3 = main.debug_drop_btn_point()
+		var di44: int = main.dash_ctl_kinds.find("drop")
+		for ci44: int in main.dash_ctl_nodes.size():
+			if ci44 == di44:
+				continue
+			var seg44: Array[Vector3] = main._dash_ctl_segment(ci44)
+			if main._seg_point_dist(seg44[0], seg44[1], p44) < main._dash_ctl_radius(ci44):
 				return false
-			if hp.distance_to(main.car.global_transform * main._wheel_hub_local()) <= main.WHEEL_GRAB_RADIUS:
-				return false
-		return true
-	check(arc_clear44.call(), "stage44: the LEFT grip arc clears every dash zone and the wheel radius")
-	var lever_at44 = func(th: float) -> Vector3:
-		return main.car_body.global_transform * (main.drop_lever_pivot.position \
-			+ Basis(Vector3.RIGHT, th) * Vector3(0, 0.27, 0))
-	main.test_hand_set = true
-	main.test_hand_pos["R"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
-	main.test_hand_pos["L"] = lever_at44.call(main.drop_lever_angle)
-	main.test_grip["L"] = 1.0
-	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
-	check(main.drop_lever_hand == "L", "stage44: the LEFT hand latches the mirrored lever")
-	main.test_hand_pos["L"] = lever_at44.call(0.30)
-	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
-	check(absf(main.drop_lever_angle - 0.30) < 0.06 and main.mode == main.MODE_HANG,
-		"stage44: the mirrored lever follows the hand below the detent (%.2f rad)" % main.drop_lever_angle)
-	main.test_hand_pos["L"] = lever_at44.call(0.55)
-	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+		return p44.distance_to(main.car.global_transform * main._wheel_hub_local()) > main.WHEEL_GRAB_RADIUS
+	check(clear44.call(), "stage44: the LEFT button point clears every other dash zone and the wheel radius")
+	# a LEFT-hand press on the left face lets the car go
+	grip_press_ctl("drop", "L")
 	check(main.mode == main.MODE_AIR,
-		"stage44: past the detent on the left face, the car lets go")
-	main.test_grip["L"] = 0.0
-	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
-	main.test_hand_set = false
+		"stage44: a LEFT-hand press on the left face lets the car go")
 	var drv44: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv44, "stage44: the mirrored drop lands into DRIVE")
 	# toggle home to the right side (the shipped default)
@@ -4548,9 +4520,9 @@ func _run() -> void:
 	await frames(4)
 	main.dip_timer = 1000.0
 	grip_press_ctl("side")
-	check(not main.drop_lever_left and absf(main.drop_lever_pivot.position.x - main.DROP_LEVER_FACE_X) < 0.001,
-		"stage44: the toggle returns the lever to the RIGHT face")
-	check(arc_clear44.call(), "stage44: the RIGHT grip arc clears every dash zone and the wheel radius")
+	check(not main.drop_btn_left and absf(main.drop_btn_node.position.x - main.DROP_BTN_FACE_X) < 0.001,
+		"stage44: the toggle returns the button to the RIGHT face")
+	check(clear44.call(), "stage44: the RIGHT button point clears every other dash zone and the wheel radius")
 	var cfg44b := ConfigFile.new()
 	check(cfg44b.load("user://settings.cfg") == OK and not bool(cfg44b.get_value("lever", "left", true)),
 		"stage44: the return persists (settings lever/left = false)")
@@ -4559,39 +4531,37 @@ func _run() -> void:
 	m_ev.keycode = KEY_M
 	m_ev.pressed = true
 	main._input(m_ev)
-	check(main.drop_lever_left, "stage44: the M key mirrors the lever too")
+	check(main.drop_btn_left, "stage44: the M key mirrors the button too")
 	grip_press_ctl("side")
-	check(not main.drop_lever_left, "stage44: and the button brings it home again")
+	check(not main.drop_btn_left, "stage44: and the SIDE button brings it home again")
 
-	# --- Stage 45: FP15 (Item 4) - the centre band is baked into
-	# the surface mesh of both main tracks: a third of the surface
-	# vertices carry the guide amber (1.0, 0.60, 0.04) and they sit
-	# on the centreline. Data-level assertion: the fallback
-	# renderer does not reproduce the surface's vertex colours
-	# faithfully at driving angles (see README FP15 notes), so the
-	# band's presence is proven here, in the mesh, and its
-	# readability is the owner's verdict on his device.
+	# --- Stage 45: Fix Pass 20 (Item 2) - the centre band is GONE ---
+	# REPLACED EXPECTATION, FLAGGED: FP15-FP18 asserted the
+	# band's PRESENCE here (a third of the surface vertices in
+	# guide amber, on the centreline). The owner's run-18
+	# verdict - "one long stripe, not what I wanted" - removed
+	# it, so this stage now asserts the ABSENCE for both main
+	# tracks: no surface vertex carries the band colour, and
+	# every surface vertex carries the FP18 asphalt (the
+	# surface is one full-width quad per segment again).
+	# Data-level, as before: the fallback renderer does not
+	# reproduce vertex colours faithfully at driving angles.
 	for key45: String in ["ribbon", "circuit"]:
 		main._set_track(key45)
 		var surf45: MeshInstance3D = (main.track_data[key45]["root"] as Node3D).get_node("TrackSurface") as MeshInstance3D
 		var arrs45: Array = surf45.mesh.surface_get_arrays(0)
-		var v45: PackedVector3Array = arrs45[Mesh.ARRAY_VERTEX]
 		var c45: PackedColorArray = arrs45[Mesh.ARRAY_COLOR]
 		var amber45: int = 0
+		var grey45: int = 0
 		for col45: Color in c45:
 			if col45.r > 0.9 and col45.g > 0.5 and col45.g < 0.7 and col45.b < 0.15:
 				amber45 += 1
-		var frac45: float = float(amber45) / float(maxi(v45.size(), 1))
-		check(frac45 > 0.30 and frac45 < 0.36,
-			"stage45: %s centre band is a third of the surface (%.3f)" % [key45, frac45])
-		var fr45: Dictionary = main._frame_at(50.0)
-		var p45: Vector3 = fr45["pos"]
-		var near45: bool = false
-		for i45: int in v45.size():
-			if c45[i45].r > 0.9 and c45[i45].g > 0.5 and v45[i45].distance_to(p45) < 1.2:
-				near45 = true
-				break
-		check(near45, "stage45: %s band vertices sit on the centreline at s50" % key45)
+			if absf(col45.r - 0.30) < 0.02 and absf(col45.g - 0.30) < 0.02 and absf(col45.b - 0.33) < 0.02:
+				grey45 += 1
+		check(amber45 == 0,
+			"stage45: %s centre band is GONE (0 band vertices; it was a third of the surface)" % key45)
+		check(grey45 == c45.size(),
+			"stage45: %s surface is uniformly asphalt (%d of %d vertices)" % [key45, grey45, c45.size()])
 
 	# ---------- stage 46: Fix Pass 16 (Item 1) - THE GRAB REBUILD ----
 	# The differential's convicted mechanisms, staged against the
@@ -4639,29 +4609,39 @@ func _run() -> void:
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	check(not bool(main.gripping["R"]), "stage46: a true release (0.0 < 0.30) ends the latch")
-	# (b) the drop lever through the same dip, mid-throw
-	var lever_at46 = func(th: float) -> Vector3:
-		return main.car_body.global_transform * (main.drop_lever_pivot.position \
-			+ Basis(Vector3.RIGHT, th) * Vector3(0, 0.27, 0))
-	main.test_hand_pos["R"] = lever_at46.call(main.drop_lever_angle)
+	# (b) REPLACED, FLAGGED (FP20): FP16 staged the drop
+	# lever's pull surviving the same dip MID-THROW. A button
+	# has no throw to lose; its successor claim is the LATCH -
+	# one press per squeeze, and the dip neither drops the
+	# latch nor re-fires it. First the dangle press that takes
+	# the stage into DRIVE (as the lever's saved pull did),
+	# then the latch test in DRIVE, where presses are
+	# observable and inert.
+	main.test_hand_pos["R"] = main.debug_drop_btn_point()
 	main.test_grip["R"] = 1.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(main.drop_lever_hand == "R", "stage46: lever latches")
-	main.test_hand_pos["R"] = lever_at46.call(0.30)
+	check(main.mode == main.MODE_AIR, "stage46: the button press at the dangle fires the release")
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	var drv46: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv46, "stage46: the drop lands into DRIVE for the latch test")
+	var mark46b: int = main.grab_events.size()
+	main.test_hand_pos["R"] = main.debug_drop_btn_point()
+	main.test_grip["R"] = 1.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main.test_grip["R"] = 0.45
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(main.drop_lever_hand == "R" and absf(main.drop_lever_angle - 0.30) < 0.06,
-		"stage46: mid-throw dip to 0.45 keeps the pull (%.2f rad)" % main.drop_lever_angle)
 	main.test_grip["R"] = 1.0
-	main.test_hand_pos["R"] = lever_at46.call(0.55)
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(main.mode == main.MODE_AIR, "stage46: the saved pull still fires past the detent")
+	var npress46b: int = 0
+	for ei46b: int in range(mark46b, main.grab_events.size()):
+		if main.grab_events[ei46b].contains("BTN PRESS"):
+			npress46b += 1
+	check(npress46b == 1 and bool(main.gripping["R"]),
+		"stage46: one press per squeeze - the 0.45 dip holds the button's latch, no re-fire (%d presses)" % npress46b)
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	var drv46: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
-	check(drv46, "stage46: the drop lands into DRIVE for the wheel test")
 	# (c) wheel soft lock: latch on the rim, then steer from
 	# OUTSIDE the grab radius - the latched hand keeps the wheel.
 	var hub46: Vector3 = main.car.global_transform * main._wheel_hub_local()
@@ -4712,14 +4692,14 @@ func _run() -> void:
 	# sustained in-zone hold does, and the flip is ANNOUNCED on
 	# the readout. The side is restored at the end (the setting
 	# persists - the next run's stage 44 expects its own start).
-	var side_entry46: bool = main.drop_lever_left
+	var side_entry46: bool = main.drop_btn_left
 	var side_seg46: Array[Vector3] = main._dash_ctl_segment(main.dash_ctl_kinds.find("side"))
 	var side_mid46: Vector3 = (side_seg46[0] + side_seg46[1]) * 0.5
 	main.test_hand_pos["R"] = side_mid46
 	main.test_grip["R"] = 1.0
 	for ip46: int in 18:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.drop_lever_left == side_entry46,
+	check(main.drop_btn_left == side_entry46,
 		"stage46: a 0.2 s brush of SIDE does not flip it (deliberate hold)")
 	main.test_hand_pos["R"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
 	for ip46b: int in 6:
@@ -4730,19 +4710,19 @@ func _run() -> void:
 	main.test_grip["R"] = 1.0
 	for ip46c: int in 60:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.drop_lever_left != side_entry46,
-		"stage46: a sustained 0.6 s hold flips the lever side")
-	check(main.contact_label.text.begins_with("LEVER SIDE:"),
+	check(main.drop_btn_left != side_entry46,
+		"stage46: a sustained 0.6 s hold flips the drop side")
+	check(main.contact_label.text.begins_with("DROP SIDE:"),
 		"stage46: the flip is announced on the readout (%s)" % main.contact_label.text)
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	if main.drop_lever_left != side_entry46:
-		main._toggle_drop_lever_side()
+	if main.drop_btn_left != side_entry46:
+		main._toggle_drop_btn_side()
 	# (g) Fix Pass 16 (Item 5): the telemetry shipped - the
 	# event ring carries this stage's own latches and fires,
 	# the DIAG block carries the GRAB line, the log is open.
 	var ev46: String = " ".join(main.grab_events)
-	check(main.grab_events.size() > 0 and ev46.contains("DRP FIRE") and ev46.contains("WHEEL LAT"),
+	check(main.grab_events.size() > 0 and ev46.contains("BTN FIRE") and ev46.contains("WHEEL LAT"),
 		"stage46: telemetry ring carries the stage's events (%d events)" % main.grab_events.size())
 	check(main._build_diag_block().contains("GRAB"),
 		"stage46: the DIAG block carries the GRAB line")
@@ -4750,36 +4730,37 @@ func _run() -> void:
 	main.test_hand_set = false
 
 	# ---------- stage 47: Fix Pass 17 - ONE HAND, ONE CONTROL ----
-	# Item 1, staged against the production path with the owner's
-	# run-16 grab log as the script. (a1) is his T14.8 verbatim:
-	# right hand driving, left hand fires the drop lever - FP16
-	# recorded L RIM ATT in the same instant as L DRP FIRE.
-	# (a2) is the recovery case the log could not show: the lever
-	# grabbed with the wheel FREE, where the cross-talk would
-	# have steered instead of dropping. (b) holds the wheel
-	# INSIDE lever range; (b2) enters both volumes in one fresh
-	# squeeze; (e) takes a dash latch to the wheel.
+	# REWRITTEN for Fix Pass 20 (Item 1), FLAGGED: FP17 staged
+	# this arbitration suite against the drop LEVER (its cases
+	# (a1)/(a2)/(b)/(b2) worked the lever against the wheel;
+	# (d) staged the lever's throw telemetry). The button is
+	# a dash control now, so the same convictions are staged
+	# against it: (a1) is the owner's run-16 T14.8 in its new
+	# form - right hand driving, left hand presses the DROP
+	# BUTTON; the press fires and the pressing hand records
+	# ZERO rim/wheel events. (a2) is the recovery case: the
+	# button pressed with the wheel FREE. (b) holds the wheel
+	# and moves INTO the button's zone mid-squeeze - no press.
+	# (b2) enters both volumes in one fresh squeeze - nearest
+	# wins. (e) takes a dash latch to the wheel (unchanged).
+	# (d) stages the button's own telemetry: SPENT in attach,
+	# FIRE + the RELEASE record at the dangle, on disk.
 	main.test_hand_set = true
 	var pv47: Vector3 = main._wheel_plane_v()
 	var rim_pt47 = func(r: float, phi: float) -> Vector3:
 		return main.car.global_transform * (main._wheel_hub_local() \
 			+ r * (cos(phi) * Vector3.RIGHT + sin(phi) * pv47))
-	var lever_at47 = func(th: float) -> Vector3:
-		return main.car_body.global_transform * (main.drop_lever_pivot.position \
-			+ Basis(Vector3.RIGHT, th) * Vector3(0, 0.27, 0))
 	var far47: Vector3 = main.car.global_position + Vector3(5.0, 5.0, 5.0)
 	var ev47 = func(from_i: int) -> String:
 		var parts47: Array[String] = []
 		for ei47: int in range(from_i, main.grab_events.size()):
 			parts47.append(main.grab_events[ei47])
 		return " ".join(parts47)
-	# rim points: the driver-side low point (dash-clear by
-	# construction) and the side point nearest the lever.
+	# the driver-side low rim point (dash-clear by construction)
 	var phi_low47: float = PI / 2.0
-	var phi_near47: float = PI if main.drop_lever_left else 0.0
 	check(main._dash_ctl_near(rim_pt47.call(0.25, phi_low47)) == -1,
 		"stage47: precondition - the low rim point is outside every dash zone")
-	# (a1) T14.8: R drives, L fires the lever.
+	# (a1) T14.8: R drives, L presses the button.
 	main.start_race()
 	main.debug_set_hang_dangle()
 	await frames(4)
@@ -4794,27 +4775,22 @@ func _run() -> void:
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	check(main.grab_hand == "R", "stage47: (a1) the driver latches the wheel")
 	var mark47a: int = main.grab_events.size()
-	main.test_hand_pos["L"] = lever_at47.call(0.0)
+	main.test_hand_pos["L"] = main.debug_drop_btn_point()
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	main.test_grip["L"] = 1.0
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
-	check(main.drop_lever_hand == "L", "stage47: (a1) the lever latches while the other hand drives")
-	main.test_hand_pos["L"] = lever_at47.call(0.30)
-	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
-	main.test_hand_pos["L"] = lever_at47.call(0.55)
-	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	var eva47: String = ev47.call(mark47a)
-	check(eva47.contains("L DRP FIRE"),
-		"stage47: (a1) the lever fires with the wheel held (his first drop, working)")
+	check(main.mode == main.MODE_AIR and eva47.contains("L BTN FIRE"),
+		"stage47: (a1) the button fires with the wheel held (his first drop, working)")
 	check(not eva47.contains("L RIM ATT") and not eva47.contains("L WHEEL LAT"),
-		"stage47: (a1) T14.8 is dead - the lever hand records ZERO rim/wheel events")
+		"stage47: (a1) T14.8 is dead - the pressing hand records ZERO rim/wheel events")
 	main.test_grip["L"] = 0.0
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	var drv47a: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv47a, "stage47: (a1) the drop lands into DRIVE")
-	# (a2) the lever with the wheel FREE.
+	# (a2) the button with the wheel FREE.
 	main.start_race()
 	main.debug_set_hang_dangle()
 	await frames(4)
@@ -4823,85 +4799,77 @@ func _run() -> void:
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	var mark47b: int = main.grab_events.size()
-	main.test_hand_pos["L"] = lever_at47.call(0.0)
+	main.test_hand_pos["L"] = main.debug_drop_btn_point()
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	main.test_grip["L"] = 1.0
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
-	main.test_hand_pos["L"] = lever_at47.call(0.55)
-	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	var eva47b: String = ev47.call(mark47b)
-	check(main.mode == main.MODE_AIR and eva47b.contains("L DRP FIRE"),
-		"stage47: (a2) the lever fires with the wheel FREE (the recovery case)")
+	check(main.mode == main.MODE_AIR and eva47b.contains("L BTN FIRE"),
+		"stage47: (a2) the button fires with the wheel FREE (the recovery case)")
 	check(not eva47b.contains("L WHEEL LAT") and not eva47b.contains("L RIM ATT"),
-		"stage47: (a2) a free wheel is NOT latched by the lever hand - the pull cannot steer")
+		"stage47: (a2) a free wheel is NOT latched by the pressing hand - the press cannot steer")
 	main.test_grip["L"] = 0.0
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	var drv47b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv47b, "stage47: (a2) the drop lands into DRIVE")
-	# (b) a HELD wheel inside lever range.
+	# (b) a HELD wheel moved INTO the button's zone.
 	main.start_race()
 	main.debug_set_hang_dangle()
 	await frames(4)
 	main.dip_timer = 1000.0
+	check(main._dash_ctl_near(main.debug_drop_btn_point()) == main.dash_ctl_kinds.find("drop"),
+		"stage47: (b) precondition - the button's centre is the DROP control's zone")
 	main.test_hand_pos["R"] = rim_pt47.call(0.25, phi_low47)
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main.test_grip["R"] = 1.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(main.grab_hand == "R", "stage47: (b) the driver latches before moving into lever range")
-	var seg47b: Array = main.debug_drop_lever_segment()
-	var near_pt47: Vector3 = rim_pt47.call(0.225, phi_near47)
-	if main._seg_point_dist(seg47b[0], seg47b[1], near_pt47) > 0.16:
-		# The bare rim point measures 0.217 m from the segment in
-		# the raked body space - just outside the lever's tube.
-		# Step from it toward the segment's nearest point until
-		# the pose is honestly inside lever range (a driving
-		# hand at the rim's lever-side edge, reaching in).
-		var ab47b: Vector3 = seg47b[1] - seg47b[0]
-		var tb47: float = clampf((near_pt47 - seg47b[0]).dot(ab47b) / ab47b.length_squared(), 0.0, 1.0)
-		var spb47: Vector3 = seg47b[0] + ab47b * tb47
-		near_pt47 = near_pt47 + (spb47 - near_pt47).normalized() * (near_pt47.distance_to(spb47) - 0.16)
-	check(main._seg_point_dist(seg47b[0], seg47b[1], near_pt47) <= main.DROP_LEVER_GRAB_RADIUS,
-		"stage47: (b) precondition - the near rim point IS inside lever range (%.3f m)" % main._seg_point_dist(seg47b[0], seg47b[1], near_pt47))
+	check(main.grab_hand == "R", "stage47: (b) the driver latches before moving onto the button")
 	var mark47c: int = main.grab_events.size()
-	main.test_hand_pos["R"] = near_pt47
+	main.test_hand_pos["R"] = main.debug_drop_btn_point()
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	var eva47c: String = ev47.call(mark47c)
-	check(main.grab_hand == "R" and main.drop_lever_hand == "" and not eva47c.contains("DRP LAT"),
-		"stage47: (b) a held wheel inside lever range keeps the wheel - the lever never latches")
+	check(main.grab_hand == "R" and main.mode == main.MODE_HANG and not eva47c.contains("BTN"),
+		"stage47: (b) a held wheel ON the button does not press it - the wheel's hand owns no button")
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	# (b2) simultaneous fresh entry inside BOTH volumes: the
-	# segment's hub-nearest point stepped 0.30 m from the hub -
-	# inside the lever's tube and the wheel's radius at once.
-	var seg47: Array = main.debug_drop_lever_segment()
+	# (b2) simultaneous fresh entry inside BOTH volumes: a
+	# point on the hub->button line 0.14 m short of the
+	# button - inside its zone (0.15) and, the hub sitting
+	# ~0.52 m away, inside the wheel's radius (0.40) at once.
 	var hub47b: Vector3 = main.car.global_transform * main._wheel_hub_local()
-	var ab47: Vector3 = seg47[1] - seg47[0]
-	var t47: float = clampf((hub47b - seg47[0]).dot(ab47) / ab47.length_squared(), 0.0, 1.0)
-	var sp47: Vector3 = seg47[0] + ab47 * t47
-	var pose47: Vector3 = sp47 + (hub47b - sp47).normalized() * (sp47.distance_to(hub47b) - 0.30)
-	check(main._seg_point_dist(seg47[0], seg47[1], pose47) <= main.DROP_LEVER_GRAB_RADIUS \
-		and pose47.distance_to(hub47b) < main.WHEEL_GRAB_RADIUS \
-		and main._dash_ctl_near(pose47) == -1,
-		"stage47: (b2) precondition - inside lever range AND wheel radius, outside dash zones (lever %.3f m, hub %.3f m)" % [
-			main._seg_point_dist(seg47[0], seg47[1], pose47), pose47.distance_to(hub47b)])
+	var btn47b: Vector3 = main.debug_drop_btn_point()
+	var dhb47: float = hub47b.distance_to(btn47b)
+	var pose47: Vector3 = hub47b + (btn47b - hub47b) * ((dhb47 - 0.14) / dhb47)
+	check(main._dash_ctl_near(pose47) == main.dash_ctl_kinds.find("drop") \
+		and pose47.distance_to(hub47b) < main.WHEEL_GRAB_RADIUS,
+		"stage47: (b2) precondition - inside the button's zone AND the wheel radius (button %.3f m, hub %.3f m)" % [
+			pose47.distance_to(btn47b), pose47.distance_to(hub47b)])
+	main.test_hand_pos["R"] = far47
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	var mark47d: int = main.grab_events.size()
 	main.test_hand_pos["R"] = pose47
-	main.test_grip["R"] = 0.0
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main.test_grip["R"] = 1.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	var eva47d: String = ev47.call(mark47d)
-	check(main.drop_lever_hand == "R" and main.grab_hand == "",
-		"stage47: (b2) simultaneous entry resolves NEAREST - the lever (~0.12 m) beats the hub (0.30 m)")
-	check(eva47d.contains("R DRP LAT") and not eva47d.contains("R WHEEL LAT") and not eva47d.contains("R RIM ATT"),
+	check(int(main.dash_ctl_fired["R"]) == main.dash_ctl_kinds.find("drop") and main.grab_hand == "",
+		"stage47: (b2) simultaneous entry resolves NEAREST - the button (0.14 m) beats the hub (%.2f m)" % pose47.distance_to(hub47b))
+	check(eva47d.contains("R BTN FIRE") and not eva47d.contains("R WHEEL LAT") and not eva47d.contains("R RIM ATT"),
 		"stage47: (b2) exactly one acquisition - the loser records nothing")
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	# (e) a dash latch taken to the wheel (still in the dangle -
-	# the dash and the wheel are both live here).
+	# (e) a dash latch taken to the wheel (in a fresh dangle -
+	# (b2)'s press dropped the car; the dash and the wheel
+	# are both live here).
+	var drv47e: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv47e, "stage47: (e) setup - (b2)'s drop lands into DRIVE")
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await frames(4)
+	main.dip_timer = 1000.0
 	var seat_i47: int = main.dash_ctl_kinds.find("seatup")
 	var seat_seg47: Array[Vector3] = main._dash_ctl_segment(seat_i47)
 	var seat_mid47: Vector3 = (seat_seg47[0] + seat_seg47[1]) * 0.5
@@ -4922,50 +4890,35 @@ func _run() -> void:
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	check(ev47.call(mark47e).contains("SEATUP REL"),
 		"stage47: (e) the seat lever's release is logged (SEATUP REL - Item 2)")
-	# (d) Item 2 - throw telemetry: a partial pull leaves its
-	# trace, a fired pull carries its duration.
-	main.start_race()
+	# (d) the button's telemetry: SPENT in attach, FIRE +
+	# the RELEASE heading record at the dangle - and both
+	# on disk, under this build's session header.
+	main.start_race() # attach phase - no dangle shortcut
+	await frames(4)
+	main.dip_timer = 1000.0
+	check(main.mode == main.MODE_HANG and main.hang_phase == "attach",
+		"stage47: (d) setup - a fresh Drop Start is in ATTACH")
+	var mark47f: int = main.grab_events.size()
+	grip_press_ctl("drop", "R")
+	var eva47f: String = ev47.call(mark47f)
+	check(eva47f.contains("R BTN SPENT attach") and main.mode == main.MODE_HANG,
+		"stage47: (d) a press in ATTACH is SPENT on the record - and the car still hangs")
+	check(float(main.drop_grind["R"]) > 0.0,
+		"stage47: (d) the refused press leaves the grind running (%.2f s)" % float(main.drop_grind["R"]))
 	main.debug_set_hang_dangle()
 	await frames(4)
 	main.dip_timer = 1000.0
-	main.test_hand_pos["L"] = far47
-	main.test_grip["L"] = 0.0
-	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
-	var mark47f: int = main.grab_events.size()
-	main.test_hand_pos["R"] = lever_at47.call(0.0)
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	main.test_grip["R"] = 1.0
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	main.test_hand_pos["R"] = lever_at47.call(0.20)
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	main.test_hand_pos["R"] = lever_at47.call(0.30)
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	main.test_grip["R"] = 0.0
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	var eva47f: String = ev47.call(mark47f)
-	check(eva47f.contains("DRP PULL 0.25") and eva47f.contains("DRP PULL 0.50") and not eva47f.contains("DRP PULL 0.75"),
-		"stage47: (d) the partial pull logs its quarter crossings (0.25, 0.50 - never 0.75)")
-	check(eva47f.contains("DRP ORPHAN peak 0.60") and eva47f.contains("R DRP REL"),
-		"stage47: (d) the stalled pull leaves its trace - ORPHAN at peak 0.60 + DRP REL")
-	await frames(12)
 	var mark47g: int = main.grab_events.size()
-	main.test_hand_pos["R"] = lever_at47.call(main.drop_lever_angle)
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	main.test_grip["R"] = 1.0
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	main.test_hand_pos["R"] = lever_at47.call(0.55)
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	main.test_grip["R"] = 0.0
-	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	grip_press_ctl("drop", "R")
 	var eva47g: String = ev47.call(mark47g)
-	check(eva47g.contains("DRP FIRE") and eva47g.contains(" dt"),
-		"stage47: (d) the fired pull carries its duration (DRP FIRE ... dt)")
-	check(eva47g.contains("R DRP REL") and not eva47g.contains("ORPHAN"),
-		"stage47: (d) a fired latch ends in REL, never ORPHAN")
+	check(eva47g.contains("R BTN FIRE dangle") and eva47g.contains("RELEASE"),
+		"stage47: (d) the dangle press logs BTN FIRE + the RELEASE heading record")
+	check(absf(main.last_release_err_deg) <= 3.0,
+		"stage47: (d) the staged release heads along travel (err %+.1f deg)" % main.last_release_err_deg)
 	var drv47d: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv47d, "stage47: (d) the fired drop lands into DRIVE")
-	# (f) Item 2 - the file itself: this launch's session
-	# header, and the throw lines on disk, not just in the ring.
+	# (f) the file itself: this launch's session header, and
+	# the button + release lines on disk, not just in the ring.
 	var f47: FileAccess = FileAccess.open("user://grab_log.txt", FileAccess.READ)
 	check(f47 != null, "stage47: (f) the grab log file exists")
 	if f47 != null:
@@ -4973,9 +4926,53 @@ func _run() -> void:
 		f47.close()
 		check(txt47.contains("=== SESSION") and txt47.contains(main.GRAB_LOG_BUILD),
 			"stage47: (f) the log carries this launch's session header (build tag + wall clock)")
-		check(txt47.contains("DRP ORPHAN") and txt47.contains("DRP PULL"),
-			"stage47: (f) the file itself carries the throw telemetry, not just the ring")
+		check(txt47.contains("BTN SPENT") and txt47.contains("RELEASE"),
+			"stage47: (f) the file itself carries the button + release telemetry, not just the ring")
 	main.test_hand_set = false
+
+	# ---------- stage 49: Fix Pass 20 (Item 3) - THE HEADING CENSUS ----
+	# The owner's run-18 report: a crane recovery "dropped me
+	# backwards facing wrong way on track." Staged here as a
+	# census, not a sample: one forced fall in each of the
+	# circuit's segment families, through the production path
+	# (fall trigger -> recovery -> hang -> dangle -> release),
+	# with the release's heading error read from the FP20
+	# telemetry (last_release_err_deg - the same record the
+	# grab log now carries). Tolerance 3 deg. If a family
+	# convicts, this stage fails with its numbers printed.
+	main._set_track("circuit")
+	var census49: Array = [
+		["home straight", 150.0], ["curve A (banked)", 550.0],
+		["dip descent", 830.0], ["dip floor", 960.0],
+		["mid straight", 1300.0], ["hairpin (banked)", 1650.0],
+		["signature climb", 2000.0], ["hump descent", 2300.0],
+		["curve C (banked)", 2600.0], ["tail return", 3050.0]]
+	var worst49: float = 0.0
+	for case49: Array in census49:
+		main.dip_timer = 1000.0
+		main.debug_force_fall_at(float(case49[1]))
+		var hang49: bool = await wait_until(func() -> bool: \
+			return main.mode == main.MODE_HANG and main.hang_phase == "dangle", 6000)
+		check(hang49, "stage49: %s - the recovery reaches the dangle" % str(case49[0]))
+		if not hang49:
+			continue
+		# the drop waits for the sway to settle: release when the
+		# car has swung onto the station's heading
+		var settle49: int = 0
+		while settle49 < 400 and absf(wrapf(main.orient_yaw - main.carrier_yaw, -PI, PI)) > 0.01:
+			await frames(1)
+			settle49 += 1
+		main._do_release()
+		worst49 = maxf(worst49, absf(main.last_release_err_deg))
+		print("stage49 census: %-18s fall s%.0f -> drop s%.0f  HDG %+.1f  SEC %+.1f  ERR %+.1f deg" % [
+			str(case49[0]), float(case49[1]), main.last_release_s,
+			main.last_release_hdg_deg, main.last_release_sec_deg, main.last_release_err_deg])
+		check(absf(main.last_release_err_deg) <= 3.0,
+			"stage49: %s - the drop heads along the section's travel (err %+.1f deg)" % [
+				str(case49[0]), main.last_release_err_deg])
+		var drv49: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 900)
+		check(drv49, "stage49: %s - the drop lands into DRIVE" % str(case49[0]))
+	print("stage49: census complete - worst release heading error %.1f deg" % worst49)
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")

@@ -278,8 +278,8 @@ func _run() -> void:
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call crane",
 			"restart", "lean", "track", "Recenter", "SPACE", "W/S", "V track",
 			"DIAG", "ANCHOR", "CAMH", "HLD", "Jitter", "JIT", "CONTACT",
-			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP LEVER", "Panels", "TAB",
-			"amber view", "G view", "lever side", "M lever", "GRAB"]:
+			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP BUTTON", "Panels", "TAB",
+			"amber view", "G view", "drop side", "M drop side", "GRAB"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)
 	check(main.wheel_node != null, "grab wheel exists")
 	# Fix Pass 13 (Item 1): the prep switches are deleted -
@@ -291,8 +291,10 @@ func _run() -> void:
 	# Fix Pass 15 (Item 3): the blue lever-SIDE button joins
 	# at the vacated dash-top centre, registered last again -
 	# seven controls.
-	check(main.dash_ctl_kinds == ["restart", "lean", "track", "seatup", "seatdn", "view", "side"],
-		"dash carries exactly the seven controls (%s)" % str(main.dash_ctl_kinds))
+	# Fix Pass 20 (Item 1): the DROP BUTTON joins on the dash
+	# face, registered last - eight controls.
+	check(main.dash_ctl_kinds == ["restart", "lean", "track", "seatup", "seatdn", "view", "side", "drop"],
+		"dash carries exactly the eight controls (%s)" % str(main.dash_ctl_kinds))
 	check(main.state_label.text.length() > 0, "state label is live (%s)" % main.state_label.text)
 
 	# Fix Pass 2 anchor geometry: the fallback camera sits exactly on the
@@ -382,21 +384,19 @@ func _run() -> void:
 			mk.position = to_body_rp * sp2 + Vector3(0.0, 0.0, 0.055)
 			main.car_body.add_child(mk)
 			markers.append(mk)
-	# Fix Pass 11 (Item 4): the drop lever's grab segment joins
-	# the overlay (same stand-off toward the driver).
-	var dseg_rp: Array = main.debug_drop_lever_segment()
-	if dseg_rp.size() == 2:
-		for si3: int in 3:
-			var sp3: Vector3 = (dseg_rp[0] as Vector3).lerp(dseg_rp[1] as Vector3, float(si3) / 2.0)
-			var mk3 := MeshInstance3D.new()
-			var sm3 := SphereMesh.new()
-			sm3.radius = 0.025
-			sm3.height = 0.05
-			mk3.mesh = sm3
-			mk3.material_override = mark_mat
-			mk3.position = to_body_rp * sp3 + Vector3(0.0, 0.0, 0.055)
-			main.car_body.add_child(mk3)
-			markers.append(mk3)
+	# Fix Pass 11 (Item 4): the drop lever's grab segment
+	# joined the overlay (same stand-off toward the driver).
+	# Fix Pass 20 (Item 1): the lever is retired - the DROP
+	# BUTTON's single point marker takes its place.
+	var mk3 := MeshInstance3D.new()
+	var sm3 := SphereMesh.new()
+	sm3.radius = 0.025
+	sm3.height = 0.05
+	mk3.mesh = sm3
+	mk3.material_override = mark_mat
+	mk3.position = to_body_rp * main.debug_drop_btn_point() + Vector3(0.0, 0.0, 0.055)
+	main.car_body.add_child(mk3)
+	markers.append(mk3)
 	await snap(main.fallback_cam, "zone_overlay_view.png")
 	for mk2: MeshInstance3D in markers:
 		main.car_body.remove_child(mk2)
@@ -416,45 +416,37 @@ func _run() -> void:
 	await snap(cam_dt, "dash_top_view.png")
 	cam_dt.queue_free()
 
-	# Fix Pass 11 (Item 4): the drop lever's own portrait - it
-	# sits beside the driver, outside the eye camera's frame,
-	# so it gets a dedicated camera: lever posed mid-pull
-	# (0.45 rad, past the detent) on the right pod.
-	# Fix Pass 12 (Item 1): the portrait reframes on the
-	# SHIFTER - forward on the right pod, beside the wheel.
-	# Fix Pass 13 (Item 2): the portrait reframes again on
-	# the CENTRE lever - pivot at the middle of the dash,
-	# posed mid-pull (0.45 rad; the detent is 0.50 now, so
-	# this is the loaded moment just before it lets go).
-	# Fix Pass 15 (Item 3): the portrait reframes on the FACE
-	# lever - pivot on the dash's driver face, right of the
-	# wheel, posed mid-pull; then the mirror is toggled and
-	# the LEFT face gets the same portrait.
-	check(main.drop_lever_pivot != null, "the drop lever is built on the dash face")
-	main.drop_lever_angle = 0.45
-	main.drop_lever_pivot.rotation.x = 0.45
+	# Fix Pass 11 (Item 4): the release control's own portrait -
+	# it sits beside the driver, outside the eye camera's
+	# frame, so it gets a dedicated camera.
+	# Fix Passes 12/13/15 reframed it through the lever's
+	# lives (shifter, centre lever, face lever).
+	# Fix Pass 20 (Item 1): the portrait is the DROP BUTTON's
+	# now - on the dash face at the lever's spot; then the
+	# mirror is toggled and the LEFT face gets the same
+	# portrait. (The capture names change with the subject:
+	# drop_btn_view.png / drop_btn_view_left.png.)
+	check(main.drop_btn_node != null, "the drop button is built on the dash face")
 	var cam_dl := Camera3D.new()
 	main.car_body.add_child(cam_dl)
 	cam_dl.position = Vector3(0.95, 1.40, 0.15)
 	await physics_frame
 	await physics_frame
-	cam_dl.look_at(main.car_body.global_transform * Vector3(0.40, 0.95, -0.35), Vector3.UP)
-	await snap(cam_dl, "drop_lever_view.png")
+	cam_dl.look_at(main.car_body.global_transform * main.drop_btn_node.position, Vector3.UP)
+	await snap(cam_dl, "drop_btn_view.png")
 	cam_dl.queue_free()
-	if not main.drop_lever_left:
-		main._toggle_drop_lever_side()
+	if not main.drop_btn_left:
+		main._toggle_drop_btn_side()
 	var cam_dl2 := Camera3D.new()
 	main.car_body.add_child(cam_dl2)
 	cam_dl2.position = Vector3(-0.95, 1.40, 0.15)
 	await physics_frame
 	await physics_frame
-	cam_dl2.look_at(main.car_body.global_transform * Vector3(-0.40, 0.95, -0.35), Vector3.UP)
-	await snap(cam_dl2, "drop_lever_view_left.png")
+	cam_dl2.look_at(main.car_body.global_transform * main.drop_btn_node.position, Vector3.UP)
+	await snap(cam_dl2, "drop_btn_view_left.png")
 	cam_dl2.queue_free()
-	if main.drop_lever_left:
-		main._toggle_drop_lever_side()
-	main.drop_lever_angle = main.DROP_LEVER_REST_RAD
-	main.drop_lever_pivot.rotation.x = main.DROP_LEVER_REST_RAD
+	if main.drop_btn_left:
+		main._toggle_drop_btn_side()
 
 	# Fix Pass 3 (Item 4): the stood-up wheel must FACE the driver.
 	# Project the rim circle (in the tilt node's local XZ plane)
