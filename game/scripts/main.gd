@@ -31,7 +31,7 @@ extends Node3D
 ## (s, lat), gap spanning, lap/feature logic, crane targeting.
 ## Still Crammond-flavoured elsewhere: rationed boost, slope
 ## gravity, ballistic gap jumps, touchdown quality from impact
-## speed + alignment, dent + smoke on hard landings.
+## speed + alignment, dent on hard landings.
 ##
 ## Grab rule (documented choice): the LAST hand to squeeze grip near the
 ## wheel drives it; if that hand releases while the other still grips,
@@ -557,6 +557,30 @@ const CONTACT_SCRUB_HDG: float = 8.0 # deg
 const CONTACT_READOUT_S: float = 2.5 # s the touchdown readout stays up
 const CONTACT_LOAD_RAMP_S: float = 0.65 # s for the springs to take the car's weight at contact
 const CONTACT_LOAD_FLOOR: float = 0.10 # tire capacity fraction at the first contact instant
+# Fix Pass 24 (Item 1) - the boost economy (design of record:
+# boost-economy.md in the project root). The meter is no
+# longer a one-shot ration: it is a TANK that racing air
+# refills. All quantities in the code's long-standing units
+# (30 units = 1 s of boost at the shipped drain). The three
+# dials are the owner's tuning surface - capacity, the
+# starting stake, the air exchange rate. The drain and the
+# boost POWER (the +9.0 tire_long term in _update_drive)
+# are not economy dials and do not move in this pass.
+const BOOST_CAPACITY: float = 120.0 # the tank: 4.0 s of boost
+const BOOST_START_STOCK: float = 60.0 # the stake at race start: 2.0 s (the old whole ration)
+const BOOST_DRAIN_PER_S: float = 30.0 # unchanged since Test 1
+const BOOST_AIR_RATE: float = 10.0 # units paid per second of payable air, at CLEAN
+const BOOST_PAY_MIN_AIR_S: float = 0.15 # s: flights shorter than this pay nothing (texture hops)
+const BOOST_GRADE_MULT: Dictionary = {"CLEAN": 1.0, "SCRUBBED": 0.5, "CROSSED-UP": 0.2}
+const PAY_FLASH_S: float = 0.35 # s the meter fill flashes after a payout lands
+# Fix Pass 24 (Item 3): the air audit's sector width - the
+# geography the audit maps a track's payable air onto.
+const AUDIT_SECTOR_M: float = 250.0
+# Fix Pass 24 (Item 2): the turbo meter bar on the dash face
+# (see _build_cockpit): TURBO_BAR_POS is the FILL's centre;
+# the trough sits 4 mm behind it on the slab face.
+const TURBO_BAR_W: float = 0.70
+const TURBO_BAR_POS: Vector3 = Vector3(0.0, 0.845, -0.543)
 # Fix Pass 7 (Item 2) - the Crammond jitter mechanism, reproduced
 # structurally (crammond-notes.md Q3): the original's road profiles
 # are smooth analytic ramps - its tire jitter EMERGES from faceted
@@ -634,9 +658,33 @@ var car_heading: float = 0.0 # the car's own yaw, rad (never read from the frame
 var yaw_rate: float = 0.0 # rad/s, lagged toward the bicycle target
 var vel2: Vector2 = Vector2.ZERO # world-XZ velocity, m/s (velocity != heading)
 var wheel_angle: float = 0.0
-var boost_meter: float = 60.0
+var boost_meter: float = BOOST_START_STOCK
 var dent_level: int = 0
-var smoke_on: bool = false
+# Fix Pass 24 (Item 1): the last payout's record - what the
+# DIAG LAST PAY line and the stages read. _pay_for_landing
+# rewrites it at EVERY graded landing (zeroed when the
+# landing paid nothing), so it always states the last
+# landing's ruling, not a stale one.
+var last_pay_units: float = 0.0
+var last_pay_air_s: float = 0.0
+var last_pay_grade: String = "-"
+# Fix Pass 24 (Item 2): the meter's rendered state - the
+# fill fraction (stock / capacity) the dash bar draws, and
+# the payout flash's remaining seconds (set by
+# _pay_for_landing, decayed by _update_turbo_meter).
+var turbo_fill_frac: float = 0.5
+var pay_flash_t: float = 0.0
+var turbo_fill_mi: MeshInstance3D = null
+var turbo_fill_mat: StandardMaterial3D = null
+# Fix Pass 24 (Item 3): the air audit's recorder state (see
+# debug_audit_begin / _pay_for_landing / _enter_air). All
+# inert unless a test arms it - the shipped game never does.
+var audit_on: bool = false
+var audit_sectors: Array[float] = []
+var audit_income: float = 0.0
+var audit_air_s: float = 0.0
+var audit_flight_open: bool = false
+var audit_flight_s: float = 0.0
 var last_touchdown: String = "-"
 var was_airborne: bool = false
 var finished_time: float = 0.0
@@ -901,7 +949,6 @@ var car_body: Node3D
 var nose_mi: MeshInstance3D
 var wheel_node: Node3D # tilt node (stood-up wheel plane)
 var wheel_spin: Node3D # spin node inside it (rotates about the wheel axis)
-var smoke_mi: MeshInstance3D
 var lean_needle: MeshInstance3D
 # Fix Pass 15 (Item 2): the crane rig's nodes (built once,
 # posed per hang by _place_crane, hidden outside MODE_HANG).
@@ -1076,7 +1123,7 @@ var last_release_err_deg: float = 0.0
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
-const GRAB_LOG_BUILD: String = "FP23 (base 8aec38a)"
+const GRAB_LOG_BUILD: String = "FP24 (base 1669c3e)"
 const GRAB_LOG_MAX_BYTES: int = 262144 # 256 KB tail kept across launches
 
 
@@ -1139,7 +1186,7 @@ func _ready() -> void:
 			if not prior17.ends_with("\n"):
 				grab_log_file.store_line("")
 		grab_log_file.store_line("=== SESSION %s %s ===" % [GRAB_LOG_BUILD, Time.get_datetime_string_from_system()])
-		grab_log_file.store_line("grab log - events: LAT latch, FIRE activation, REL latch release, NOLAT zone entry unlatched, RIM passenger attach, BTN the drop button (FIRE on the chains, any hang phase / PRESS in drive or air), RELEASE the drop's heading record (HDG vs SEC travel direction, ERR the difference)")
+		grab_log_file.store_line("grab log - events: LAT latch, FIRE activation, REL latch release, NOLAT zone entry unlatched, RIM passenger attach, BTN the drop button (FIRE on the chains, any hang phase / PRESS in drive or air), RELEASE the drop's heading record (HDG vs SEC travel direction, ERR the difference), PAY a graded landing's boost payout (units paid, AIR the flight's seconds, the touchdown grade)")
 		grab_log_file.flush()
 	_load_settings()
 	_build_environment()
@@ -2252,6 +2299,12 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 	lost_lat_t = 0.0
 	air_exit_y = float(fr["pos"].y)
 	air_from_gap = from_gap
+	if audit_on:
+		# Fix Pass 24 (Item 3): a road-born separation opens an
+		# audit flight at this s (the payout closes it in
+		# _pay_for_landing; crane falls never reach _enter_air).
+		audit_flight_open = true
+		audit_flight_s = car_s
 	air_basis0 = car.global_transform.basis # FP14 (Item 7): attitude builds from the takeoff basis
 	air_from_rebound = false # FP14 (Item 1): callers that throw the car set this after entry
 	air_from_release = false # FP14 (Item 1): a road-born flight; _do_release marks its own
@@ -2360,20 +2413,14 @@ func _build_car() -> void:
 		em.draw_pass_1 = puff
 		car_body.add_child(em)
 		dust_emitters.append(em)
-	# Smoke puff (basic dent carnage placeholder)
-	smoke_mi = MeshInstance3D.new()
-	var sph := SphereMesh.new()
-	sph.radius = 0.30
-	sph.height = 0.60
-	smoke_mi.mesh = sph
-	smoke_mi.position = Vector3(0, 1.25, -1.85)
-	var sm := StandardMaterial3D.new()
-	sm.albedo_color = Color(0.25, 0.25, 0.25, 0.55)
-	sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	smoke_mi.material_override = sm
-	smoke_mi.visible = false
-	car_body.add_child(smoke_mi)
+	# Fix Pass 24 (Item 4): the Test-1 smoke-puff sphere that
+	# lived here is DELETED outright (owner's tap, 2026-10-30
+	# 09:26 CDT) - mesh, trigger and pulse, all of it. The run-15
+	# video convicted it: a grey unshaded disc that faded in
+	# after a hard landing and throbbed in the driver's face
+	# until the next reset; run 19 re-confirmed it. The
+	# nose-dent visual is separate and stays. Real smoke, if
+	# it ever exists, belongs to the carnage build.
 	_build_cockpit()
 
 
@@ -2580,6 +2627,32 @@ func _build_cockpit() -> void:
 	drop_btn_node = dbt
 	_register_dash_ctl(dbt, "drop")
 	_apply_drop_btn_side()
+	# Fix Pass 24 (Item 2): the TURBO METER - a fill bar on
+	# the dash face in the button cluster's row, built with
+	# the cockpit (NOT on either info panel: it never hides).
+	# The trough is the whole tank; the fill is a unit box
+	# _update_turbo_meter re-scales and re-centres each
+	# physics frame, anchored at the trough's left edge so
+	# the level reads against a fixed edge. Placement: the
+	# slab face (driver side z -0.55) below the dash-top
+	# buttons, clear of the drop button's bracket (its top
+	# is y 0.78; the bar rides at 0.845) and of the wheel
+	# rim's plane ahead of it.
+	# (Depths are 0.024, not a slim 0.010: the dash audit's
+	# buried test grows every car AABB by -0.01, and a thinner
+	# box goes negative under it - the engine errors and the
+	# mesh silently drops out of the audit. The bar reads as
+	# a raised gauge housing instead, which suits the dash.)
+	_box(car_body, Vector3(TURBO_BAR_W + 0.02, 0.034, 0.024), TURBO_BAR_POS + Vector3(0.0, 0.0, -0.004), _mat(Color(0.05, 0.05, 0.06)), "TurboTrough")
+	turbo_fill_mi = MeshInstance3D.new()
+	var tfm := BoxMesh.new()
+	tfm.size = Vector3(1.0, 0.024, 0.024)
+	turbo_fill_mi.mesh = tfm
+	turbo_fill_mi.name = "TurboFill"
+	turbo_fill_mat = _mat_unshaded(Color(0.25, 0.55, 0.95))
+	turbo_fill_mi.material_override = turbo_fill_mat
+	turbo_fill_mi.position = TURBO_BAR_POS
+	car_body.add_child(turbo_fill_mi)
 	# Lean indicator needle on the dash (experiment feedback)
 	# (rides up with the raised wheel so it stays clear of the rim)
 	# Fix Pass 13 (Item 2): shifted left off the centreline -
@@ -2674,12 +2747,19 @@ func _build_cockpit() -> void:
 	# Fix Pass 11 (Item 4): widened again (0.84 -> 1.02, label
 	# 760 -> 900 px) - the ZONE line gained the DRP tag and
 	# wrapped again; the tag names still stay full.
-	diag_root.position = Vector3(-0.54, 1.29, -1.00)
+	# Fix Pass 24 (Item 1): raised 5 cm more and the board
+	# grows 0.34 -> 0.44 tall - the DIAG block gains the BOOST
+	# and LAST PAY lines (eleven rows; the live block measures
+	# 0.42 m tall with its wraps). The first growth (0.40)
+	# still left the text overhanging the board's lower edge
+	# and one of the proof's 63 DIAG sightlines grazed -
+	# the FP11 lesson, relearned at this board's expense.
+	diag_root.position = Vector3(-0.54, 1.34, -1.00)
 	diag_root.rotation_degrees = Vector3(-10, 28, 0)
 	car_body.add_child(diag_root)
-	_box(diag_root, Vector3(1.02, 0.34, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)), "DiagBoard")
+	_box(diag_root, Vector3(1.02, 0.44, 0.02), Vector3(0, 0, 0), _mat(Color(0.05, 0.07, 0.12)), "DiagBoard")
 	diag_label = Label3D.new()
-	diag_label.position = Vector3(-0.45, 0.125, 0.02)
+	diag_label.position = Vector3(-0.45, 0.175, 0.02) # FP24: same 0.045 top inset on the taller board
 	diag_label.font_size = 26
 	diag_label.pixel_size = 0.00105
 	diag_label.width = 900.0
@@ -2838,6 +2918,14 @@ func _build_diag_block() -> String:
 		lines.append("CONTACT -")
 	else:
 		lines.append("CONTACT %s LAT %.1f HDG %+.1f" % [contact_grade, contact_lat_speed, contact_head_err])
+	# Fix Pass 24 (Items 1+2): the economy on the board - the
+	# tank's state and the last payout's ruling, in the open
+	# like every other ruling this game makes.
+	lines.append("BOOST %d/%d" % [int(round(boost_meter)), int(BOOST_CAPACITY)])
+	if last_pay_units > 0.0:
+		lines.append("LAST PAY +%.1f AIR %.2fs %s" % [last_pay_units, last_pay_air_s, last_pay_grade])
+	else:
+		lines.append("LAST PAY -")
 	# Fix Pass 13 (Item 4): the hang input log - the last six
 	# face-button edges during MODE_HANG, oldest first, each
 	# "racetime:TAG" (RA/RB/LX/LY).
@@ -4185,9 +4273,12 @@ func start_race() -> void:
 	edge_roll = 0.0
 	car_heading = _frame_yaw(_frame_at(2.0)["tan"])
 	wheel_angle = 0.0
-	boost_meter = 60.0
+	boost_meter = BOOST_START_STOCK # Fix Pass 24: the stake (was the whole one-shot ration)
 	dent_level = 0
-	smoke_on = false
+	last_pay_units = 0.0 # Fix Pass 24: no payout yet this race
+	last_pay_air_s = 0.0
+	last_pay_grade = "-"
+	pay_flash_t = 0.0
 	last_touchdown = "-"
 	was_airborne = false
 	race_time = 0.0
@@ -4566,6 +4657,7 @@ func _physics_process(delta: float) -> void:
 		slip_state = 0.0 # tires unloaded: no slip, no skid
 		tire_ratio = 0.0 # Fix Pass 15 (Item 1): and no telegraph either
 		tire_band = 0.0
+	_update_turbo_meter(delta) # Fix Pass 24 (Item 2): the meter's fill + flash state
 	_update_ctl_articulation(delta) # Fix Pass 13 (Item 5): seat levers + button dips
 	_update_lean_reading()
 	_update_suspension(delta)
@@ -4668,7 +4760,7 @@ func _update_drive(delta: float) -> void:
 	var tire_long: float = in_throttle * 10.0
 	if in_boost and boost_meter > 0.0 and in_throttle > 0.05:
 		tire_long += 9.0
-		boost_meter = maxf(boost_meter - 30.0 * delta, 0.0)
+		boost_meter = maxf(boost_meter - BOOST_DRAIN_PER_S * delta, 0.0)
 	# Fix Pass 13 (Item 1): COMBINED SLIP at a governed contact.
 	# One tire has one friction budget: while the contact
 	# transient runs (see _land) the lateral bleed is spending
@@ -4969,8 +5061,7 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 		quality = "OK"
 	last_touchdown = "%s (vy %.1f, tilt %.0f)" % [quality, vy, misalign]
 	if quality == "HARD":
-		dent_level += 1
-		smoke_on = true
+		dent_level += 1 # Fix Pass 24 (Item 4): the dent stays; the smoke puff it used to light is deleted
 	# Fix Pass 5: the impact goes INTO the springs. Compression is set
 	# from impact speed (front biased - the nose arrives first, so it
 	# dives first), with compressing velocity so the spring dynamics
@@ -5045,6 +5136,7 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	if contact_label != null:
 		contact_label.text = "TOUCHDOWN %s - LAT %.1f M/S, HDG %+.1f DEG" % [
 			contact_grade, contact_lat_speed, contact_head_err]
+	_pay_for_landing() # Fix Pass 24 (Item 1): the air exchange (crane drops refused inside)
 	# The contact TRANSIENT: for as long as this touchdown's
 	# own slide takes to bleed (the model's bleed law integrated
 	# against the contact's lateral speed), the tires are
@@ -5061,6 +5153,49 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	mode = MODE_DRIVE
 	was_airborne = false
 	_place_car_on_track(_frame_at(car_s))
+
+
+func _pay_for_landing() -> void:
+	# Fix Pass 24 (Item 1): the air exchange, read off the
+	# landing _land just graded. What pays: a RACING
+	# separation - a flight that began off the road under
+	# power (road lip, gap, suspension rebound) and ends in
+	# this graded on-road landing. What never pays:
+	#   - a crane drop (air_from_release): the chains are
+	#     transport, not flight - FP13's "no boost payout at
+	#     the drop" ruling, kept;
+	#   - a flight under BOOST_PAY_MIN_AIR_S: texture hops
+	#     are the road's grain, not income.
+	# Off-road flights never reach _land at all (they go to
+	# recovery), so they cannot pay by construction. A
+	# rebound's second flight is a racing separation with
+	# its own landing: it pays as its own landing, at its
+	# own shorter time. The payout clamps at the tank.
+	last_pay_units = 0.0
+	last_pay_air_s = air_time
+	last_pay_grade = contact_grade
+	if air_from_release or air_time < BOOST_PAY_MIN_AIR_S:
+		return
+	var mult: float = float(BOOST_GRADE_MULT.get(contact_grade, 0.0))
+	if audit_on:
+		# Fix Pass 24 (Item 3): the audit books the track's
+		# GROSS offer - the full grade-weighted payout before
+		# the tank clamp (the clamp is the car's state, not
+		# the track's geography) - and files the flight's air
+		# under the sector it separated in.
+		audit_air_s += air_time
+		audit_income += air_time * mult * BOOST_AIR_RATE
+		if audit_flight_open:
+			var ai: int = clampi(int(audit_flight_s / AUDIT_SECTOR_M), 0, audit_sectors.size() - 1)
+			audit_sectors[ai] += air_time
+			audit_flight_open = false
+	var pay: float = minf(air_time * mult * BOOST_AIR_RATE, BOOST_CAPACITY - boost_meter)
+	if pay <= 0.0:
+		return
+	boost_meter += pay
+	last_pay_units = pay
+	pay_flash_t = PAY_FLASH_S
+	_grab_event("PAY %.1f AIR %.2f %s" % [pay, air_time, contact_grade])
 
 
 func _bleed_time(v0: float) -> float:
@@ -5849,6 +5984,30 @@ func _update_suspension(delta: float) -> void:
 		_susp_integrate(0.0, 0.0, delta)
 
 
+func _update_turbo_meter(delta: float) -> void:
+	# Fix Pass 24 (Item 2): the meter's per-frame state - the
+	# fill fraction the bar and the stages both read, the
+	# payout flash's decay, and the fill mesh + colour that
+	# render them. Bright at full, dark at empty, so the
+	# level reads in peripheral vision; while the flash runs
+	# the fill goes boost-bright, so a payout is SEEN in the
+	# same moment the landing is graded.
+	turbo_fill_frac = clampf(boost_meter / BOOST_CAPACITY, 0.0, 1.0)
+	if pay_flash_t > 0.0:
+		pay_flash_t = maxf(pay_flash_t - delta, 0.0)
+	if turbo_fill_mi == null:
+		return
+	var w: float = TURBO_BAR_W * maxf(turbo_fill_frac, 0.001)
+	turbo_fill_mi.scale = Vector3(w, 1.0, 1.0)
+	turbo_fill_mi.position = Vector3(
+		TURBO_BAR_POS.x - TURBO_BAR_W * 0.5 + w * 0.5, TURBO_BAR_POS.y, TURBO_BAR_POS.z)
+	if pay_flash_t > 0.0:
+		turbo_fill_mat.albedo_color = Color(0.85, 0.97, 1.0)
+	else:
+		turbo_fill_mat.albedo_color = Color(0.25, 0.55, 0.95).lerp(
+			Color(0.03, 0.05, 0.10), 1.0 - turbo_fill_frac)
+
+
 func _refresh_car_visuals() -> void:
 	# wheel visual follows steering angle: the spin node rotates
 	# about the wheel's own axis (see the grab-math derivation note
@@ -5912,11 +6071,6 @@ func _refresh_car_visuals() -> void:
 	if nose_mi != null:
 		nose_mi.rotation_degrees.z = float(dent_level) * 4.0
 		nose_mi.scale = Vector3(1.0, 1.0 - 0.10 * float(denti_clamp()), 1.0 - 0.08 * float(denti_clamp()))
-	if smoke_mi != null:
-		smoke_mi.visible = smoke_on
-		if smoke_on:
-			var pulse: float = 1.0 + 0.25 * sin(Time.get_ticks_msec() / 180.0)
-			smoke_mi.scale = Vector3.ONE * pulse
 	# state label text
 	if state_label != null:
 		if mode == MODE_HANG:
@@ -6540,6 +6694,43 @@ func debug_force_fall_at(s: float) -> void:
 	lost_lat_t = 0.0
 	air_vel = Vector3(0.0, -6.0, 0.0)
 	car.global_position = frf["pos"] - Vector3.UP * 20.0
+
+
+func debug_audit_begin() -> void:
+	# Fix Pass 24 (Item 3): arm the air audit's recorder for
+	# the ACTIVE track (see _pay_for_landing / _enter_air).
+	# A staged reference lap is then driven over it by the
+	# test (stage 54's protocol: pinned-24 pursuit, the
+	# proven gap-window drivers at the gaps). Test-mode
+	# only - the shipped game never arms this.
+	audit_sectors.clear()
+	var n: int = int(ceil(track_len / AUDIT_SECTOR_M))
+	for i: int in n:
+		audit_sectors.append(0.0)
+	audit_income = 0.0
+	audit_air_s = 0.0
+	audit_flight_open = false
+	audit_on = true
+
+
+func debug_audit_end() -> Dictionary:
+	# Fix Pass 24 (Item 3): close the audit and hand back the
+	# geography: payable air-seconds per sector, the lap's
+	# total payable air, its projected income at the shipped
+	# dials (gross, before the tank clamp), and the longest
+	# air-starved stretch (the longest run of zero sectors).
+	audit_on = false
+	var best: int = 0
+	var run: int = 0
+	for v: float in audit_sectors:
+		if v <= 0.0:
+			run += 1
+			best = maxi(best, run)
+		else:
+			run = 0
+	return {"sectors": audit_sectors.duplicate(), "air_s": audit_air_s,
+		"income": audit_income, "longest_starved_m": float(best) * AUDIT_SECTOR_M,
+		"track_len": track_len}
 
 
 func debug_body_width_m() -> float:
