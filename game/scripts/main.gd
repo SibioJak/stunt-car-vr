@@ -303,8 +303,8 @@ const VIEW_PITCH_GAIN: float = 0.6
 const VIEW_HEAVE_GAIN: float = 0.35
 # Fix Pass 8 (Item 2) - airborne is a LOAD decision (see
 # _update_suspension): the geometry route fires when the crest
-# load factor sits at ~zero at BOTH axles for AIR_SUSTAIN_FRAMES
-# consecutive frames (the road is falling away faster than
+# load factor sits at ~zero at BOTH axles for a sustained
+# run of consecutive frames (the road is falling away faster than
 # gravity - no stored-energy history is required or consulted);
 # the rebound route fires when the springs reach full droop
 # still throwing faster than REBOUND_THROW_VEL (stored energy
@@ -319,7 +319,6 @@ const VIEW_HEAVE_GAIN: float = 0.35
 # ~0.57 m/s - droop + velocity alone cannot tell a bleed
 # from a bounce; the load level can).
 const AIR_LOAD_EPS: float = 0.03 # load factor that counts as unloaded (FP21: per corner on the main track)
-const AIR_SUSTAIN_FRAMES: int = 3 # frames at ~zero load before separation (the spur's FP8 rule; the main track separates per corner since FP21, no sustain)
 const REBOUND_THROW_VEL: float = -1.6 # cv_f + cv_r (m/s) that counts as a throw (FP14: staged from the joint trace below)
 const REBOUND_LOAD_FLOOR: float = 0.8 # rebound route needs the road fully supporting
 # Fix Pass 14 (Item 2): the throw route's travel condition.
@@ -594,20 +593,12 @@ var track_len: float = 0.0
 var track_data: Dictionary = {}
 var active_track: String = ""
 const RACE_LAPS: int = 3 # circuit race length (the ribbon is point-to-point)
-# Fix Pass 10 (Item 4): the loop spur branches off the circuit's
-# home straight at SPUR_ENTRY_S and merges back at SPUR_JOIN_S;
-# the ring radius sets the loop-the-loop detach speed sqrt(g*R)
-# ~= 10.4 m/s at the top.
-const SPUR_ENTRY_S: float = 170.0
-const SPUR_JOIN_S: float = 330.0
-const SPUR_RING_R: float = 11.0
+# Fix Pass 23: the FP10 loop spur is REMOVED (owner's
+# verdict after run 19: "nuke it, we'll deal with it
+# later"). The branch, the ring, its sibling driver and
+# suspension, and all its presentation are gone; the home
+# straight is one clean line and no branch state remains.
 var lap_count: int = 0
-# Fix Pass 10 (Item 4): loop-spur state - the spur is a branch
-# surface off the circuit with its own arc parameter (spur_s);
-# while on_spur, driving/suspension read the spur's frames.
-var on_spur: bool = false
-var spur_s: float = 0.0
-var spur_lat: float = 0.0
 var gap_s0: float = 0.0
 var gap_s1: float = 0.0
 # Fix Pass 7 (Item 1): extension anchors, recorded by the generator
@@ -730,7 +721,7 @@ var test_hand_pos: Dictionary = {"L": Vector3.ZERO, "R": Vector3.ZERO}
 # c_f/c_r/cv_f/cv_r remain as the corner MEANS: every pre-FP14
 # reader (air-entry tests, landing checks, view heave, the
 # body spring, the stages) reads the means unchanged, and the
-# axle integrator (spur, air, hang, done) still writes them -
+# axle integrator (air, hang, done) still writes them -
 # and mirrors them into the corners, grouped by axle, so the
 # two states never desync.
 var c_f: float = SUSP_REST
@@ -758,7 +749,6 @@ var rebound_gate_vy: float = 0.0 # FP14 (Item 1): impact vy of an armed energy r
 var deep_hit_age: float = 9.0 # FP14 (Item 2): seconds since the last deep compression (route-2 evidence)
 var bounce_chain: int = 0 # FP14 (Item 1): spring throws since the last settled ground run
 var grounded_t: float = 0.0 # FP14 (Item 1): continuous grounded seconds (chain re-arm clock)
-var air_load_frames: int = 0 # spur's sustain counter (FP8 form); the main track's separation is per-corner since FP21
 var wheel_mis: Array[MeshInstance3D] = []
 var wheel_axle: Array[int] = [] # 0 = front, 1 = rear, parallel to wheel_mis
 # Fix Pass 9 (Item 2, scope addition): per-WHEEL support state,
@@ -887,7 +877,7 @@ var skid_player: AudioStreamPlayer
 # Fix Pass 15 (Item 1): the telegraph state. tire_ratio is the
 # demand-vs-capacity max over the two axles (0 outside DRIVE);
 # tire_ratio_axle names the axle nearer its limit (0 front,
-# 1 rear, -1 = both, the spur's form); tire_band is the ratio
+# 1 rear, -1 = both); tire_band is the ratio
 # mapped through the band edges. edge_rumble_now / edge_scrape_now
 # are the support-state strengths from _update_suspension.
 var tire_ratio: float = 0.0
@@ -1086,7 +1076,7 @@ var last_release_err_deg: float = 0.0
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
-const GRAB_LOG_BUILD: String = "FP22 (base d8be713)"
+const GRAB_LOG_BUILD: String = "FP23 (base 8aec38a)"
 const GRAB_LOG_MAX_BYTES: int = 262144 # 256 KB tail kept across launches
 
 
@@ -1581,11 +1571,9 @@ func _build_circuit() -> Dictionary:
 	_gen_append(false, 0.0)
 	var feats: Dictionary = {}
 	var curves: Array = []
-	# S1: home straight (spur entry/merge spans recorded for Item 4)
+	# S1: home straight
 	_walk(380, 0.0, 0.0, 0.0, false)
 	feats["home_len"] = 380.0
-	feats["spur_entry_s"] = SPUR_ENTRY_S
-	feats["spur_join_s"] = SPUR_JOIN_S
 	# S2: curve A - left, the long opening sweeper (R~244),
 	# tipping the lap westward and gently down toward the dip
 	var a_s0: float = float(b_pts.size() - 1)
@@ -1660,399 +1648,14 @@ func _build_circuit() -> Dictionary:
 	d["root"] = root
 	_activate_track(d)
 	_build_track_meshes(d)
-	_build_spur(d)
 	return d
 
-func _build_spur(d: Dictionary) -> void:
-	# Fix Pass 10 (Item 4): THE LOOP SPUR - a branch surface off
-	# the circuit's home straight: diverge left, descend, run
-	# in level, a full vertical ring (R = SPUR_RING_R), then a
-	# Bezier exit merging back >= 120 m downstream. Geometry is
-	# built as POSITIONS first (phases below), then tangents by
-	# finite difference, sides by PARALLEL TRANSPORT (the
-	# _frame_at tan x UP construction degenerates at the ring's
-	# vertical tangents), and kv as the signed pitch rate about
-	# the side axis - in the ring that is a constant -1/R, which
-	# is what makes the suspension's physical load form give
-	# the honest loop physics (see _update_suspension_spur).
-	var pts: Array[Vector3] = []
-	# Phase 1: diverge along the home straight, the centreline
-	# easing from the road centre to 3.4 m left (outside).
-	for i: int in range(0, 36):
-		var fr1: Dictionary = _frame_at(SPUR_ENTRY_S + float(i))
-		var u1: float = clampf(float(i) / 35.0, 0.0, 1.0)
-		var lat1: float = -3.4 * (u1 * u1 * (3.0 - 2.0 * u1))
-		pts.append(Vector3(fr1["pos"]) + Vector3(fr1["side"]) * lat1)
-	# Phases 2-3: a SHORT local walk - turn left 45 deg while
-	# descending at up to -16 deg, then level off at the base.
-	# The walk is deliberately brief: every metre it spends
-	# paralleling the straight is a metre stolen from the
-	# exit leg, and a cramped exit kinks (measured: a 53 m
-	# exit spiked to 23 deg/m at the ring junction; this
-	# layout leaves the exit ~90 m to blend back).
-	var pos: Vector3 = pts[pts.size() - 1]
-	var dprev: Vector3 = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized()
-	var yaw: float = atan2(-dprev.x, -dprev.z)
-	var phi: float = asin(clampf(dprev.y, -1.0, 1.0))
-	for i2: int in 45:
-		yaw += deg_to_rad(1.0)
-		phi = move_toward(phi, deg_to_rad(-16.0), 0.006)
-		var dir2 := Vector3(-sin(yaw) * cos(phi), sin(phi), -cos(yaw) * cos(phi))
-		pos += dir2
-		pts.append(pos)
-	for i3: int in 12:
-		phi = move_toward(phi, 0.0, 0.024)
-		var dir3 := Vector3(-sin(yaw) * cos(phi), sin(phi), -cos(yaw) * cos(phi))
-		pos += dir3
-		pts.append(pos)
-	# Phase 4: THE RING - exact circle samples in the vertical
-	# plane of the base heading. First and last samples are the
-	# base point; the exit continues from it.
-	var base_b: Vector3 = pos
-	var hhat := Vector3(-sin(yaw), 0.0, -cos(yaw))
-	var ring_s0: float = float(pts.size() - 1)
-	for k: int in range(1, 70):
-		var th: float = TAU * float(k) / 69.0
-		pts.append(base_b + hhat * (SPUR_RING_R * sin(th)) + Vector3.UP * (SPUR_RING_R - SPUR_RING_R * cos(th)))
-	# Phase 5: exit - a cubic Bezier in 3D from the ring base
-	# to the merge point on the home straight (2 m left of the
-	# centreline), arc-length resampled at ~1 m.
-	var frm: Dictionary = _frame_at(SPUR_JOIN_S)
-	var m_pt: Vector3 = Vector3(frm["pos"]) + Vector3(frm["side"]) * -2.0
-	var m_tan: Vector3 = frm["tan"]
-	var chord: float = base_b.distance_to(m_pt)
-	# Long entry control, shorter exit control: the exit must
-	# leave the ring base along the ring's own heading and do
-	# its turning mid-leg, not in a curvature spike at B.
-	var c1: Vector3 = base_b + hhat * clampf(chord * 0.55, 25.0, 110.0)
-	var c2: Vector3 = m_pt - m_tan * clampf(chord * 0.30, 15.0, 80.0)
-	var raw: Array[Vector3] = []
-	for j: int in 201:
-		var t5: float = float(j) / 200.0
-		var a5: Vector3 = base_b.lerp(c1, t5)
-		var b5: Vector3 = c1.lerp(c2, t5)
-		var cc5: Vector3 = c2.lerp(m_pt, t5)
-		raw.append(a5.lerp(b5, t5).lerp(b5.lerp(cc5, t5), t5))
-	var acc: float = 0.0
-	for j2: int in range(1, raw.size()):
-		acc += raw[j2].distance_to(raw[j2 - 1])
-		if acc >= 1.0:
-			pts.append(raw[j2])
-			acc = 0.0
-	if pts[pts.size() - 1].distance_to(m_pt) > 0.01:
-		pts.append(m_pt)
-	# Two light smoothing passes over the positions (the main
-	# generator's own join medicine - see _frame_at's note):
-	# the phase joins otherwise concentrate their turning
-	# into 20+ deg/m curvature spikes. The first/last two
-	# samples stay exact (entry and merge are surveyed points).
-	for sp_pass: int in 2:
-		var sm: Array[Vector3] = pts.duplicate()
-		for i5: int in range(2, pts.size() - 2):
-			sm[i5] = pts[i5 - 1] * 0.25 + pts[i5] * 0.5 + pts[i5 + 1] * 0.25
-		pts = sm
-	# Fix Pass 12 (Item 6): the merge arrives ALIGNED. The loop
-	# audit measured the shipped exit leg reaching the join
-	# with a -2.54 deg heading residual, still unwinding at up
-	# to 3.45 deg/m over the last 12 m (the entry side unwinds
-	# at <= 1.00 deg/m). The Bezier's end tangent is parallel
-	# to the straight's by construction, but arc-length
-	# resampling plus the two smoothing passes above bend the
-	# final samples. Cure: blend the exit leg's last 40 m of
-	# POINTS onto the surveyed merge line - the main frame at
-	# the matching distance-to-join, offset -2 m like the
-	# merge point itself - with a smoothstep weight that
-	# reaches FULL by 15 m out (the last 15 m lie exactly on
-	# the surveyed line; the first FP12 blend, full weight
-	# only at the join itself, zeroed the residual but left
-	# a 3.79 deg/m unwind in the last 12 m - measured, then
-	# strengthened to this), BEFORE tangents/sides/kv are
-	# derived, so the whole frame field inherits the fix.
-	var n_pre: int = pts.size()
-	var suffix: Array[float] = []
-	suffix.resize(n_pre)
-	var acc2: float = 0.0
-	for ib2: int in range(n_pre - 1, -1, -1):
-		if ib2 < n_pre - 1:
-			acc2 += pts[ib2].distance_to(pts[ib2 + 1])
-		suffix[ib2] = acc2
-	for ic2: int in n_pre:
-		var d_end: float = suffix[ic2]
-		if d_end >= 40.0 or d_end <= 0.0:
-			continue
-		var w9: float = 1.0
-		if d_end > 15.0:
-			var u9: float = clampf((40.0 - d_end) / 25.0, 0.0, 1.0)
-			w9 = u9 * u9 * (3.0 - 2.0 * u9)
-		var fr9: Dictionary = _frame_at(SPUR_JOIN_S - d_end)
-		var tgt9: Vector3 = Vector3(fr9["pos"]) + Vector3(fr9["side"]) * -2.0
-		pts[ic2] = pts[ic2].lerp(tgt9, w9)
-	# Tangents: centred finite differences of the positions.
-	var n: int = pts.size()
-	var tans: Array[Vector3] = []
-	for i6: int in n:
-		var pa: Vector3 = pts[maxi(i6 - 1, 0)]
-		var pb: Vector3 = pts[mini(i6 + 1, n - 1)]
-		tans.append((pb - pa).normalized())
-	# Sides: parallel transport from the entry frame's side -
-	# carry the side forward, re-orthogonalising against each
-	# new tangent. This stays well-defined through the ring's
-	# vertical tangents, where tan x UP collapses.
-	var sides: Array[Vector3] = []
-	var sd: Vector3 = Vector3(_frame_at(SPUR_ENTRY_S)["side"])
-	for i7: int in n:
-		sd = (sd - tans[i7] * sd.dot(tans[i7])).normalized()
-		sides.append(sd)
-	# kv: minus the signed pitch rate about the side axis
-	# (centred), so a crest reads positive and the ring reads
-	# a constant -1/R, exactly the main track's convention.
-	var kvs: Array[float] = []
-	for i8: int in n:
-		var ia: int = maxi(i8 - 1, 0)
-		var ib: int = mini(i8 + 1, n - 1)
-		var cr: Vector3 = tans[ia].cross(tans[ib])
-		var ang: float = atan2(cr.dot(sides[i8]), clampf(tans[ia].dot(tans[ib]), -1.0, 1.0))
-		var ds: float = maxf(pts[ib].distance_to(pts[ia]), 0.05)
-		kvs.append(-ang / ds)
-	# Cumulative arc length (samples are ~1 m; the ring steps
-	# are 2*pi*R/69 = 1.002 m).
-	var cum: Array[float] = [0.0]
-	for i9: int in range(1, n):
-		cum.append(cum[i9 - 1] + pts[i9].distance_to(pts[i9 - 1]))
-	d["spur"] = {"pts": pts, "tan": tans, "side": sides, "kv": kvs,
-		"cum": cum, "len": cum[n - 1], "ring_s0": ring_s0,
-		"ring_s1": ring_s0 + TAU * SPUR_RING_R}
-	# Meshes: the same box-section treatment as the tracks,
-	# parented to the circuit root, plus stilts to the desert.
-	var root: Node3D = d["root"]
-	var sp: Dictionary = d["spur"]
-	var surf_pos := PackedVector3Array()
-	var surf_nrm := PackedVector3Array()
-	var surf_col := PackedColorArray()
-	var skirt_pos := PackedVector3Array()
-	var skirt_nrm := PackedVector3Array()
-	var skirt_col := PackedColorArray()
-	var edge_pos := PackedVector3Array()
-	var edge_nrm := PackedVector3Array()
-	var edge_col := PackedColorArray()
-	# Fix Pass 18 (micro): the main field is ASPHALT GREY -
-	# same value as the tracks' surf_c in
-	# _build_track_meshes; colour only. (What read "brown"
-	# on device was never this field at all: the box
-	# sections' winding was inverted, so the driver saw the
-	# underside's bot_c through the culled top - see the
-	# _add_quad_m note. This value is judged on device.)
-	var surf_c := Color(0.30, 0.30, 0.33)
-	var skirt_c := Color(1.0, 0.5, 0.05)
-	var bot_c := Color(0.55, 0.27, 0.03)
-	var edge_c := Color(1.0, 0.72, 0.10)
-	# Fix Pass 12 (Item 6): the ring's OUTER RIM BAND - for
-	# ring segments the underside is painted bright amber and
-	# gains continuous underside edge strips, so the hoop
-	# reads as ribbon from behind/above (the audit: from the
-	# approach the ring presents its dark barrel back, mouth
-	# tucked under the near rim). Ring points occupy sample
-	# indices ring_s0 .. ring_s0+69 (base point shared at
-	# both ends), so ring segments are [ring_s0, ring_s0+68].
-	var ring_c := Color(1.0, 0.58, 0.06)
-	var ring_i0: int = int(ring_s0)
-	for i10: int in range(0, n - 1):
-		var p0: Vector3 = pts[i10]
-		var p1: Vector3 = pts[i10 + 1]
-		var s0: Vector3 = sides[i10]
-		var s1: Vector3 = sides[i10 + 1]
-		var u0: Vector3 = s0.cross(tans[i10]).normalized()
-		var u1: Vector3 = s1.cross(tans[i10 + 1]).normalized()
-		var l0: Vector3 = p0 - s0 * HALF_WIDTH
-		var r0: Vector3 = p0 + s0 * HALF_WIDTH
-		var l1: Vector3 = p1 - s1 * HALF_WIDTH
-		var r1: Vector3 = p1 + s1 * HALF_WIDTH
-		var bl0: Vector3 = l0 - u0 * RIBBON_DEPTH
-		var br0: Vector3 = r0 - u0 * RIBBON_DEPTH
-		var bl1: Vector3 = l1 - u1 * RIBBON_DEPTH
-		var br1: Vector3 = r1 - u1 * RIBBON_DEPTH
-		var up_avg: Vector3 = (u0 + u1) * 0.5
-		var side_avg: Vector3 = (s0 + s1) * 0.5
-		var on_ring: bool = i10 >= ring_i0 and i10 <= ring_i0 + 68
-		_add_quad_m(surf_pos, surf_nrm, surf_col, l0, r0, r1, l1, up_avg, surf_c)
-		_add_quad_m(skirt_pos, skirt_nrm, skirt_col, l0, l1, bl1, bl0, -side_avg, skirt_c)
-		_add_quad_m(skirt_pos, skirt_nrm, skirt_col, r1, r0, br0, br1, side_avg, skirt_c)
-		_add_quad_m(skirt_pos, skirt_nrm, skirt_col, bl1, br1, br0, bl0, -up_avg,
-			ring_c if on_ring else bot_c)
-		if on_ring:
-			# underside amber strips, continuous (a hoop
-			# outline, not optic flow - undashed), 2 cm proud
-			# of the underside so they never z-fight it.
-			_add_quad_m(edge_pos, edge_nrm, edge_col,
-				bl1 - u1 * 0.02, bl1 + s1 * EDGE_STRIP_W - u1 * 0.02, bl0 + s0 * EDGE_STRIP_W - u0 * 0.02, bl0 - u0 * 0.02,
-				-up_avg, edge_c)
-			_add_quad_m(edge_pos, edge_nrm, edge_col,
-				br1 - s1 * EDGE_STRIP_W - u1 * 0.02, br1 - u1 * 0.02, br0 - u0 * 0.02, br0 - s0 * EDGE_STRIP_W - u0 * 0.02,
-				-up_avg, edge_c)
-		# Fix Pass 11 (Item 5): the edge strips are DASHED
-		# (3 m on / 2 m off) - optic flow for the raised top
-		# speed; a continuous strip on a flat surface gives the
-		# eye nothing temporal to measure speed against.
-		if i10 % 5 < 3:
-			_add_quad_m(edge_pos, edge_nrm, edge_col,
-				l0 + u0 * 0.02, l0 + s0 * EDGE_STRIP_W + u0 * 0.02, l1 + s1 * EDGE_STRIP_W + u1 * 0.02, l1 + u1 * 0.02,
-				up_avg, edge_c)
-			_add_quad_m(edge_pos, edge_nrm, edge_col,
-				r0 + u0 * 0.02, r0 - s0 * EDGE_STRIP_W + u0 * 0.02, r1 - s1 * EDGE_STRIP_W + u1 * 0.02, r1 + u1 * 0.02,
-				up_avg, edge_c)
-		if i10 % 12 == 0:
-			var tp: Vector3 = p0 + s0 * 0.3
-			var bp: Vector3 = Vector3(tp.x, -30.0, tp.z)
-			_add_quad(skirt_pos, skirt_nrm, skirt_col,
-				p0 - s0 * 0.3, tp, bp, Vector3(p0.x - s0.x * 0.3, -30.0, p0.z - s0.z * 0.3),
-				tans[i10], bot_c)
-	_add_mesh(surf_pos, surf_nrm, surf_col, "SpurSurface", false, root)
-	_add_mesh(skirt_pos, skirt_nrm, skirt_col, "SpurSkirt", false, root)
-	_add_mesh(edge_pos, edge_nrm, edge_col, "SpurEdges", true, root)
-	# Fix Pass 12 (Item 6): the loop entrance LEADS THE EYE -
-	# the audit's three presentation defects get their three
-	# remaining garnishes (the rim band is in the mesh loop
-	# above). All visual only: no physics, no capture change.
-	# (1) A LOOP gantry over the home straight at s 158, ahead
-	# of the capture window (168-243) - the START gantry's
-	# language, amber for the spur.
-	_build_gantry(158.0, Color(0.95, 0.58, 0.05), "LOOP", root)
-	# (2) The amber GUIDE STRIP on the road surface along the
-	# capture corridor: it starts on the centreline ahead of
-	# the entry and curves left along the exact line a car
-	# must drive to be captured (the spur centreline's own
-	# easing, then a gentle continuation toward the edge as
-	# the spur separates below it) - the mouth the audit found
-	# missing. Painted 3 cm proud, unshaded.
-	var guide_pos := PackedVector3Array()
-	var guide_nrm := PackedVector3Array()
-	var guide_col := PackedColorArray()
-	var guide_c := Color(1.0, 0.60, 0.04)
-	for gi: int in range(160, 212):
-		var ga: Dictionary = _frame_at(float(gi))
-		var gb: Dictionary = _frame_at(float(gi + 1))
-		var lat_a: float = 0.0
-		var lat_b: float = 0.0
-		var xa: float = float(gi) - SPUR_ENTRY_S
-		var xb: float = float(gi + 1) - SPUR_ENTRY_S
-		if xa > 0.0:
-			var ua: float = clampf(xa / 35.0, 0.0, 1.0)
-			lat_a = -3.4 * (ua * ua * (3.0 - 2.0 * ua)) - minf(maxf(xa - 35.0, 0.0) * 0.08, 0.5)
-		if xb > 0.0:
-			var ub: float = clampf(xb / 35.0, 0.0, 1.0)
-			lat_b = -3.4 * (ub * ub * (3.0 - 2.0 * ub)) - minf(maxf(xb - 35.0, 0.0) * 0.08, 0.5)
-		var ca: Vector3 = Vector3(ga["pos"]) + Vector3(ga["side"]) * lat_a + Vector3(ga["up"]) * 0.03
-		var cb: Vector3 = Vector3(gb["pos"]) + Vector3(gb["side"]) * lat_b + Vector3(gb["up"]) * 0.03
-		var sa2: Vector3 = ga["side"]
-		var sb2: Vector3 = gb["side"]
-		# Corner order mirrored against the surface's: as
-		# first built (back-left, back-right, fwd-right,
-		# fwd-left) the strip faced DOWN and was culled from
-		# every driver's view - convicted by render: with the
-		# material's cull disabled it drew 12,568 px, with
-		# culling on, zero. (The surface's identical-looking
-		# order works there; the strip's frames come from the
-		# banked _frame_at and the measured fact is the fact.)
-		_add_quad(guide_pos, guide_nrm, guide_col,
-			ca + sa2 * 0.275, ca - sa2 * 0.275, cb - sb2 * 0.275, cb + sb2 * 0.275,
-			(Vector3(ga["up"]) + Vector3(gb["up"])).normalized(), guide_c)
-	_add_mesh(guide_pos, guide_nrm, guide_col, "SpurGuide", true, root)
-	# (3) CHEVRONS down the descent leg (spur_s ~44-84, the
-	# run from the fork to the ring base): flat arrow pairs on
-	# the surface pointing along travel - the eye is told
-	# this chute goes somewhere, and where. Sized to READ at
-	# speed (wings +-2.4 m, stroke 0.9 m, 2.6 m long): the
-	# first FP12 proof's +-0.85 m version photographed as
-	# dashes. (The marks then grew twice more chasing a
-	# pixel count that turned out to be a WINDING bug - see
-	# the mirrored corner order below; the motorway scale
-	# stayed because at 48 m/s it is the right scale.)
-	var chev_pos := PackedVector3Array()
-	var chev_nrm := PackedVector3Array()
-	var chev_col := PackedColorArray()
-	var chev_c := Color(1.0, 0.80, 0.20)
-	for cs2: float in [44.0, 52.0, 60.0, 68.0, 76.0, 84.0]:
-		# The frame comes from the LOCAL spur arrays, not
-		# _spur_frame_at: that helper reads track_data, which
-		# does not hold the circuit yet while _build_spur runs
-		# (the first FP12 suite run died on exactly that -
-		# chevrons silently unbuilt behind a script error).
-		var ci2: int = 0
-		while ci2 < cum.size() - 2 and float(cum[ci2 + 1]) < cs2:
-			ci2 += 1
-		var seg2: float = maxf(float(cum[ci2 + 1]) - float(cum[ci2]), 0.001)
-		var frc2: float = clampf((cs2 - float(cum[ci2])) / seg2, 0.0, 1.0)
-		var cf2: Vector3 = Vector3(tans[ci2]).lerp(Vector3(tans[ci2 + 1]), frc2).normalized()
-		var csd: Vector3 = Vector3(sides[ci2]).lerp(Vector3(sides[ci2 + 1]), frc2).normalized()
-		var cup: Vector3 = csd.cross(cf2).normalized()
-		var cc0: Vector3 = Vector3(pts[ci2]).lerp(Vector3(pts[ci2 + 1]), frc2) + cup * 0.03
-		for sgn: float in [-1.0, 1.0]:
-			var aw: Vector3 = cc0 - cf2 * 1.3 + csd * (2.4 * sgn)
-			var bw: Vector3 = cc0 + cf2 * 1.3
-			var dw: Vector3 = bw - aw
-			var perp: Vector3 = dw.cross(cup).normalized() * 0.45
-			# Mirrored corner order, same conviction as the
-			# guide strip: as first built these faced DOWN -
-			# the proof counted only the far pair at the ring
-			# base (where the chute's roll tips the culled
-			# side toward the camera) at a constant 117 px
-			# through three size increases, while the near
-			# marks drew nothing.
-			_add_quad(chev_pos, chev_nrm, chev_col,
-				aw + perp, aw - perp, bw - perp, bw + perp, cup, chev_c)
-	_add_mesh(chev_pos, chev_nrm, chev_col, "SpurChevrons", true, root)
-
-
-func _spur_frame_at(s: float) -> Dictionary:
-	# A frame on the spur at arc s: lerped over the spur's own
-	# samples (positions are ~1 m apart; cum[] maps arc to
-	# index). Returns the same key set _frame_at does.
-	var sp: Dictionary = track_data["circuit"]["spur"]
-	var cum: Array = sp["cum"]
-	var sc: float = clampf(s, 0.0, float(sp["len"]))
-	var i0: int = 0
-	while i0 < cum.size() - 2 and float(cum[i0 + 1]) < sc:
-		i0 += 1
-	var seg: float = maxf(float(cum[i0 + 1]) - float(cum[i0]), 0.001)
-	var fr: float = clampf((sc - float(cum[i0])) / seg, 0.0, 1.0)
-	var pts: Array = sp["pts"]
-	var tans: Array = sp["tan"]
-	var sides: Array = sp["side"]
-	var kvs: Array = sp["kv"]
-	var pos: Vector3 = Vector3(pts[i0]).lerp(Vector3(pts[i0 + 1]), fr)
-	var tanv: Vector3 = Vector3(tans[i0]).lerp(Vector3(tans[i0 + 1]), fr).normalized()
-	var side: Vector3 = Vector3(sides[i0]).lerp(Vector3(sides[i0 + 1]), fr).normalized()
-	var upv: Vector3 = side.cross(tanv).normalized()
-	return {"pos": pos, "tan": tanv, "side": side, "up": upv,
-		"bank": 0.0, "kv": lerpf(float(kvs[i0]), float(kvs[i0 + 1]), fr),
-		"gap": false}
-
-
-func _project_to_spur(pos: Vector3, hint_s: float) -> Array:
-	# [s, lat, centreline distance] from the spur samples near
-	# the hint - a windowed search like _project_to_spine.
-	var sp: Dictionary = track_data["circuit"]["spur"]
-	var pts: Array = sp["pts"]
-	var cum: Array = sp["cum"]
-	var sides: Array = sp["side"]
-	var ci: int = 0
-	while ci < cum.size() - 1 and float(cum[ci]) < hint_s:
-		ci += 1
-	var best: int = ci
-	var best_d2: float = 1e18
-	for i: int in range(maxi(ci - 30, 0), mini(ci + 31, pts.size())):
-		var d2: float = pos.distance_squared_to(pts[i])
-		if d2 < best_d2:
-			best_d2 = d2
-			best = i
-	var lat: float = (pos - Vector3(pts[best])).dot(Vector3(sides[best]))
-	return [float(cum[best]), lat, sqrt(best_d2)]
 
 
 func _project_wide_s(pos: Vector3) -> float:
 	# Whole-track nearest sample (coarse then refined) - used
-	# when a car leaves the spur and the drone needs a main-
-	# track fall origin with no trustworthy hint.
+	# when the crane needs a main-track fall origin with no
+	# trustworthy hint (off-station releases, FP22).
 	var best: int = 0
 	var best_d2: float = 1e18
 	var i: int = 0
@@ -2068,191 +1671,6 @@ func _project_wide_s(pos: Vector3) -> float:
 			best_d2 = d2b
 			best = j
 	return float(best)
-
-
-func _spur_frame_yaw(fr: Dictionary) -> float:
-	# The spur frame's heading, derived from its SIDE vector:
-	# side = (cos yaw, 0, -sin yaw) in plan, and the side is
-	# parallel-transported - constant through the ring, where
-	# the tangent's own plan projection degenerates (a
-	# vertical tangent has no plan heading, and atan2 of the
-	# near-zero projection flips 180 deg mid-loop).
-	var sd: Vector3 = fr["side"]
-	return atan2(-sd.z, sd.x)
-
-
-func _place_car_on_spur(fr: Dictionary) -> void:
-	# Placement on the spur: the frame's own basis (side, up,
-	# -tan) carries the car through the ring's full rotation;
-	# the driver's heading offset yaws around the frame's up,
-	# and the lagged edge roll rides on top, exactly the roles
-	# they play in _place_car_on_track.
-	var pos: Vector3 = Vector3(fr["pos"]) + Vector3(fr["side"]) * spur_lat 		+ Vector3(fr["up"]) * (CLEARANCE + heave_off)
-	var psi: float = wrapf(car_heading - _spur_frame_yaw(fr), -PI, PI)
-	var b := Basis(Vector3(fr["side"]), Vector3(fr["up"]), -Vector3(fr["tan"]))
-	b = b.rotated(Vector3(fr["up"]), psi)
-	b = b.rotated(b.z, edge_roll)
-	car.global_transform = Transform3D(b, pos)
-
-
-func _spur_leave_air() -> void:
-	# Leaving the spur ballistically (a slow ring entry
-	# detaching past vertical, or running off the chute's
-	# side): the velocity is the car's real 3D velocity along
-	# the chute, and the fall origin for the drone is a
-	# main-track s from a wide projection - the recovery
-	# drops the car on the MAIN track under Item 1's rules.
-	var fr: Dictionary = _spur_frame_at(spur_s)
-	on_spur = false
-	air_vel = Vector3(fr["tan"]) * speed + Vector3(fr["side"]) * lat_vel
-	air_s_est = _project_wide_s(car.global_position)
-	air_start_s = air_s_est
-	air_time = 0.0
-	below_band_t = 0.0
-	lost_lat_t = 0.0
-	air_exit_y = float(fr["pos"].y)
-	air_from_gap = false
-	was_airborne = true
-	mode = MODE_AIR
-
-
-func _update_drive_spur(delta: float) -> void:
-	# Driving on the spur: the free-heading model's plan math
-	# is unchanged (the heading is a yaw; the chute's pitch
-	# lives in the frame), but progress is spur_s INTEGRATED
-	# from the along-chute speed - pure position projection
-	# stalls on the ring, where the nearest centreline point
-	# stops advancing as the tangent goes vertical. spur_lat
-	# is the lateral offset, corrected by projection.
-	if bounce_pending:
-		bounce_pending = false
-		pending_rebound = false # FP14 (Item 1): the spur's only route is geometry
-		_spur_leave_air()
-		return
-	var fr: Dictionary = _spur_frame_at(spur_s)
-	var tanv: Vector3 = fr["tan"]
-	var f0: Vector3 = _heading_fwd()
-	var r0: Vector3 = _heading_right()
-	var vl: float = vel2.dot(Vector2(r0.x, r0.z))
-	var accel: float = in_throttle * 10.0
-	accel -= in_brake * 14.0
-	accel -= speed * 0.10
-	accel += -GRAV * tanv.y * 0.85
-	if in_boost and boost_meter > 0.0 and in_throttle > 0.05:
-		accel += 9.0
-		boost_meter = maxf(boost_meter - 30.0 * delta, 0.0)
-	speed = clampf(speed + accel * delta, -6.0, TOP_SPEED)
-	if in_brake > 0.05 and speed < 0.5 and speed > -0.5:
-		speed = 0.0
-	var steer: float = clampf(wheel_angle / PI, -1.0, 1.0)
-	var lock_scale: float = _lock_scale(speed)
-	var front_angle: float = steer * MAX_LOCK_RAD * lock_scale
-	var omega_target: float = clampf(-speed / WHEELBASE * tan(front_angle), -MAX_YAW_RATE, MAX_YAW_RATE)
-	yaw_rate = lerpf(yaw_rate, omega_target, clampf(delta / YAW_TAU, 0.0, 1.0))
-	car_heading = wrapf(car_heading + yaw_rate * delta, -PI, PI)
-	var f1: Vector3 = _heading_fwd()
-	var r1: Vector3 = _heading_right()
-	grip_mult = _grip_for(yaw_rate / maxf(absf(speed), 2.0))
-	var bleed: float = clampf(-GRIP_BITE_RATE * vl * grip_mult,
-		-GRIP_LAT_ACCEL * grip_mult, GRIP_LAT_ACCEL * grip_mult)
-	vl += bleed * delta
-	# Fix Pass 15 (Item 1): the telegraph on the spur, in the
-	# spur bleed's own terms (its cap carries no load factor -
-	# the spur's sibling suspension owns its loads). Axle -1:
-	# the dust treats both axles as the working end.
-	if absf(speed) > 2.0:
-		tire_ratio = absf(speed * omega_target) / maxf(GRIP_LAT_ACCEL * grip_mult, 0.01)
-		tire_ratio_axle = -1
-	else:
-		tire_ratio = 0.0
-	tire_band = clampf((tire_ratio - TIRE_BAND_LO) / (TIRE_BAND_HI - TIRE_BAND_LO), 0.0, 1.0)
-	slip_state = clampf((absf(vl) - AUDIO_SLIP_ONSET) / AUDIO_SLIP_SPAN, 0.0, 1.0)
-	lat_vel = vl
-	var psi: float = wrapf(car_heading - _spur_frame_yaw(fr), -PI, PI)
-	spur_s += speed * cos(psi) * delta
-	# the heading's side drift: yawing +psi turns the nose
-	# toward -side (frame side is +X of the heading frame),
-	# so the drift term is -sin(psi) * speed
-	spur_lat += (vl - sin(psi) * speed) * delta
-	# vel2 keeps its plan meaning for the other consumers:
-	# the heading's plan direction at the plan-projected speed.
-	var plan_frac: float = Vector2(tanv.x, tanv.z).length()
-	vel2 = Vector2(f1.x, f1.z) * speed * plan_frac + Vector2(r1.x, r1.z) * vl
-	# Projection as a bounded correction on the lateral only.
-	var pr: Array = _project_to_spur(car.global_position, spur_s)
-	if absf(float(pr[0]) - spur_s) < 3.0:
-		spur_lat = lerpf(spur_lat, float(pr[1]), 0.5)
-	# Off the chute's side -> fall (to a main-track recovery).
-	if absf(spur_lat) > HALF_WIDTH + EDGE_FALL_OVERSHOOT:
-		_spur_leave_air()
-		return
-	# The merge: hand back to the main projection at the join.
-	var sp_len: float = float(track_data["circuit"]["spur"]["len"])
-	if spur_s >= sp_len - 0.5:
-		on_spur = false
-		var prm: Array = _project_to_spine(car.global_position, SPUR_JOIN_S)
-		car_s = float(prm[0])
-		car_lat = float(prm[1])
-		_place_car_on_track(_frame_at(car_s))
-		return
-	_place_car_on_spur(_spur_frame_at(spur_s))
-
-
-func _update_suspension_spur(delta: float) -> void:
-	# Suspension on the spur: axle frames sampled along the
-	# chute, and the PHYSICAL crest-load form - the road's
-	# normal load is gravity's component along the frame up
-	# minus the centripetal demand v^2 * kv. In the ring kv
-	# is -1/R throughout, so the load is cos(theta) +
-	# v^2/(gR): pressed at the bottom, zero at the top when
-	# v = sqrt(gR) ~= 10.4 m/s, negative (separation) below
-	# that past vertical. No adhesion anywhere: the same
-	# sustained-zero-load rule as the main track lets go.
-	var fr_c: Dictionary = _spur_frame_at(spur_s)
-	var fr_f: Dictionary = _spur_frame_at(spur_s + WHEELBASE * 0.5)
-	var fr_r: Dictionary = _spur_frame_at(spur_s - WHEELBASE * 0.5)
-	# Fix Pass 15 (Item 1): the edge family belongs to the main
-	# ribbon's straddle state; the spur's support is all-or-
-	# nothing here, so the voices are silent on the chute.
-	edge_rumble_now = 0.0
-	edge_scrape_now = 0.0
-	sup_over = [0.0, 0.0, 0.0, 0.0]
-	geom_f = (Vector3(fr_f["pos"]) - Vector3(fr_c["pos"])).dot(Vector3(fr_c["up"]))
-	geom_r = (Vector3(fr_r["pos"]) - Vector3(fr_c["pos"])).dot(Vector3(fr_c["up"]))
-	load_f = clampf(Vector3(fr_f["up"]).y - speed * speed * float(fr_f["kv"]) / GRAV, 0.0, 1.25)
-	load_r = clampf(Vector3(fr_r["up"]).y - speed * speed * float(fr_r["kv"]) / GRAV, 0.0, 1.25)
-	# Fix Pass 21: the spur keeps its own physical load form;
-	# mirror it into the corner state (grouped by axle, no
-	# per-corner separation on the chute) so the corner
-	# readers never see main-track state frozen mid-flight.
-	wheel_load = [load_f, load_f, load_r, load_r]
-	wheel_air = [false, false, false, false]
-	if delta > 0.0:
-		var la: float = clampf((speed - prev_speed) / delta, -12.0, 12.0)
-		long_accel_f = lerpf(long_accel_f, la, 0.25)
-	prev_speed = speed
-	var transfer: float = long_accel_f * SUSP_TRANSFER_K
-	for wi: int in 4:
-		sup_ok[wi] = true
-		sup_s[wi] = spur_s + (WHEELBASE * 0.5 if wi < 2 else -WHEELBASE * 0.5)
-		sup_rise[wi] = geom_f if wi < 2 else geom_r
-	var tw: Array[float] = [0.0, 0.0, 0.0, 0.0]
-	for wi2: int in 4:
-		var ld: float = load_f if wi2 < 2 else load_r
-		var tr: float = -transfer if wi2 < 2 else transfer
-		var rs: float = geom_f if wi2 < 2 else geom_r
-		tw[wi2] = clampf((SUSP_REST + rs) * ld + tr, 0.0, SUSP_TRAVEL)
-	_susp_integrate((tw[0] + tw[1]) * 0.5, (tw[2] + tw[3]) * 0.5, delta)
-	edge_roll = lerpf(edge_roll, 0.0, clampf(EDGE_ROLL_LAG * delta, 0.0, 1.0))
-	if load_f <= AIR_LOAD_EPS and load_r <= AIR_LOAD_EPS and speed > 8.0:
-		air_load_frames += 1
-	else:
-		air_load_frames = 0
-	if air_load_frames >= AIR_SUSTAIN_FRAMES:
-		bounce_pending = true
-		bounce_vy = 0.0
-		air_load_frames = 0
-
 
 
 func _gen_circuit_tail(snap: Array, lr: float, phi_h: float, r_e: float) -> Vector3:
@@ -2398,14 +1816,12 @@ func _activate_track(d: Dictionary) -> void:
 
 func _set_track(tname: String) -> void:
 	# Switch the active track and restart the race on it (the
-	# dash's purple button / desktop V). Item 4's spur state
-	# resets here too - a track switch is a full reset.
+	# dash's purple button / desktop V) - a track switch is
+	# a full reset.
 	if not track_data.has(tname):
 		return
 	active_track = tname
 	_activate_track(track_data[tname])
-	on_spur = false
-	spur_s = 0.0
 	start_race()
 	_update_panel()
 
@@ -4758,9 +4174,6 @@ func start_race() -> void:
 	mode = MODE_HANG
 	hang_phase = "attach" # Fix Pass 13 (Item 6): Drop Start is a pickup + transport now
 	is_drop_start = true
-	on_spur = false
-	spur_s = 0.0
-	spur_lat = 0.0
 	car_s = 0.0
 	car_lat = 0.0
 	lat_vel = 0.0
@@ -4860,7 +4273,6 @@ func _reset_suspension() -> void:
 	deep_hit_age = 9.0
 	bounce_chain = 0
 	grounded_t = 0.0
-	air_load_frames = 0
 	# Fix Pass 9: per-wheel support back to fully held.
 	sup_rise = [0.0, 0.0, 0.0, 0.0]
 	sup_ok = [true, true, true, true]
@@ -5182,8 +4594,8 @@ func _process(_delta: float) -> void:
 			scrape_player.volume_db = -60.0
 
 
-## Fix Pass 11 (Item 5): the steering lock scale, shared by
-## both drivers (main track and spur). At |v| <= 24 m/s this
+## Fix Pass 11 (Item 5): the steering lock scale. At
+## |v| <= 24 m/s this
 ## is the FP10 expression verbatim - same operands, same
 ## order - so the response the owner approved is numerically
 ## identical there. Above 24 the effective falloff speed
@@ -5222,12 +4634,6 @@ func _update_drive(delta: float) -> void:
 	# slope gravity, gap/fall checks, and lap logic. car_s and
 	# car_lat are re-derived from the car's world position by
 	# projection at the end of the step - never integrated.
-	# Fix Pass 10 (Item 4): on the loop spur a sibling driver
-	# runs (integrated spur_s, spur frames - see
-	# _update_drive_spur).
-	if on_spur:
-		_update_drive_spur(delta)
-		return
 	# Fix Pass 14 (Item 1): the chain re-arm clock (see the
 	# rebound route in _update_suspension).
 	grounded_t += delta
@@ -5400,30 +4806,6 @@ func _update_drive(delta: float) -> void:
 		mode = MODE_DONE
 		finished_time = race_time
 		state_label.text = "FINISH!"
-	# Fix Pass 10 (Item 4): spur capture - in the entry window
-	# past SPUR_ENTRY_S, a car whose centre is within 1.2 m of
-	# the spur centreline is on the spur (the driver steered
-	# onto the fork's line); a car staying right never is.
-	# (Fix Pass 12: the comment said 1.3 m; the test below has
-	# always been 1.2 m - the loop audit caught the mismatch.
-	# Comment corrected; the rule is unchanged.)
-	if active_track == "circuit" and track_data["circuit"].has("spur"):
-		var d_in: float = wrapf(car_s - SPUR_ENTRY_S + 2.0, 0.0, track_len)
-		if d_in < 75.0 and vf > 0.0:
-			var spc: Array = _project_to_spur(car.global_position,
-				clampf(car_s - SPUR_ENTRY_S + 8.0, 0.0, 60.0))
-			# The spur starts ON the centreline, so proximity
-			# alone would capture a car driving straight down
-			# the middle. Capture needs the diverge underway:
-			# the spur point is past the fork's nose and the
-			# car is measurably off the main centreline,
-			# following the fork's line.
-			if float(spc[0]) > 10.0 and float(spc[2]) < 1.2 and absf(car_lat) > 0.5:
-				on_spur = true
-				spur_s = float(spc[0])
-				spur_lat = float(spc[1])
-				_place_car_on_spur(_spur_frame_at(spur_s))
-				return
 	# place the car
 	_place_car_on_track(fr_now)
 
@@ -6075,7 +5457,7 @@ func _susp_integrate(target_f: float, target_r: float, delta: float) -> void:
 	# its EXTENSION damping is cut - the asymmetric shove
 	# (Crammond's force clamp is asymmetric the same way).
 	# Ungated driving never sees either change.
-	var gated: bool = rebound_gate_vy > 0.0 and mode == MODE_DRIVE and not on_spur
+	var gated: bool = rebound_gate_vy > 0.0 and mode == MODE_DRIVE
 	var kf: float = SUSP_K * REBOUND_RETURN_K_MULT if (gated and c_f > REBOUND_RETURN_DEPTH) else SUSP_K
 	var kr: float = SUSP_K * REBOUND_RETURN_K_MULT if (gated and c_r > REBOUND_RETURN_DEPTH) else SUSP_K
 	# While the gate is live the whole landing cycle is the
@@ -6103,7 +5485,7 @@ func _susp_integrate(target_f: float, target_r: float, delta: float) -> void:
 	var attach_r: float = geom_r - c_r + (WHEEL_RAD_R - WHEEL_RAD_REF)
 	pitch_extra = atan2(attach_f - attach_r, WHEELBASE)
 	heave_off = (attach_f + attach_r) * 0.5 + SUSP_REST
-	# Fix Pass 14 (Item 3): the axle path (spur, air, hang,
+	# Fix Pass 14 (Item 3): the axle path (air, hang,
 	# done) mirrors its state into the corners, grouped by
 	# axle, so the corner state never desyncs from the means.
 	susp_c[0] = c_f
@@ -6142,7 +5524,7 @@ func _susp_integrate_corners(tw: Array, delta: float) -> void:
 	# roll answers compression, not just road shape (a
 	# corner that compresses rolls the body even on flat
 	# road - weight transfer made visible).
-	var gated: bool = rebound_gate_vy > 0.0 and mode == MODE_DRIVE and not on_spur
+	var gated: bool = rebound_gate_vy > 0.0 and mode == MODE_DRIVE
 	var damp: float = SUSP_DAMP * REBOUND_RETURN_DAMP_MULT if gated else SUSP_DAMP
 	for wi: int in 4:
 		var k: float = SUSP_K * REBOUND_RETURN_K_MULT if (gated and susp_c[wi] > REBOUND_RETURN_DEPTH) else SUSP_K
@@ -6167,11 +5549,6 @@ func _susp_integrate_corners(tw: Array, delta: float) -> void:
 
 func _update_suspension(delta: float) -> void:
 	# Fix Pass 5: per-axle spring model (see the constants block).
-	# Fix Pass 10 (Item 4): on the spur a sibling model runs
-	# (spur frames, physical load form - _update_suspension_spur).
-	if mode == MODE_DRIVE and on_spur:
-		_update_suspension_spur(delta)
-		return
 	if mode == MODE_DRIVE:
 		var fr: Dictionary = _frame_at(car_s)
 		# Fix Pass 9 (Item 2): PER-WHEEL support sampling. Each
@@ -6380,9 +5757,7 @@ func _update_suspension(delta: float) -> void:
 		# - the sustain counter's last job (waiting for the
 		# rear axle to arrive at the crest the front had
 		# already left) is exactly the glue the owner
-		# reported. The loop spur keeps the FP8 form in its
-		# own suspension; it is a different surface with a
-		# physical load form of its own.
+		# reported.
 		# (2) REBOUND: the springs cross near-droop still throwing
 		# fast - stored energy leaving (FP14 Item 2: the crossing
 		# is the condition, not the droop stop - see
@@ -6404,7 +5779,7 @@ func _update_suspension(delta: float) -> void:
 		# control; stage 3 is the regression that found this.
 		# Fix Pass 21: the FP8 sustain counter stood here;
 		# per-corner separation (above) replaced it on the
-		# main track. air_load_frames survives for the spur.
+		# main track (FP23 removed the counter with the spur).
 		# Fix Pass 14 (Item 2): stored-energy evidence for the
 		# throw route - a deep compression inside the window.
 		if (c_f + c_r) * 0.5 >= REBOUND_DEEP_HIT:
@@ -6455,7 +5830,6 @@ func _update_suspension(delta: float) -> void:
 		geom_r = 0.0
 		load_f = 1.0
 		load_r = 1.0
-		air_load_frames = 0
 		wheel_air = [false, false, false, false] # Fix Pass 21
 		edge_roll = lerpf(edge_roll, 0.0, clampf(EDGE_ROLL_LAG * delta, 0.0, 1.0))
 		edge_rumble_now = 0.0 # Fix Pass 15 (Item 1): no road contact, no edge voice
@@ -6468,7 +5842,6 @@ func _update_suspension(delta: float) -> void:
 		geom_r = 0.0
 		load_f = 1.0
 		load_r = 1.0
-		air_load_frames = 0
 		wheel_air = [false, false, false, false] # Fix Pass 21: separation is a DRIVE-frame state
 		edge_roll = lerpf(edge_roll, 0.0, clampf(EDGE_ROLL_LAG * delta, 0.0, 1.0))
 		edge_rumble_now = 0.0 # Fix Pass 15 (Item 1): airborne/hanging - the edge family is silent
