@@ -2931,6 +2931,120 @@ this sandbox, as ever).
   steering connection (both still queued), sections,
   the loop, the envelope.
 
+## Fix Pass 23 — Nuke the Loop
+
+Base: FP22 final (8aec38a). Ordered by the owner, Fri
+2026-10-30 09:52 CDT, after the run-19 tape traced a
+cross-country arrival at the ring resolving as TOUCHDOWN
+CROSSED-UP at LAT 26.3 m/s: "the loop has been a mess
+since day 1" — "nuke it, we'll deal with it later." The
+loop entered FP10 as an "if they work" experiment; the
+condition failed on three builds (illegible entry, run
+16; presentation pass, FP12; the detonation, run 19).
+The original game has no loops. "Later" means a loop may
+return only on a purpose-built track with an on-line
+mouth, as a designed feature — not as this spur.
+
+### What was removed
+
+- The spur entire: branch geometry (entry s 170, join
+  s 330), the ring (R 11 m), its support path, and every
+  piece of presentation — the LOOP gantry at s 158, the
+  amber guide strip, the lit rim band, the descent
+  chevrons, the spur's surface/skirt/edge meshes and
+  stilts. Stage 21 asserts the absence structurally: no
+  "spur" data on the circuit, and SpurSurface /
+  SpurSkirt / SpurEdges / SpurGuide / SpurChevrons /
+  GantryLOOP all null on the circuit root.
+- The machinery: `_build_spur`, the spur frame and
+  projection helpers, the sibling spur driver
+  (`_update_drive_spur`) and spur suspension, the capture
+  test in `_update_drive`, and the spur branches in the
+  drive/suspension dispatch and both rebound gates. The
+  FP8 sustain counter (AIR_SUSTAIN_FRAMES /
+  air_load_frames) existed only for the spur since FP21
+  and is removed with it. Genuinely shared machinery
+  stays: `_project_wide_s` (the crane's fall origin) and
+  `_build_gantry` (START/FINISH).
+- The test ribbon is untouched.
+
+### Circuit before / after
+
+The spur was a parallel branch, and the mainline did not
+move — verified, not assumed: circuit length 3319 m
+before and after (stage 18), still a closed circuit at
+3 laps (stage 19: DONE in 18133 frames, seam steps
+identical). New stage 21 drives the home straight
+through the old fork span pinned at 30 m/s: worst |lat|
+0.06 m across s 150–360 — one clean line, no swerve
+where the fork peeled off.
+
+### Census
+
+No drive numbers moved: every recorded census print is
+identical to the FP22 baseline run — stage 8 (ribbon lap
+46.8 s over 1163 m), stage 19 (18133 frames; seam
+0.0027 m / 0.015 deg), stage 20 (10 hump flights),
+stage 51 (hump air 5.59 s; the flair at FL 6 / FR 14 /
+RL 6 / RR 14; the flat home straight still separates
+nothing, min corner load 1.00). Honest note: the
+baseline log file itself was lost when the sandbox VM
+rebooted mid-pass; the comparison is against the census
+values extracted from it before the reboot and the
+numbers recorded in the FP22 section above.
+
+### Amendments (flagged, never silent)
+
+- **Stage 21**: FP10's spur runs (fork capture, ring
+  continuity at 30 m/s, slow-entry detach, crane
+  recovery) are DELETED; the stage is repurposed as the
+  absence stage (9 checks: no spur data, six node
+  absences, the clean-line drive).
+- **Stage 28**: the spur's hang-clearance candidate
+  samples are DELETED (guarded code that would have gone
+  inert); the stage's main-track cases are unchanged
+  and pass as before.
+- **Stage 29**: Item 6's spur checks (merge heading
+  residual, exit-leg unwind, guide strip, chevrons,
+  LOOP gantry, rim band) are DELETED. Item 5 (the air
+  trigger) is unchanged; the stage header is amended to
+  match.
+- **Render proof**: captures 17–19 (fork / ring /
+  cockpit mid-ring) and 23 (descent chevrons) are
+  DELETED, their tracked PNGs removed from the repo.
+  The 20–22 loop-approach series is REPLACED by a
+  home-straight series at the same stations
+  (home_straight_100m / 50m / 20m.png), with the FP12
+  amber test INVERTED: the guide-strip/rim amber family
+  must now be absent from the road band — it reads
+  0 px, and the 20 m frame shows grey road running
+  straight to the horizon, no ring anywhere in it.
+
+### Verification notes
+
+SMOKE 464/464 (468 FP22 baseline − 13 deleted spur
+checks + 9 new stage-21 checks, reconciled). API GUARD
+70/70 — green, and it runs inside the smoke. Render
+proof 134/135 under Xvfb: the single failure is the
+wires_view sampled-colour count (20 this attempt; it
+read 11 and 18 on two others) — and it is NOT this
+pass: the pristine FP22 tree, run as an A/B control in
+the same sandbox session, fails the same single check
+(145/146, 20 colours). It is the documented sandbox
+renderer marginal (FP22 recorded the same flap on
+identical code), on this sandbox's Compatibility /
+llvmpipe renderer — whose captures are not colour truth
+in any case, here or on the control. The hub-drop check
+needed the sandbox's persisted seat trim zeroed
+(0.024 → 0), the same environmental FP22 documented;
+the owner's machine is unaffected. The grab log's
+session header now reads FP23.
+
+### What you're judging (run 20)
+
+- **A home straight with no ring on the horizon and no
+  swerve in it.** Nothing else in this pass.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
