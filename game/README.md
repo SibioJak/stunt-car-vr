@@ -2792,6 +2792,145 @@ UNVERIFIED-LIVE until the owner drives it.
   awaits its own pass), the loop, the envelope, any new
   track.
 
+## Fix Pass 22 (micro) — On Chains, the Button Drops You. Period.
+
+Base: FP21 final (d8be713). Ordered by the owner, Fri
+2026-10-30 09:17 CDT, from run 19 with the FP20 button in
+his hands: "when you're being droned, Text says DRONE
+LIFT, and the button doesn't release you even though
+you're over track. It won't activate until the text
+changes to something or other. Need to get rid of that.
+If you're on chains, the button works. period. Not over
+the track? Don't press the button." This corrects the
+conservative reading Hal took of the owner's earlier
+"moron" sentence (mid-carry press = SPENT, chains hold).
+With the mechanism in his hands the owner rules the full
+version: THE GATE IS THE DEFECT.
+
+### Item 1 — the release gate is deleted
+
+- In MODE_HANG, a drop-button press fires `_do_release()`
+  in EVERY phase (attach / carry / dangle). The phase gate
+  in `_press_drop_button`, the self-gate inside
+  `_do_release()`, the SPENT outcome, and the felt-refusal
+  grind machinery that served SPENT (pulse train, state,
+  constant — it has no un-armed state left to refuse) are
+  all deleted. The desktop SPACE twin follows the button:
+  on the chains, any phase, it drops.
+- The DANGLE path is byte-identical to FP20 — the staged
+  census below is frame-identical to the FP21 baseline.
+  An off-station release differs only where the crane's
+  state honestly differs: it falls from where the car IS
+  (the section under the car, via the wide projection,
+  seeds `air_s_est` / `air_start_s` and takes the heading
+  record), and it keeps the carrier's horizontal velocity
+  — mid-slew the pivot is moving, and the car's world
+  velocity is the pivot's plus the pendulum tip's. The
+  pendulum axes stay the drop frame's in every phase, so
+  the tip construction is unchanged; the FP5 slack branch
+  (a dangle-only state) is untouched.
+- Where it falls is the driver's business: the existing
+  air/landing/recovery flow takes it from there — a
+  mid-slew drop that lands drives, one that misses is
+  re-recovered, no new landing rules. DRIVE/AIR presses
+  are unchanged: the button answers (dull pulse + BTN
+  PRESS line) and does nothing.
+- Telemetry: BTN lines keep their phase tags (now always
+  FIRE on the chains); the RELEASE record (s / HDG / SEC /
+  ERR) fires for any-phase releases, with SEC/ERR measured
+  against the section under the car at release. The grab
+  log's session header now reads FP22 and its legend
+  describes the new BTN semantics.
+
+### Item 2 — the hang banner stops implying a wait
+
+The state label's phase-variant hang text ("DRONE LIFT..."
+until the dangle, then "PRESS RELEASE") was the dead
+gate's visible face — and named a drone that no longer
+flies. Across ALL hang phases the label now reads one
+line, in the crane's name: **CRANE LIFT — BUTTON TO
+DROP**. The render proof's cockpit capture shows it
+legible from the driver's seat at the Drop Start dangle.
+This absorbs the queued banner-rename item from the
+next-pass load; the smoke sphere and the visual steering
+connection stay queued separately. The commands panel's
+Release line is updated in the same commit: "DROP BUTTON
+(dash face) - on chains it drops you, any time".
+
+### Staged evidence
+
+New stage 52 carries the CARRY press and the banner:
+mid-slew at a staged fall from s 900 (carrier moving,
+phase carry), the press fires — BTN FIRE carry, mode
+AIR; the resulting `air_vel` matches the analytic
+conversion (swing tip + forward push + the carrier's own
+velocity) to the printed digit; the heading record is
+taken against s 741, the section under the car (the
+station it never reached is 742); the drop resolves sane
+(re-recovery — it fell wide of the road mid-slew, and the
+crane took it again). The banner asserts identical in
+ATTACH and at the dangle. Stages 34(a) and 47(d) carry
+the ATTACH press (the Drop Start early press): FIRE +
+RELEASE, the car leaves the chains in attach.
+
+### Census
+
+No drive numbers moved, and none hid: the drive census
+prints are byte-identical to the FP21 baseline run
+(stages 8, 12, 18, 19, 30, the stage 49 heading census —
+worst ERR still 0.0° across ten families — and stage
+51's AIR evidence all print the same numbers). Recovery
+timings unchanged (stage 34: 605 frames trigger→dangle,
+both staged falls).
+
+### Amendments (flagged, never silent)
+
+- **Stage 34(a)**: FP20's SPENT + grind expectations are
+  REPLACED by release expectations (BTN FIRE attach, the
+  heading record, mode AIR). The wheel's transport gate
+  probe moves BEFORE the press (the press now ends the
+  hang it was probed in), and the stage restarts after
+  the press so the pendulum-continuity run rides a fresh
+  hang (handover jump 0.006 rad, as before).
+- **Stage 47(d)**: the SPENT-in-attach expectation is
+  replaced by FIRE-in-attach; the grind check is deleted
+  with the machinery; the stage restarts between the
+  attach and dangle halves. **47(f)**: the grab-log file
+  check now looks for BTN FIRE (no SPENT line can exist).
+- The stage 22/25/44/45/46 amendments from FP20 stand as
+  they were; nothing else was edited.
+
+### Verification notes
+
+SMOKE 468/468 on the final tree (459 FP21 baseline + 9
+net new: stage 52's nine, stage 34 +1, stage 47 −1).
+API GUARD 70/70. Render proof 146/146 under Xvfb from
+seat trim 0 — the first two attempts failed the two
+documented sandbox environmentals (the persisted 0.024
+seat trim inflating the hub-drop check, and the
+wires_view colour count flapping 11 → 13 → pass on
+identical code, the FP18/FP20 marginal); with the trim
+zeroed the hub check passes and the third attempt is
+clean. Engine preflight: `--import` clean, a 10-frame
+real run clean (OpenXR loader noise only — no runtime in
+this sandbox, as ever).
+
+### What you're judging (run 20)
+
+- **Drops from anywhere on the chains.** Press the button
+  during the lift, mid-slew, whenever — the car lets go
+  from where it hangs, keeps the crane's motion, and
+  lands where it lands. Not over the track? Don't press
+  the button. Whether a mid-carry drop FEELS right — the
+  swing, the drift, the fall — is UNVERIFIED-LIVE: staging
+  verifies the state conversion, not the sensation.
+- **The banner.** One line, CRANE LIFT — BUTTON TO DROP,
+  the whole hang. The word "drone" no longer appears over
+  your windshield.
+- NOT in this pass: the smoke-puff sphere, the visual
+  steering connection (both still queued), sections,
+  the loop, the envelope.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
