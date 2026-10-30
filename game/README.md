@@ -3412,6 +3412,207 @@ census above); any bodywork change — the pods, dash and
 floor are exactly where they were; the tire moved, not
 the car.
 
+## Fix Pass 26 — The Flask, the Doubled Drop, the Raised Button
+
+Base: FP25 final (c809233). Ordered by the owner live in
+run 20/21, Fri 2026-10-30 17:00–17:02 CDT, from the
+dangle: the FP24 meter read as a blue sliver behind a
+wheel spoke in his own screenshot ("make it a liquid
+flasky meter where one of those flat buttons is along the
+dash, like the green one — sloshes around with car
+movement, drains some on use"), "We need a higher crane
+drop by around x2 or more," and "drop button needs to
+come up." Economy constants are untouched (capacity 120,
+stake 60, drain 30/s, air rate 10/unit-s): this pass moves
+surfaces and geometry, not numbers he is still owed a
+feel verdict on.
+
+### Item 1 — the flask (the bar is deleted)
+
+FP24's trough-and-fill bar is gone outright — stage 56
+asserts no TurboFill/TurboTrough node exists. In its
+place, a vessel in the dash-top button row at
+(-0.435, 0.93, -0.60), beside the green LEAN button as
+ordered: a dark base, a glass box, a collar, and the
+liquid — a blue column whose LEVEL is the tank (12 mm of
+heel at empty to 78 mm at full, inside the 95 mm glass).
+The spot was chosen by the sightline math, not by eye:
+from the shipped eye anchor, sightlines to the centre-row
+spots cross the wheel plane inside the rim band (the side
+button's crossing radius is 0.081 m — spoke territory);
+only |x| ≳ 0.30 m clears the rim at every wheel angle,
+and the flask's crossings run 0.33–0.42 m. It is NOT a
+dash control — the eight-control roster is unchanged and
+stage 56 asserts the flask is not among them. A gauge,
+never a button.
+
+The liquid SLOSHES on its own damped spring (stiffness
+55, damping 5.2, target tilt capped at 0.26 rad), driven
+by the car's measured acceleration (position-delta,
+warp-guarded) against gravity, resolved in body space —
+so it leans under braking and cornering, sloshes off the
+humps, and hangs tilted in a banked dangle. Boosting
+drains it at the drain rate's own pace; a graded payout
+raises it in a chunk and lights it pale for the FP24
+flash's 0.6 s (PAY lines and DIAG BOOST / LAST PAY are
+unchanged). Stage 56 stages the level at empty / stake /
+full, the spring's lag under a staged acceleration
+(0.022 rad at 0.06 s against 0.318 at 0.5 s — it is not
+a mirror; the underdamped surface overshoots its target
+and comes back), and its settle (drift 0.007 rad). The render proof's capture 25 is
+the flask's portrait plus the sweep the bar never faced:
+520 sampled sightlines over the flask's silhouette from
+the eye anchor, wheel at centre, full lock both ways and
+both quarter locks — 0 blocked, worst wheel-plane
+crossing radius 0.268 m against the rim band's 0.245.
+
+### Item 2 — the drop, doubled
+
+HANG_LEN 5.5 → 11.0 and HANG_CLEAR 1.2 → 2.05: the air
+under the hanging car's wheels goes 0.85 → 1.70 m,
+exactly ×2, and the station pivot rides 13.05 m over the
+drop frame (was 6.70). The pendulum's lateral length
+follows (PEND_LEN_L 3.9 → 7.8), so the sway slows by
+√2: staged fore half-period 3.33 s (FP25 measured 2.26),
+drop fall 0.58 s staged (was 0.40). The crane post
+stands 14.15 m; the jib, chains and trolley scale from
+the same constants. FP15's gust walk and jib flex are
+untouched — same torques on a longer pendulum, which is
+the brief's "same character, slower." Touchdown grading
+is unchanged and stage 30's ladder proves it in the old
+numbers: contact lat 0.06 / 2.31 / 5.27 m/s grading
+CLEAN / SCRUBBED / CROSSED-UP, getaway spread 1.31 s —
+identical to FP25's prints (see Amendments for the seed
+form that preserves them).
+
+One consequence the proof caught: at the staged diagonal
+dangle (0.30 / 0.24 rad), the doubled plan displacement
+flipped the diagonal lift-wire pair's order — 9 plan
+crossings in the FP6 sweep, all at the fore turning
+point. The fix is the spreader: _crane_corners' rectangle
+is now PROPORTIONAL to the car's attach rectangle
+(±0.45 × ±1.0125 against the car's ±0.60 × ±1.35), with a
+visible frame mesh at the corners' plane — similar
+rectangles at the same yaw cannot cross at any
+displacement, and a car-sized spreader is what a real
+lift hangs a car from. The sweep now counts 0.
+
+### Item 3 — the button, raised
+
+DROP_BTN_FACE_Y 0.70 → 0.85: the button rides the upper
+dash face at (0.42, 0.85, -0.44), its bracket top flush
+with the dash slab's top. Clearances, all geometric: the
+rim's outer edge passes 0.11 m to its left at full lock;
+its centre sits 0.44 m from the hub — outside the 0.40 m
+wheel-grab radius, so a squeeze on the button can never
+latch the wheel; 0.19 m from the nearest dash-top button
+(zones are 0.15); 0.21 m from the flask's mirrored spot.
+The grab zone, the R-fire path and the telemetry derive
+from the same constants (stage 25 re-reads them); SIDE
+mirroring moves the raised button, and the persisted
+side setting is untouched (stages 44/46 hold).
+
+### Census
+
+The drive census is FP25's, number for number: stage 54
+prints the circuit at 7.70 s payable air / 77.0 units /
+sectors [0×8, 3.29, 4.41, 0×5] / longest starved 2000 m
+in 12225 frames, and the ribbon at 9.67 s / 96.7 units in
+4492 frames — the economy's geography did not move. The
+hang/drop prints that honestly changed, all Item 2's
+geometry: stage 42's sway means (fore 2.26 → 3.33 s, lat
+1.99 → 2.84 s) and drop fall (0.40 → 0.58 s); stage 28's
+carry clearances (0.44 → 1.39 m and 0.38 → 1.31 m — the
+car rides its longer chains over the same route; the
+asserted verdicts are identical: hits 0, station brush 0,
+603 / 603 / 605 frames end to end); stage 34's recoveries
+arrive in the same 605 frames (the slew is horizontal;
+the stack cancels). Stage 30's t20s moved by hundredths
+(2.09 → 2.16 clean, 2.59 → 2.67 seed, 3.40 → 3.47 peak) —
+the longer fall's drift at the same contact velocities.
+
+### Amendments (flagged, never silent)
+
+- **Stage 25**: the position check's prose names the
+  upper dash face; it reads the shipped constants, as
+  before.
+- **Stage 30**: the getaway seeds halved (-0.45/0.41 →
+  -0.225/0.205; -0.80/0.95 → -0.40/0.475). The seeds
+  encode TIP VELOCITIES (om × HANG_LEN, both axes — the
+  release fires at the seeded om; measured on both
+  geometries). A first FP26 form scaled them by the
+  pendulum's frequency ratio instead and printed contact
+  lat 3.24 / 7.41: the seed leg graded CROSSED-UP and the
+  peak car never reached 20 m/s. Halved, the ladder
+  reproduces FP25's contact velocities, grades and spread
+  exactly. The swing angle the seeds ride at halves with
+  them; no check reads it, and the dangle's full envelope
+  is staged by stages 1/42/52.
+- **Stage 42**: the sway sample window grows 2700 → 3600
+  frames (the slower pendulum needs the frames for the
+  same cycle count); the mean half-period band moves to
+  [2.8, 3.9] around the new pendulum's own 3.33 (measured
+  3.33); the drop-fall band moves to [0.50, 0.70] around
+  the doubled drop's 0.59 (measured 0.58) — the film's
+  0.3–0.5 s band governed the old short drop and is
+  recorded as superseded in the stage, not deleted.
+- **Stage 46(c)**: the hand is parked away and released
+  before the rim approach. The raised button sits
+  0.212 m from the staged rim point — inside the 0.25 m
+  teleport cap — so the old one-poll jump's sweep started
+  inside the button's zone and the FP17 arbitration
+  honestly awarded the squeeze to the button. A real hand
+  arrives continuously and engages at the rim, where the
+  button is no candidate; the park makes the staged jump
+  endpoint-tested like the arrival it stands for. The
+  claim (rim latch, soft lock) is unmoved.
+- **Stage 53**: the meter-identity check names the flask
+  (FP24's bar mesh is the deleted subject); the stage's
+  economy claims are untouched.
+- **Stage 56 (new)**: pins the pendulum for its slosh
+  sequence — the dangle is never still (FP15's gusts work
+  it; an unpinned first form watched its rest sample
+  wander 0.09 rad). The pin is test-side only.
+- **Stages 28/35 comments**: the station-exemption and
+  rebound-gate notes updated to the new geometry (the
+  gate's drop exclusion was always the air_from_release
+  flag, never the fall speed — drops now land at vy 5.8,
+  over the gate's 4.5 face value, and stay excluded by
+  the flag).
+
+### Verification
+
+Smoke 510/510 (503 at FP25 + stage 56's 7), API guard
+70/70. Render proof 144/145 — the one failure is the
+sandbox seat-trim artifact (the hub reading 0.31 m below
+the eye), which the UNMODIFIED baseline also fails in
+this sandbox whenever the persisted trim sits where the
+suites leave it (A/B'd today: baseline 142/144 and
+143/144 across runs, the failures moving between the hub
+band and wires_view's llvmpipe colour count, which read
+11–13 colours across runs; both checks pass on other
+runs of identical code). One /tmp diagnostic run also
+showed a single commands-panel occlusion (1 of 63) that
+neither the baseline re-run nor the official run on the
+final tree reproduces. All proof captures rendered
+through the sandbox's Compatibility/llvmpipe stack —
+structure and geometry only, not colour truth.
+
+### What you're judging (run 22)
+
+The flask: readable at a glance from the seat, the level
+honest (half a vessel at race start), the slosh alive
+without being a distraction, the drain visible while you
+boost, the chunk-and-brighten when a landing pays. The
+drop: twice the air under the car — the fall should READ
+now (0.58 s staged) — and the sway's new slow character
+on the long chains; the crane and its new spreader frame
+at the doubled scale. The button: up where the hand
+expects it, clear of the rim at full lock. NOT in: any
+economy number (120/60/30/10 stand), any drive feel (the
+census above is number-identical), and the first real
+track — that is the next pass, per your call.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
