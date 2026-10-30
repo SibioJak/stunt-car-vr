@@ -56,10 +56,14 @@ VR (Quest):
   hand to grab drives; the other hand takes over when it lets go.
 - Throttle: right trigger · Brake: left trigger · Boost: right A
   button (while driving)
-- **Release from the drone:** pull the DROP SHIFTER on the right
-  pod, forward beside the wheel (while dangling) — Fix Pass 11
-  retired the trigger release for the lever, Fix Pass 12 moved
-  it forward and shortened it into a gear shifter
+- **Release:** press the DROP BUTTON on the dash face (while
+  dangling) — a big red button at the old lever's spot; GRIP
+  near it. It answers in every phase: at the dangle it drops
+  you; during the crane's attach/carry it refuses with a grind
+  (nothing drops); while driving it just thocks. Fix Pass 20
+  retired the drop lever (FP11–FP19) for this button. Its side
+  follows the blue SIDE dash button / M key (lefty mirror) and
+  persists between sessions
 - Flip a prep switch / press a dash button: GRIP near it (while
   dangling) — since Fix Pass 9 either order works: squeeze-then-touch
   or touch-then-squeeze; the flip fires when grip and proximity
@@ -2380,6 +2384,206 @@ trust blindly — the check itself was left untouched.
 - NOT in this pass: sections/markings, the speed-envelope
   decision, dip re-profile, stilt tops, the loop entry — the
   tracks pass, still gated on the owner's word.
+
+
+## Fix Pass 20 — The Button (the lever is retired)
+
+Base: FP18 final (7377bc3). Ordered out of run 18 and the
+lever's whole history: five passes of staged-green fixes
+(FP11's lever, FP12's shifter, FP13's centre lever, FP15's
+face lever, FP16's Schmitt rebuild, FP17's arbitration) and
+the control still failed in the owner's hands — because a
+pull is a multi-sample act (zone, threshold, sustained grip,
+a swept hand tracked through a 0.19 m throw), and staging's
+perfect squeezes certify the samples, never what happens
+between them. The owner's words: "Lever is still not
+consistent. why is a lever so hard? Im sick of going round
+and round with the lever, make it a button for now." A button
+is a single threshold event in a fat zone — the one mechanism
+staging can certify honestly. Run 18 also carried the
+interactivity law from the run-17 post-mortem (the FP17 lever
+was polled only at the dangle, so recovery pulls mid-carry
+were disarmed AND silent): **physical controls never freeze;
+context decides what a pull DOES, never whether the control
+responds** — and where a press can't do the thing, the floor
+is a FELT REFUSAL (a grind in the controller), never silence.
+Tallies on the final tree: SMOKE 449/449, API GUARD 70/70,
+RENDER PROOF 146/146. No drive numbers moved (the suite's
+frame-identity stages re-pass unchanged). Everything below
+is probe-verified only — the verdict is the owner's in the
+headset.
+
+### Item 1 — the DROP BUTTON
+
+The lever (pivot, shaft, knob, bracket, its whole latch /
+pull-tracking / throw-telemetry machinery) is deleted. In
+its spot on the dash face stands a big red button: unshaded
+cylinder, r 0.07 m, on a bracket box, face point at
+(±0.42, 0.70, −0.44) — 0.50 m from the wheel hub (outside the
+0.40 m grab radius) and ≥0.29 m from every dash-top button.
+It is a DASH CONTROL (kind "drop", registered last of eight),
+so it inherits the dash mechanics whole: Schmitt latch (one
+press per squeeze), swept zone test, the FP17 one-hand-one-
+control arbitration (stage 47's suite, rewritten against the
+button — including simultaneous hub/button entry, where the
+button wins as the nearer candidate, 0.14 m vs 0.38 m). Its
+side follows the persisted mirror (the settings key stays
+"lever"/"left" — the owner's existing setting carries over)
+and the blue SIDE button / M key, exactly as the lever's did.
+
+**A press registers in every phase** (`_press_drop_button`):
+
+- **dangle** — the release fires (BTN FIRE + the pulse
+  detent), as the lever's completed pull did.
+- **attach / carry** — BTN SPENT is logged with the phase,
+  and the GRIND runs: 0.40 s of rough pulse train (0.55 amp
+  every 0.07 s) in the pressing controller. The chains hold;
+  nothing drops; the press is never mute. This is the run-17
+  failure — four silent pulls during the carry — answered.
+- **drive / air / done** — BTN PRESS is logged and a dull
+  pulse answers (0.25 amp). Nothing else happens.
+
+The button dips 12 mm into its bracket while a squeeze holds
+(the articulation follows the dash latch, along −z instead
+of the seat levers' −y). The panel names it ("Release: press
+the DROP BUTTON (dash face)"), DIAG's short tag is DROP with
+the side (DROP L / DROP R), and the grab log's vocabulary is
+BTN FIRE / BTN SPENT / BTN PRESS now — DRP/PULL/ORPHAN are
+gone with the throw they described. The in-game commands
+list and this README's Controls section name the button in
+the same commits.
+
+HONESTY NOTE: the grind and the pulses are issued through
+the same haptic path as every prior pass's detents, and
+**haptics cannot be proven from this sandbox** — whether the
+refusal reads as a grind in the hand is UNVERIFIED-LIVE, the
+owner's verdict on device, like every feel claim before it.
+
+### Item 2 — the centre band is removed
+
+Run 18, on seeing the surface render for the first time
+(FP18's winding fix): the grey is right, but the band "has
+one long stripe, not what I wanted. going down center." The
+band is out of `_build_track_meshes` — each segment is one
+full-width asphalt quad again (the spur never had one). What
+remains: FP18's asphalt grey, the dashed amber edges.
+Stage 45 now asserts the ABSENCE (0 band-coloured vertices;
+the surface uniformly asphalt) where FP15–FP18 asserted its
+presence. Mesh-build only: physics never reads the mesh, no
+geometry or drive numbers moved. The sectioned markings the
+owner actually wants are the tracks pass's subject, still
+gated on his word — this item only removes what he rejected.
+
+### Item 3 — the backwards drop: census, no conviction, telemetry shipped
+
+Run 18: a crane recovery "dropped me backwards facing wrong
+way on track." The hunt was staged as a CENSUS (new stage
+49), not a sample: a forced fall in each of the circuit's
+ten segment families, through the production path (fall →
+recovery → hang → dangle → release once the sway settles),
+reading the release's heading error from the new telemetry:
+
+| family | fall s | drop s | heading | section | error |
+|---|---|---|---|---|---|
+| home straight | 150 | 150 | +0.0° | −0.0° | **+0.0°** |
+| curve A (banked) | 550 | 362 | +0.0° | −0.0° | **+0.0°** |
+| dip descent | 830 | 742 | +80.0° | +80.0° | **+0.0°** |
+| dip floor | 960 | 960 | +80.0° | +80.0° | **+0.0°** |
+| mid straight | 1300 | 1300 | +80.0° | +80.0° | **+0.0°** |
+| hairpin (banked) | 1650 | 1474 | +80.0° | +80.0° | **+0.0°** |
+| signature climb | 2000 | 1902 | −100.0° | −100.0° | **+0.0°** |
+| hump descent | 2300 | 2206 | −100.0° | −100.0° | **+0.0°** |
+| curve C (banked) | 2600 | 2206 | −100.0° | −100.0° | **+0.0°** |
+| tail return | 3050 | 2974 | −180.0° | −180.0° | **+0.0°** |
+
+**Could not reproduce.** Every family's release heads
+exactly along its drop section's travel — including the
+tail return, whose section itself travels at −180° (the
+return leg runs opposite the start heading, and the car
+correctly drops facing −180°: along travel, not "backwards"
+in any sense the physics recognises). Code analysis agrees:
+the carrier's yaw is initialised from the drop piece's frame
+in both race start and recovery, and the station gate won't
+dangle until the carrier has swung onto it. Two honest
+caveats. (1) The census releases at settle, as staged drops
+do; a LIVE release happens whenever the owner presses —
+mid-sway included — and a mid-sway release keeps the sway's
+heading at that instant. (2) No code path was found that
+flips a heading ~180°, but the owner's eyes have beaten
+staging before (the winding conviction was his catch too).
+
+So the pass ships the instrument instead of a fix: **every
+release now records itself** — `_do_release` stores the drop
+s, the release heading, the section's travel heading and
+the error, and writes `RELEASE s… HDG … SEC … ERR …` into
+the grab log (and the DIAG GRAB line). If a backwards drop
+ever happens again, his own log carries the numbers from
+the instant it happened, and the hunt reopens with evidence
+instead of recollection.
+
+### Staged-expectation changes (flagged, never silent)
+
+Every staged expectation that encoded the lever was replaced
+by its button successor and is flagged in place: stage 22
+(control count 7→8; VIEW's index unmoved), stage 25
+(rewritten — the button's stage), stage 34 (transport probe:
+SPENT + grind replaces "the lever does not latch during
+transport" — the phase freeze the interactivity law
+repealed), stage 44 (rewritten — the button's mirror),
+stage 45 (band ABSENCE replaces presence), stage 46(b) (the
+button's latch through the grip dip replaces the lever's
+mid-throw dip), stage 46(f)/(g) (side + telemetry names),
+stage 47 (the arbitration suite rewritten against the
+button; case (e) is unchanged — it never touched the lever),
+stage 49 (NEW — the heading census). Render proof: panel
+keywords (DROP BUTTON / drop side / M drop side), the
+eight-control list, the zone overlay's button marker, and
+the release portrait (now `drop_btn_view.png` /
+`drop_btn_view_left.png`).
+
+### Verification notes
+
+The sandbox fought this pass harder than the code did: three
+suite attempts died to the engine's known threading crash /
+host restarts mid-run (stages 3, 10a, 18, 28 across attempts,
+zero FAIL lines before each death) before the final tree ran
+clean end to end — SMOKE 449/449, API GUARD 70/70. The
+render proof passed 146/146 on the final tree; its
+wires_view colour check remains the FP18-documented marginal
+one (11 colours in two runs, 26 in the passing run — the
+from-below frame's census swings with the hang phase at
+capture; FP20 touches nothing in that frame and the check
+was left untouched, as FP18 left it). The seat-trim hygiene
+note from FP18 applies as ever: the smoke suite persists a
+trim, so the proof runs from trim 0.
+
+### What you're judging (run 19)
+
+- **The button, in every phase.** At the dangle: one press,
+  car goes. During a recovery's attach/carry: press it —
+  it should answer with the grind and a BTN SPENT you can
+  feel, and the car should stay chained. While driving:
+  a press should thock dully and do nothing. Any press,
+  anywhere, that feels like NOTHING is the bug this pass
+  exists to kill — say so.
+- **The button's placement and size** — the lever's spot on
+  the dash face, mirrored if you flip SIDE; a fat red target
+  instead of a shaft to thread.
+- **The road without its stripe** — plain asphalt grey +
+  dashed amber edges. (Sections/markings are NOT in this
+  pass; the tracks pass designs them.)
+- **Drop headings after recoveries** — if any drop ever
+  faces you wrong again, it is now on the record: the grab
+  log (%APPDATA%\Godot\app_userdata\Stunt Car VR - DE Test
+  1\grab_log.txt) carries a RELEASE line per drop with the
+  heading error at that instant.
+- Both-hands re-check rides along as ever (the arbitration
+  suite is re-staged against the button; your hands are
+  the verdict).
+- NOT in this pass: sections/markings design, the smoke-puff
+  and banner-text cleanups, visual steering, the tracks
+  pass, button gates of any kind (the button has none —
+  that is the point).
 
 
 ## Quest export — status
