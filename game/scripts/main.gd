@@ -90,6 +90,36 @@ const WHEEL_RAD_R: float = 0.47 # rear tyre radius, m (1.38x the old 0.34)
 const WHEEL_RAD_REF: float = 0.34 # centre height the bookkeeping was tuned around
 const WHEEL_WID_F: float = 0.24 # front tyre width, m (unchanged)
 const WHEEL_WID_R: float = 0.36 # rear slick width, m (visibly wider)
+# Fix Pass 25 (Items 2-4): the steering CONNECTION - visual
+# only, every value below moves meshes and nothing else. The
+# FP25 sightline audit (render proof, run BEFORE this remedy)
+# measured the shipped front tires 87% in-frame but only 8%
+# VISIBLE from the eye anchor at rest: of 86 sampled surface
+# points per tire, the side pod hid 25, the floor 17, the
+# dash slab 12, the tire's own far side 11. The remedy is on
+# the tire, not the bodywork: the front VISUAL tyre grows to
+# 0.33 m radius and steps 0.14 m outboard, out from behind
+# the pod. WHEEL_RAD_F itself is a physics constant (it sets
+# the suspension attach heights) and does NOT move; the
+# visual centre rises by the radius growth so the visual
+# contact patch stays on the model's plane (capture 20's
+# planted-plane checks measure exactly this), and the dust
+# emitters keep marking the TRUE patch at WHEEL_LOCALS.
+const WHEEL_RAD_F_VIS: float = 0.33 # front VISUAL tyre radius, m (mesh only)
+const WHEEL_OUT_F_VIS: float = 0.14 # front visual outboard step, m (mesh only)
+const WHEEL_FWD_F_VIS: float = 0.40 # front visual forward step, m (mesh only) - the dragster's long nose: from the seat, a tire ahead of the pod's front face clears the pod's sightline shadow, one behind it cannot (audit rounds: outboard+radius alone moved rest visibility 8% -> 9%; +0.25 forward -> 17%; +0.40 -> see the README table)
+# The displayed steer angle is GAINED at small lock so a
+# quarter-turn of the cockpit wheel reads clearly on the
+# tires, converging to the honest angle at STEER_VIS_FULL:
+# gain = 1 + (GAIN0 - 1) * (1 - smoothstep(0, FULL, |steer|)).
+const STEER_VIS_GAIN0: float = 2.2 # display gain at centre
+const STEER_VIS_FULL: float = 0.55 # steer fraction at/above which the display is honest
+# The slip angle joins the display (Item 3): the front tires
+# yaw toward where the car is actually sliding by
+# atan2(lat_vel, |speed|), honestly scaled and capped, so a
+# slide beginning is visible on the tires themselves.
+const SLIP_VIS_CAP_RAD: float = 0.18 # ~10.3 deg
+const SLIP_VIS_MIN_SPEED: float = 4.0 # m/s atan2 floor (no blowup parked)
 # Fix Pass 10 (Item 3): the owner, run 10 - the road must be
 # "wide enough for two cars to pass each other; it isn't." The
 # 9.36 m Crammond proportion (6.0x the wheel track, Fix Pass 9)
@@ -2355,12 +2385,23 @@ func _build_car() -> void:
 		var is_rear_w: bool = wl.y > 0.0
 		var w := MeshInstance3D.new()
 		var cm := CylinderMesh.new()
-		cm.top_radius = WHEEL_RAD_R if is_rear_w else WHEEL_RAD_F
-		cm.bottom_radius = WHEEL_RAD_R if is_rear_w else WHEEL_RAD_F
+		# Fix Pass 25 (Item 4): the front MESH is the visual
+		# radius, stepped outboard and centred higher by the
+		# growth (see the constants note) - the built position
+		# is only frame zero; _refresh_car_visuals poses the
+		# fronts every frame.
+		cm.top_radius = WHEEL_RAD_R if is_rear_w else WHEEL_RAD_F_VIS
+		cm.bottom_radius = WHEEL_RAD_R if is_rear_w else WHEEL_RAD_F_VIS
 		cm.height = WHEEL_WID_R if is_rear_w else WHEEL_WID_F
 		w.mesh = cm
 		w.rotation_degrees = Vector3(0, 0, 90)
-		w.position = Vector3(wl.x, WHEEL_RAD_REF, wl.y)
+		if is_rear_w:
+			w.position = Vector3(wl.x, WHEEL_RAD_REF, wl.y)
+		else:
+			w.position = Vector3(wl.x + signf(wl.x) * WHEEL_OUT_F_VIS,
+				WHEEL_RAD_REF + (WHEEL_RAD_F_VIS - WHEEL_RAD_F)
+					+ WHEEL_FWD_F_VIS * (WHEEL_RAD_R - WHEEL_RAD_F) / WHEELBASE,
+				wl.y - WHEEL_FWD_F_VIS)
 		w.material_override = dark
 		w.name = "WheelF" if wl.y < 0.0 else "WheelR"
 		car_body.add_child(w)
@@ -4700,6 +4741,28 @@ func _lock_scale(v: float) -> float:
 	return 1.0 / (1.0 + (v / fs) * (v / fs))
 
 
+## Fix Pass 25 (Items 2+3): the front tires' DISPLAYED yaw,
+## in the model's sign convention (positive = toward +X, a
+## right lock). The drive model computes its own front_angle
+## from wheel_angle and never reads this. The display is:
+## the model's angle with its steer fraction run through the
+## visual gain curve (STEER_VIS_GAIN0 at centre, honest from
+## STEER_VIS_FULL up), plus - in DRIVE only - the slip angle
+## atan2(lat_vel, |speed|) capped at SLIP_VIS_CAP_RAD, so the
+## tires yaw toward the slide the car is actually in. The
+## dangle display runs through the same gain (speed 0 -> full
+## lock scale): the promise the release keeps is the one the
+## driver saw dialled in.
+func _steer_display_angle() -> float:
+	var steer: float = clampf(wheel_angle / PI, -1.0, 1.0)
+	var gain: float = 1.0 + (STEER_VIS_GAIN0 - 1.0) * (1.0 - smoothstep(0.0, STEER_VIS_FULL, absf(steer)))
+	var fa: float = steer * gain * MAX_LOCK_RAD * _lock_scale(speed)
+	if mode == MODE_DRIVE:
+		fa += clampf(atan2(lat_vel, maxf(absf(speed), SLIP_VIS_MIN_SPEED)),
+			-SLIP_VIS_CAP_RAD, SLIP_VIS_CAP_RAD)
+	return fa
+
+
 func _update_drive(delta: float) -> void:
 	# Fix Pass 9 (Item 2): THE FREE-HEADING MODEL. This replaces
 	# the spine-slaved model whole: up to Fix Pass 8 the car's
@@ -6061,10 +6124,29 @@ func _refresh_car_visuals() -> void:
 	# never yaw. Sign: a positive (right) lock turns the wheels
 	# toward +X, which is -Y rotation for a wheel modelled
 	# rolling toward -Z.
-	var fa_vis: float = clampf(wheel_angle / PI, -1.0, 1.0) * MAX_LOCK_RAD * _lock_scale(speed)
+	# Fix Pass 25 (Items 2+3): the yaw now comes from
+	# _steer_display_angle() - the model's angle through the
+	# visual gain curve (the promise is the same promise, drawn
+	# bigger at small lock, identical at full lock), plus the
+	# slip-angle offset in DRIVE. The model never reads it back.
+	var fa_vis: float = _steer_display_angle()
 	for wi: int in wheel_mis.size():
 		wheel_mis[wi].position.y = WHEEL_RAD_REF + (susp_c[wi] - SUSP_REST)
 		if wheel_axle[wi] == 0:
+			# Fix Pass 25 (Item 4): the fronts ride their
+			# visual presentation - outboard, centred higher
+			# by the visual radius growth (travel delta
+			# unchanged: the (susp_c - SUSP_REST) term above
+			# is the model's own).
+			var wl25: Vector2 = WHEEL_LOCALS[wi]
+			wheel_mis[wi].position.x = wl25.x + signf(wl25.x) * WHEEL_OUT_F_VIS
+			# The rake term: the visual centre also rises by
+			# the rake slope x the forward step, so the visual
+			# bottom stays on the world contact plane the
+			# raked body pitches it off (capture 20 measures).
+			wheel_mis[wi].position.y += (WHEEL_RAD_F_VIS - WHEEL_RAD_F) \
+				+ WHEEL_FWD_F_VIS * (WHEEL_RAD_R - WHEEL_RAD_F) / WHEELBASE
+			wheel_mis[wi].position.z = wl25.y - WHEEL_FWD_F_VIS
 			wheel_mis[wi].rotation_degrees.y = -rad_to_deg(fa_vis)
 	_update_view_spring()
 	# dent carnage placeholder: nose crumples/tilts with dent level
