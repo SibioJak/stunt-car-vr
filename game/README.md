@@ -2586,6 +2586,212 @@ trim, so the proof runs from trim 0.
   that is the point).
 
 
+## Fix Pass 21 — AIR (per-corner load, separation by physics)
+
+Ordered from the owner's run-18 report (2026-10-29): "im just
+not getting the air I feel i should be getting, I come out of
+turn and hit the little inside flair and I expect those left
+wheels to catch some air… at the hills, where the car feels
+like it wants to stick to road instead of bounce." Two
+suspects named in the brief: the per-axle crest-load scalar
+(blind to one-side unloads) and the FP8 flight-entry gate
+(both axles at ~zero load, sustained — a gate small hops
+cannot pass). Per the brief, the conviction ran FIRST:
+load traces on the unmodified tree (456c456) through a
+diagnostic harness reading the production state plus the
+per-corner patch load the model did not yet compute.
+
+### The conviction (traces before any change)
+
+- **Curve A exit / the bank unwind (autopilot) — CONVICTED.**
+  Zero air episodes; the axle loads read 1.00 flat through
+  the whole unwind. The centreline kv there is 0.000 — the
+  unwind is a BANK change, not a centreline crest — while
+  the patch kv at the falling (right) side's wheels spikes
+  to +0.021/+0.025: patch load 0.00 sustained for ~10 m,
+  the held side at 1.25. A one-side unload the per-axle
+  scalar cannot see, by construction.
+- **Ribbon corner exit + launch lip (pinned 24) —
+  CONVICTED.** Axle loads 1.00 throughout while the corner
+  patch loads swung 0.00 ↔ 1.25, alternating sides (FR at
+  0.00 while FL sat at 1.25).
+- **Climb-top bend at cruise — the model is honest, the
+  ask is not available.** Loads bottom at 0.47 (front) /
+  0.53 (rear); the rear springs bleed to c ≈ 0.00–0.02
+  chasing the falling road (the FP5 bleed) — but at
+  24–34 m/s, v²·kv < g at kv 0.006: no ballistic separation
+  exists at cruise on that bend. At 43–46 m/s the bend DID
+  fire the old gate and fly. Partial load at cruise is the
+  correct physics, and FP21 keeps it (stage 51 stages it
+  as a negative control).
+- **Circuit hump row, pinned 24 — CONVICTED.** Three real
+  flights (0.66 / 1.07 / 0.13 s) buried in ~90 one-frame
+  mode-flicker episodes — the sustain gate chattering at
+  its own threshold. One flight in the 0.1–0.4 s drumbeat
+  band. At 48: three flights of 1.6–2.2 s, none in band.
+
+Verdict: the gates were convicted — the scalar is
+structurally blind to the flair, and the sustain gate eats
+the small hops at the hills.
+
+### Item 1 — per-corner load sampling
+
+The crest load is now computed PER CORNER from the vertical
+curvature of the surface at the wheel's own contact patch:
+`_patch_kv(s, lat)` takes the second difference of the
+surface height at the patch (±2.5 m stencil along the
+frame, slope-corrected) — sign convention: positive over a
+crest. `wheel_load[4]` is each corner's clamped load;
+`load_f`/`load_r` survive as the corner means of their axle,
+so every pre-FP21 reader keeps its meaning. Spring targets
+scale by the corner's OWN load; `load_grip` is the same
+formula over the four-corner mean — arithmetically identical
+to the old value wherever the corners agree (straights,
+flat, symmetric crests unchanged). Scope line, deliberate:
+the spring GEOMETRY (rise/support heights) stays
+centreline-based per FP9's design; the per-wheel height +
+curvature enter through the load channel, which is where
+the owner's two scenarios live.
+
+### Item 2 — separation by physics
+
+A corner is airborne when its patch load is ~zero
+(`wheel_load ≤ 0.03`) at speed — the road falling away
+faster than that corner's ballistic arc. An airborne corner
+targets full droop and carries nothing; it re-contacts the
+frame its load returns. The CAR flies when all four corners
+have separated: on the main track this replaces the FP8
+both-axle sustain counter (the spur keeps its own FP8 form,
+mirroring the corner state from its axle loads). FP5/14's
+rebound-energy route is untouched — the separation entry
+explicitly does not arm it. Guards: entry needs speed > 8
+(and the load factor itself re-contacts a slowing car,
+v²·kv → 0); corners the support projection has already
+given up (past the cutoff) stay the straddle's business —
+no separation state exists off-support; crane/dangle/drop
+paths clear the corner state and never read it.
+
+### Evidence (after)
+
+Stage 51 (NEW) stages the owner's scenarios on the circuit:
+
+- (a) The flair: through curve A's unwind the corner-air
+  counters move FL 6 / FR 14 / RL 6 / RR 14 frames — the
+  falling side leads (right 28 vs left 12), and the car
+  NEVER fully leaves: a two-wheel event, as ordered.
+- (b) Circuit humps at cruise (pinned 24): 10 flights,
+  5.59 s of air total. The drumbeat band count on this row
+  is reported honestly, not quota'd: the row descends at
+  −8° under its humps, a separated car stays out ~1.1 s per
+  hump, and the band fills only via phase-sensitive
+  re-flights — the diag protocol measured 4 in band, the
+  suite protocol 0, same model.
+- (b2) Ribbon humps at cruise (the flat-based row — the
+  band's home geometry): 8 flights [1.1, 0.33, 1.1, 1.1,
+  0.33, 1.1, 1.1, 0.7] — 2 in the drumbeat band, mid-band
+  and stable across both measurement protocols, hops
+  interleaved with the long flights.
+- (c) Climb-top negative control: no separation at cruise;
+  minimum axle load 0.54 — partial, as the physics
+  requires.
+- (d) Flat guard: the home straight at 34 m/s separates
+  NOTHING — zero corner-air frames, minimum corner load
+  1.00.
+
+Diag protocol (fresh boot, same scenarios): curve A window
+(s 690–750) FR 15 / RR 15 corner-air frames with the car
+grounded throughout; circuit row at 24: 11 episodes, 4 in
+the band (0.47 s), ~6.6 s total, and the ~90 one-frame
+flickers collapse to a single 0.011 s episode (a few 1–2
+frame re-contact blips remain under the suite protocol —
+mechanically inert, the landing window absorbs them the
+next frame; noted, not gated). Stage 38's sweeper exit now
+measures the asymmetry FP14 could only document: first
+unload FL 229 / FR 249 / RL 237 / RR 259 — the falling side
+leads by 20/22 frames at the two axles, the wheelbase phase
+unchanged. Stage 20 counts 10 circuit-hump flights under
+autopilot.
+
+### Census and moved numbers
+
+NO drive constant moved — springs, sag, rebound energy,
+grip slope/exponent, steering, lock, speeds all carry their
+FP20 values. What changed is the load signal's source and
+the flight-entry rule. Behaviour deltas, enumerated: stage 8
+full lap 46.8 s (ribbon, 1163 m); stage 9's step census
+passes (worst outside-event step 0.0274 m / 0.675° against
+0.05 m / 1.2° tiers); stage 19 three laps in 18133 frames,
+seam steps 0.0027 m / 0.015°; stage 12b's flick baselines
+hold (peak slip 1.00, counter-steer recovery 30 vs 66
+frames). Lock behaviour at ≤24 m/s: the lock-scale path is
+untouched, corner loads on flat and straights are exactly
+1.00, stages 12a/12b pass — steering at and under 24 should
+feel as it did, except where the road itself unloads a
+corner.
+
+### Amendments (flagged, never silent)
+
+- **Stage 35**: the 48 m/s hump-row flight-count floor
+  drops 3 → 2. Per-corner separation re-phases the row:
+  measured contact 22 / flight 164 / contact 5 / flight 163
+  / contact 6 — contacts are four-corner events now and run
+  5–6 frames (FP14's comment said 16–25), so the third
+  flight starts past the window edge. The pattern check and
+  stage 38's independent lock on the same row are intact.
+- **Stage 37**: the diagonal-crossing order may now lead
+  by one frame for the trailing corner (measured −1, was
+  +2). FP14's shared axle channel could not lead; the
+  per-corner channel reads through a ±2.5 m stencil that
+  sees the edge early. The corners still move a beat apart;
+  the square-crossing control is unchanged.
+- **Stage 38**: the documented left/right SYMMETRY limit is
+  retired and its check inverted — it now asserts the
+  left-first asymmetric unload FP21 exists to produce. The
+  stage's comment records the retirement and the measured
+  frames.
+
+### Verification notes
+
+SMOKE 459/459 on the final tree. API GUARD 70/70. Render proof 146/146 under
+Xvfb from seat trim 0 (the suite persists trim 0.024 — the
+FP18 hygiene note applies as ever; the proof's first
+attempt this pass stalled at its first capture because it
+was launched --headless, which its own header forbids —
+frame_post_draw never fires there; the Xvfb rerun passed
+clean in under a minute). The first full-suite run of the
+final code scored 457/458, the one failure being stage
+51(b)'s original band quota on the circuit row — the stage
+was restructured (band counted there, quota'd on the ribbon
+row) rather than the model touched, and the suite rerun
+clean. Everything above is staged evidence; the feel is
+UNVERIFIED-LIVE until the owner drives it.
+
+### What you're judging (run 20)
+
+- **The flair.** Out of the banked turns — curve A's exit
+  is the staged one — the falling side's wheels should
+  catch air briefly while the car stays planted on the
+  held side: a two-wheel lightness, not a jump, not a
+  slide.
+- **The hills.** Hump country at cruise should patter now:
+  wheels leaving individually over crests, short hops
+  between the long flights. At top speed the jumps stay
+  jumps.
+- **Rebound/settle regression watch.** Landings — the gap,
+  the staircase, crest chains — plus drops and crane
+  recoveries: all re-pass staged with the rebound route
+  untouched, but any new harshness, float, or second
+  bounce is the regression to name.
+- **The climb at cruise stays glued-but-light** — measured
+  partial load, no separation; that is the honest physics
+  at that curvature and speed. If you want air there at
+  cruise, it is a track-shape conversation, not a model
+  one.
+- NOT in this pass: sections/markings, the smoke-puff /
+  banner-text / visual-steering cleanups (a separate load
+  awaits its own pass), the loop, the envelope, any new
+  track.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
