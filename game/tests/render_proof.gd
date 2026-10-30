@@ -41,6 +41,9 @@ extends SceneTree
 ## the dangle) now frames ribbon + desert + horizon from the
 ## seat, and capture 8's width assertion is the Crammond
 ## proportion (6.0x the wheel track = 9.36 m).
+## Fix Pass 24 adds: capture 25 = the turbo meter's portrait
+## (the dash face with a staged 70% fill and the payout flash
+## lit - the state the bar shows as a landing pays).
 
 var failures: int = 0
 var checks: int = 0
@@ -1021,6 +1024,31 @@ func _run() -> void:
 		main.debug_pin_speed(0.0)
 		await physics_frame
 	await snap(main.fallback_cam, "dip_valley_view.png")
+
+	# Capture 25 (Fix Pass 24, Items 1+2): the turbo meter's
+	# portrait - the dash face at a staged 70% fill with the
+	# payout flash lit: the state the bar shows in the moment
+	# a landing pays. Structural checks only - under this
+	# sandbox's Compatibility/llvmpipe renderer the capture
+	# is not colour truth.
+	main._set_track("ribbon")
+	main.start_race()
+	main.debug_warp_to_s(30.0)
+	main.boost_meter = 84.0
+	await physics_frame
+	await physics_frame
+	check(main.turbo_fill_mi != null and main.turbo_fill_mi.visible,
+		"capture 25: the turbo fill exists and is visible in DRIVE")
+	check(absf(main.turbo_fill_frac - 0.70) < 0.02,
+		"capture 25: the staged fill is the staged stock (%.2f)" % main.turbo_fill_frac)
+	main.pay_flash_t = main.PAY_FLASH_S
+	var cam25 := Camera3D.new()
+	main.car_body.add_child(cam25)
+	cam25.position = Vector3(0.55, 1.35, 0.25)
+	await physics_frame
+	cam25.look_at(main.car_body.global_transform * main.TURBO_BAR_POS, Vector3.UP)
+	await snap(cam25, "turbo_meter_view.png")
+	cam25.queue_free()
 
 	print("---")
 	if failures == 0:

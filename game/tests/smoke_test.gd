@@ -5106,6 +5106,228 @@ func _run() -> void:
 	check(sane52, "stage52: (a) the mid-slew drop resolves sane - drive or re-recovery (mode %d)" % main.mode)
 	main.test_hand_set = false
 
+	# ---------- stage 53: Fix Pass 24 (Items 1+2+4) - THE AIR ECONOMY ----
+	# The boost meter stops being a one-shot ration: a tank
+	# (120) with a stake (60), the drain unchanged, and racing
+	# air paying air_seconds x grade x 10 at graded landings.
+	# The flights stage at s=30 - the ribbon's flat start
+	# straight (the climb begins at s=50). Staged through the production paths only: flights via
+	# debug_stage_landing (the _update_air/_land path), the
+	# crane drop via _do_release, the loss via
+	# debug_force_fall_at. Also staged: the meter's state
+	# (fill fraction, payout flash) and the smoke blob's
+	# absence (Item 4).
+	main._set_track("ribbon")
+	main.start_race()
+	await frames(3)
+	check(main.BOOST_CAPACITY == 120.0 and main.BOOST_AIR_RATE == 10.0 and main.BOOST_DRAIN_PER_S == 30.0,
+		"stage53: the dials as shipped - capacity %.0f, rate %.0f/air-s, drain %.0f/s" % [main.BOOST_CAPACITY, main.BOOST_AIR_RATE, main.BOOST_DRAIN_PER_S])
+	check(main.boost_meter == main.BOOST_START_STOCK,
+		"stage53: race start deals the stake (%.0f)" % main.boost_meter)
+	check(absf(main.turbo_fill_frac - 0.5) < 0.02,
+		"stage53: the meter's fill is the stake in the tank (%.2f)" % main.turbo_fill_frac)
+	check(main.turbo_fill_mi != null and main.turbo_fill_mi.get_parent() == main.car_body,
+		"stage53: the turbo fill is built on the car body - always visible, on no panel")
+	# A staged racing flight: known height, optional lateral
+	# velocity (the grade's lever), optional rebound flag.
+	# Returns [air_s, grade, units_paid, meter_after].
+	var fly53 := func(height: float, lat_v: float, rebound: bool, stock: float) -> Array:
+		main.boost_meter = stock
+		main.last_pay_units = -1.0
+		var fr53: Dictionary = main._frame_at(30.0)
+		main.debug_stage_landing(30.0, height, 12.0)
+		main.air_from_release = false
+		main.air_from_rebound = rebound
+		main.air_basis0 = main.car.global_transform.basis
+		main.below_band_t = 0.0
+		main.lost_lat_t = 0.0
+		if lat_v != 0.0:
+			main.air_vel += Vector3(fr53["side"]) * lat_v
+		var ok53: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 400)
+		if not ok53:
+			return [-1.0, "", -1.0, -1.0]
+		return [main.last_pay_air_s, main.contact_grade, main.last_pay_units, main.boost_meter]
+	# CLEAN: a 5 m fall is ~1.0 s of air; pays air x 1.0 x 10.
+	var mark53: int = main.grab_events.size()
+	var f_clean53: Array = await fly53.call(5.0, 0.0, false, 40.0)
+	print("stage53: CLEAN flight air %.2f s, grade %s, paid %.1f, meter %.1f" % [
+		float(f_clean53[0]), String(f_clean53[1]), float(f_clean53[2]), float(f_clean53[3])])
+	check(String(f_clean53[1]) == "CLEAN" and absf(float(f_clean53[0]) - 1.0) < 0.10,
+		"stage53: the staged 5 m fall flies ~1.0 s and grades CLEAN (air %.2f, %s)" % [float(f_clean53[0]), String(f_clean53[1])])
+	check(absf(float(f_clean53[2]) - float(f_clean53[0]) * 10.0) < 0.05,
+		"stage53: CLEAN pays air x 10 exactly (%.2f)" % float(f_clean53[2]))
+	check(absf(float(f_clean53[3]) - (40.0 + float(f_clean53[2]))) < 0.05,
+		"stage53: the payout lands IN the tank (meter %.1f)" % float(f_clean53[3]))
+	check(main.pay_flash_t > 0.0,
+		"stage53: the payout flashes the meter (%.2f s left)" % main.pay_flash_t)
+	var pay_ev53: String = ""
+	for ei53: int in range(mark53, main.grab_events.size()):
+		pay_ev53 += main.grab_events[ei53] + " "
+	check(pay_ev53.contains("PAY"),
+		"stage53: the grab log records the payout (events: %s)" % pay_ev53.strip_edges())
+	check(absf(main.turbo_fill_frac - float(f_clean53[3]) / main.BOOST_CAPACITY) < 0.02,
+		"stage53: the fill tracks the tank after the payout (%.2f)" % main.turbo_fill_frac)
+	# SCRUBBED (lat 2.0): pays at 0.5. CROSSED-UP (lat 4.5): 0.2.
+	var f_scr53: Array = await fly53.call(5.0, 2.0, false, 40.0)
+	print("stage53: SCRUBBED flight air %.2f s, grade %s, paid %.1f" % [float(f_scr53[0]), String(f_scr53[1]), float(f_scr53[2])])
+	check(String(f_scr53[1]) == "SCRUBBED" and absf(float(f_scr53[2]) - float(f_scr53[0]) * 5.0) < 0.05,
+		"stage53: SCRUBBED pays air x 10 x 0.5 (%.2f)" % float(f_scr53[2]))
+	var f_cro53: Array = await fly53.call(2.5, 4.5, false, 40.0)
+	print("stage53: CROSSED-UP flight air %.2f s, grade %s, paid %.1f" % [float(f_cro53[0]), String(f_cro53[1]), float(f_cro53[2])])
+	check(String(f_cro53[1]) == "CROSSED-UP" and absf(float(f_cro53[2]) - float(f_cro53[0]) * 2.0) < 0.05,
+		"stage53: CROSSED-UP pays air x 10 x 0.2 (%.2f)" % float(f_cro53[2]))
+	# A rebound's second flight pays as its own landing.
+	var f_reb53: Array = await fly53.call(5.0, 0.0, true, 40.0)
+	check(absf(float(f_reb53[2]) - float(f_reb53[0]) * 10.0) < 0.05 and float(f_reb53[2]) > 0.0,
+		"stage53: a rebound flight pays as its own landing (%.2f)" % float(f_reb53[2]))
+	# A texture hop (0.12 s < the 0.15 floor) pays nothing.
+	var f_hop53: Array = await fly53.call(0.12, 0.0, false, 40.0)
+	print("stage53: hop air %.2f s, paid %.1f, meter %.1f" % [float(f_hop53[0]), float(f_hop53[2]), float(f_hop53[3])])
+	check(float(f_hop53[0]) > 0.0 and float(f_hop53[0]) < main.BOOST_PAY_MIN_AIR_S and float(f_hop53[2]) == 0.0 and absf(float(f_hop53[3]) - 40.0) < 0.01,
+		"stage53: a sub-0.15 s hop pays 0 (air %.2f s)" % float(f_hop53[0]))
+	# The clamp: a near-full tank takes only what fits.
+	var f_clamp53: Array = await fly53.call(5.0, 0.0, false, 115.0)
+	check(absf(float(f_clamp53[3]) - main.BOOST_CAPACITY) < 0.01 and float(f_clamp53[2]) > 4.0 and float(f_clamp53[2]) < 6.0,
+		"stage53: the payout clamps at the tank (paid %.1f into 115 -> %.1f)" % [float(f_clamp53[2]), float(f_clamp53[3])])
+	# The crane drop pays 0 - and its fall is long enough to
+	# pay, so the refusal is the release rule, not the floor.
+	main.start_race()
+	main.debug_set_hang_dangle()
+	main.dip_timer = 1000.0
+	var drop_yaw53: float = main._frame_yaw(main._frame_at(main.drop_target_s)["tan"])
+	await wait_until(func() -> bool: return absf(wrapf(main.orient_yaw - drop_yaw53, -PI, PI)) < 0.003, 300)
+	main.carrier_vel = Vector3.ZERO
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	main.slack_t = 0.0
+	await frames(2)
+	main.boost_meter = 40.0
+	main.last_pay_units = -1.0
+	main._do_release()
+	var drop_ok53: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drop_ok53 and main.last_pay_air_s >= main.BOOST_PAY_MIN_AIR_S and main.last_pay_units == 0.0 and absf(main.boost_meter - 40.0) < 0.01,
+		"stage53: the crane drop pays 0 despite a payable-length fall (air %.2f s, meter %.1f)" % [main.last_pay_air_s, main.boost_meter])
+	# A lost flight pays 0: no landing is ever graded.
+	main.boost_meter = 40.0
+	var mark53b: int = main.grab_events.size()
+	main.debug_force_fall_at(900.0)
+	var lost_ok53: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 3000)
+	var pay_ev53b: String = ""
+	for ei53b: int in range(mark53b, main.grab_events.size()):
+		pay_ev53b += main.grab_events[ei53b] + " "
+	check(lost_ok53 and absf(main.boost_meter - 40.0) < 0.01 and not pay_ev53b.contains("PAY"),
+		"stage53: a lost (off-road) flight pays 0 and writes no PAY (meter %.1f)" % main.boost_meter)
+	# The drain is unchanged: 90 boosted frames at 30/s = 30.
+	# The window opens only after a settle: the first version
+	# measured across the warp-in transient (the suspension
+	# state the recovery hang left behind threw the car for
+	# ~29 frames of the window - 61 drain frames, meter 39.7,
+	# the arithmetic exact) - a fixture defect, convicted by
+	# a standalone probe: the same warp + window from a
+	# settled car drains exactly 30.00 with zero AIR frames.
+	main.debug_warp_to_s(30.0)
+	for s53: int in 45:
+		main.debug_pin_speed(14.0)
+		await physics_frame
+	check(main.mode == main.MODE_DRIVE,
+		"stage53: the drain window opens in DRIVE after the settle")
+	main.boost_meter = 60.0
+	main.test_throttle = 1.0
+	main.test_boost = true
+	var drain_air53: int = 0
+	for f53: int in 90:
+		main.debug_pin_speed(14.0)
+		await physics_frame
+		if main.mode == main.MODE_AIR:
+			drain_air53 += 1
+	main.test_boost = false
+	main.test_throttle = 0.0
+	print("stage53: drain - meter %.1f after 90 boosted frames from 60 (AIR frames in window %d)" % [main.boost_meter, drain_air53])
+	check(main.boost_meter > 27.5 and main.boost_meter < 32.5,
+		"stage53: the drain is unchanged at 30/s (meter %.1f, want ~30)" % main.boost_meter)
+	# Item 4: the smoke blob is gone - no node, no state.
+	var sph53: int = 0
+	var stack53: Array[Node] = [main.car_body]
+	while not stack53.is_empty():
+		var nd53: Node = stack53.pop_back()
+		for ch53: Node in nd53.get_children():
+			stack53.append(ch53)
+		var mi53: MeshInstance3D = nd53 as MeshInstance3D
+		if mi53 != null and mi53.mesh is SphereMesh:
+			sph53 += 1
+	check(sph53 == 0,
+		"stage53: no sphere mesh rides the car body - the smoke puff is deleted outright")
+
+	# ---------- stage 54: Fix Pass 24 (Item 3) - THE AIR AUDIT ----
+	# The track-design instrument: a staged reference lap per
+	# track over the audit recorder - pinned-24 pursuit (the
+	# stage-51 air protocol), with the proven gap-window
+	# drivers at the gaps (stage 8's ribbon windows, stage
+	# 20's fast circuit run). The map it prints is the earn
+	# geography the tracks pass designs against.
+	var audit_lap := func(tname: String) -> Dictionary:
+		main._set_track(tname)
+		main.start_race()
+		main.debug_audit_begin()
+		main.debug_warp_to_s(10.0)
+		main.test_throttle = 0.0
+		main.test_boost = false
+		var t54: int = 0
+		var done54: bool = false
+		while t54 < 40000:
+			var gap_win54: bool = (main.car_s > main.gap_s0 - 140.0 and main.car_s < main.gap_s1 + 10.0) \
+				or (main.gap2_s0 > 0.0 and main.car_s > main.gap2_s0 - 30.0 and main.car_s < main.gap2_s1 + 10.0)
+			if main.mode == main.MODE_DRIVE:
+				if gap_win54:
+					autopilot_fast()
+					main.test_boost = true
+					main.boost_meter = main.BOOST_CAPACITY
+				else:
+					main.test_throttle = 0.0
+					autopilot_steer()
+					main.debug_pin_speed(24.0)
+			await physics_frame
+			t54 += 1
+			if tname == "circuit":
+				if main.lap_count >= 1:
+					done54 = true
+					break
+			elif main.mode == main.MODE_DONE or main.car_s >= main.track_len - 5.0:
+				done54 = true
+				break
+			if main.mode == main.MODE_HANG:
+				break
+		main.test_boost = false
+		main.test_throttle = 0.0
+		var res54: Dictionary = main.debug_audit_end()
+		res54["completed"] = done54
+		res54["frames"] = t54
+		return res54
+	for tname54: String in ["circuit", "ribbon"]:
+		var a54: Dictionary = await audit_lap.call(tname54)
+		var secs54: Array = a54["sectors"]
+		var sum54: float = 0.0
+		for v54 in secs54:
+			sum54 += float(v54)
+		print("stage54 %s: track %.0f m, %d sectors, payable air %.2f s, projected income %.1f units/lap, longest starved %.0f m (lap completed %s, %d frames)" % [
+			tname54, float(a54["track_len"]), secs54.size(), float(a54["air_s"]), float(a54["income"]),
+			float(a54["longest_starved_m"]), str(bool(a54["completed"])), int(a54["frames"])])
+		print("stage54 %s air geography (payable air s per 250 m sector): %s" % [tname54, str(secs54)])
+		check(bool(a54["completed"]),
+			"stage54: the %s reference lap completes" % tname54)
+		check(secs54.size() == int(ceil(float(a54["track_len"]) / main.AUDIT_SECTOR_M)),
+			"stage54: %s is mapped in 250 m sectors (%d)" % [tname54, secs54.size()])
+		check(sum54 <= float(a54["air_s"]) + 0.01 and sum54 >= float(a54["air_s"]) - 0.5,
+			"stage54: %s sectors sum to the lap's air (%.2f of %.2f s)" % [tname54, sum54, float(a54["air_s"])])
+		check(float(a54["air_s"]) > 3.0,
+			"stage54: the %s lap offers real air (%.2f s)" % [tname54, float(a54["air_s"])])
+		check(float(a54["income"]) > 10.0 and float(a54["income"]) <= float(a54["air_s"]) * main.BOOST_AIR_RATE + 0.01,
+			"stage54: %s projected income is the grade-weighted offer (%.1f units)" % [tname54, float(a54["income"])])
+		check(float(a54["longest_starved_m"]) >= 0.0 and float(a54["longest_starved_m"]) <= float(a54["track_len"]),
+			"stage54: %s longest starved stretch is sane (%.0f m)" % [tname54, float(a54["longest_starved_m"])])
+
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
 	if guard_failures == 0:
