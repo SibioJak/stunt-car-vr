@@ -55,7 +55,10 @@ VR (Quest):
 - **Grab wheel:** squeeze GRIP near the wheel, turn the hand. Last
   hand to grab drives; the other hand takes over when it lets go.
 - Throttle: right trigger · Brake: left trigger · Boost: right A
-  button (while driving)
+  button (while driving) — since Fix Pass 24 the boost is a
+  tank (120 units = 4 s, 60 dealt at the start) that racing
+  air refills at graded landings; the dash-face bar in the
+  button cluster's row is its meter
 - **Release:** press the DROP BUTTON on the dash face (while
   dangling) — a big red button at the old lever's spot; GRIP
   near it. It answers in every phase: at the dangle it drops
@@ -3044,6 +3047,229 @@ session header now reads FP23.
 
 - **A home straight with no ring on the horizon and no
   swerve in it.** Nothing else in this pass.
+
+## Fix Pass 24 — Turbo Meter + Air Economy + Air Audit (+ smoke kill)
+
+Base: FP23 final (1669c3e). Commissioned by the owner,
+Fri 2026-10-30 09:18–09:26 CDT: a turbo meter ("im
+thinking we need a turbo meter"), a refresh scheme based
+on getting some good air ("start with air"), an economy
+that "works on any track" - balancing track distance,
+initial available turbo, drain rate and air payout - the
+audit's measurements used "to devise tracks," and the
+smoke blob's execution folded in by tap. Design of
+record: `boost-economy.md` in the project root. The
+inside-line and limit-riding earners he named were
+evaluated and deliberately NOT built - one earner first.
+
+### Item 1 — the economy
+
+Measured before designing (the census rule): the shipped
+code's whole boost ration was 60 units drained at 30/s -
+exactly 2.0 s of boost per race, refilled by nothing.
+The economy, all in those units (30 units = 1 s of
+boost):
+
+- CAPACITY 120 (4.0 s) / START STOCK 60 (2.0 s) / DRAIN
+  30/s unchanged. The boost POWER (the +9.0 tire-force
+  term) is not an economy dial and did not move.
+- PAYOUT at a graded landing: air_seconds x grade x 10 -
+  CLEAN 1.0, SCRUBBED 0.5, CROSSED-UP 0.2 - clamped at
+  the tank. Payable flights only: racing separations
+  (road lip, gap, suspension rebound - a rebound's
+  second flight pays as its own landing) of at least
+  0.15 s. Crane drops pay 0 (FP13's ruling, kept: the
+  chains are transport, not flight); off-road flights
+  never reach a landing, so they cannot pay by
+  construction.
+- The three dials are named constants at the top of the
+  boost block - BOOST_CAPACITY, BOOST_START_STOCK,
+  BOOST_AIR_RATE - the owner's tuning surface after a
+  race on it.
+- Staged exact (new stage 53): a staged 1.00 s CLEAN
+  flight pays 10.0; SCRUBBED pays 5.0; a 0.71 s
+  CROSSED-UP pays 1.42; a rebound flight pays 10.0; a
+  0.12 s hop pays 0; paying 10 into 115 clamps at 120
+  (5.0 lands); a crane drop's 0.40 s fall pays 0; a lost
+  flight pays 0 and writes nothing; 90 boosted frames
+  drain exactly 30.0.
+- Surfacing: every payout writes a PAY line to the grab
+  log (units, air seconds, grade); the DIAG block gains
+  BOOST stock/capacity and LAST PAY lines. The DIAG
+  board grows 0.34 -> 0.40 m tall, its root raised half
+  the growth so the bottom edge (and its rim sightline)
+  stays where FP11 put it.
+
+### Item 2 — the meter
+
+A fill bar on the dash face in the button cluster's row:
+0.70 m wide at (0, 0.845, -0.543), the fill anchored at
+the trough's left edge, built with the cockpit - on no
+info panel, so it never hides. Fill = stock/capacity;
+bright at full, dark at empty; a payout flashes the fill
+boost-bright for 0.35 s in the moment the landing is
+graded (the chunk and the flash are the ruling, seen).
+Stage 53 stages the state (fill 0.50 at the stake, 0.42
+after the staged payout, flash at 0.34 s on the landing
+frame); render capture 25 is its portrait (staged 70%
+fill, flash lit).
+
+### Item 3 — the air audit (new stage 54)
+
+A recorder in the sim (`debug_audit_begin/end`, hooks in
+`_enter_air` and `_pay_for_landing`, inert unless a test
+arms it - the shipped game never does) plus a staged
+reference lap per track: pinned-24 pursuit (the stage-51
+air protocol) with the proven gap-window drivers at the
+gaps. It books the track's GROSS offer - grade-weighted,
+before the tank clamp; the clamp is the car's state, not
+the track's geography - as payable air-seconds per
+250 m sector. Measured:
+
+- CIRCUIT (3,319 m): 7.70 s payable air, 77.0 units of
+  projected income per lap. The geography is one rich
+  province: sectors s 2000-2250 (3.29 s) and 2250-2500
+  (4.41 s) - the climb/hump country - hold ALL of it;
+  the longest air-starved stretch is 2,000 m. (The
+  design note's estimate was 50-80 units/lap; measured
+  77.0.)
+- RIBBON (1,163 m): 9.67 s payable air, 96.7 units per
+  lap - the bounce garden: sectors [0.63, 2.54, 5.87,
+  0.62, 0.0]; longest starved stretch 250 m.
+- Every audited landing graded CLEAN under the pursuit
+  driver, so both incomes sit at the all-CLEAN bound
+  (air x 10). A human's grades will pay less - that is
+  the economy working, not a misprint.
+- This map is a tracks-pass design input: tracks get
+  devised in earn/spend rhythm, and a track is not done
+  until it has been audited.
+
+### Item 4 — the smoke blob, executed
+
+The Test-1 smoke-puff sphere is deleted outright: the
+mesh (build), the trigger (the HARD landing's smoke_on),
+the pulse (the visuals update) and the state -
+grep-clean in main.gd, and stage 53 asserts no sphere
+mesh rides the car body. The nose-dent visual is
+separate and stays: a HARD landing still dents. Real
+smoke, if it ever exists, belongs to the carnage build.
+
+### Census
+
+No drive numbers moved. Every measured print and PASS
+line from this session's FP23 baseline run (SMOKE
+464/464, API GUARD 70/70 on the pristine tree) is
+identical in the FP24 runs - stage 8's lap, stage 19's
+18,133 frames and seam steps, stage 20's flights,
+stage 30's 1.31 s getaway spread (still "no boost is
+paid at the drop", deltas +0.0 / +0.0), the stage 38/51
+air censuses - with three stated exceptions, none of
+them drive physics:
+
+- Stage 9's wall-clock frame-time line (median us, hitch
+  count) differs between runs: host timing on a loaded
+  sandbox, not sim state (the 2,978 DRIVE frames and the
+  raw |dy| max are identical).
+- Stage 46's telemetry ring count rises 132 -> 218: the
+  ring now also carries the PAY events from the graded
+  landings the earlier stages fly. The new logging, not
+  a behaviour change.
+- Boost-active frames are the one place behaviour can
+  differ by design: a refill can keep boost alive past
+  the old one-shot ration. In the suite's scripted boost
+  windows every trajectory and census outcome above is
+  unchanged.
+
+### Amendments (flagged, never silent)
+
+- NO prior stage's expectations were amended. Stage 30's
+  FP13 assertion (no boost paid at the drop) stands
+  unamended and passes - drops are releases, and
+  releases never pay.
+- The one failure in FP24's first full run was stage
+  53's OWN drain check (meter 39.7 against ~30): the
+  measurement window opened on the warp-in transient
+  the recovery hang's suspension state left behind -
+  ~29 airborne frames inside the window, 61 drain
+  frames, the arithmetic exact. A standalone probe
+  convicted the fixture (the same warp + window from a
+  settled car drains exactly 30.00 with zero AIR
+  frames); the stage now settles 45 frames before the
+  window and asserts DRIVE at its opening (window then
+  reads 30.0, 0 AIR frames). Game code was not touched
+  for it.
+
+### Verification notes
+
+SMOKE 496/496 (464 FP23 baseline + 31 new checks in
+stages 53/54 + 1 settle-gate check added with the
+stage-53 fixture fix, reconciled). API GUARD 70/70 -
+green, and it runs inside the smoke. Render proof
+138/139 under Xvfb: the single failure is the
+wires_view sampled-colour count (19 this attempt; 18
+and 18 on two others) - the documented sandbox
+renderer marginal, not this pass: the Fix Pass 23
+section records the same single failure on the
+pristine FP22 tree run as an A/B control (counts
+11/18/20), on this sandbox's Compatibility / llvmpipe
+renderer, whose captures are not colour truth in any
+case. Two proof findings WERE this pass, and both were
+fixed before delivery:
+
+- The first proof run's hub-drop read 0.31 m because
+  the sandbox's persisted seat trim sat at 0.024 -
+  zeroed, per the FP22/23 environmental note (the
+  owner's machine carries his own trim and is
+  unaffected); the re-run reads 0.29 m, in band.
+- The grown DIAG board's first size (0.40 m) left the
+  0.42 m text block overhanging its lower edge and one
+  of the proof's 63 DIAG sightlines grazed. Board
+  0.40 -> 0.44 m, root up 2 cm more: the final proof
+  reads text 0.42 m inside a 0.44 m board, 0 of 63
+  sightlines blocked.
+- Louder, and caught by the same re-checks: the meter
+  bar's first boxes (10/12 mm deep) went NEGATIVE under
+  the dash audit's 1 cm AABB shrink - 180 engine errors
+  per suite run, the two meshes silently exempting
+  themselves from the audit's buried test while every
+  check still "passed". The bar is now a 24 mm raised
+  gauge housing; the audit covers it like any other
+  mesh, and the final runs carry zero such errors.
+
+Sandbox suite weather, for the record: attempt A died
+to an engine SIGSEGV (signal 11, a
+propagate_notification thread error) during stage 28
+with zero FAIL lines before it - the point passed
+clean on every other attempt, and the sandbox has form
+for this (FP20, FP23). Attempt B completed at 495/496
+(the stage-53 drain fixture, above). Attempt C was
+killed silently (no banner, process gone) during
+stage 54's ribbon lap after 490 green checks. Attempts
+D and E ran the full suite to ALL 496 PASSED - E on
+the final tree, after the bar/DIAG geometry fixes.
+The grab log's session header now reads FP24.
+
+### What you're judging (run 20)
+
+- **The meter at speed**: a bar on the dash face in the
+  button cluster's row - readable in peripheral vision,
+  bright at full, dark at empty.
+- **The payout feel**: land a real flight and the bar
+  jumps a chunk and flashes as the grade lands; fly
+  sloppy and it pays sloppy (SCRUBBED half, CROSSED-UP
+  a fifth). The DIAG's LAST PAY line and the grab log's
+  PAY lines carry the same ruling in writing.
+- **Boost availability across a lap**: you start with
+  2 s, the tank holds 4 s, and on the circuit a lap's
+  income lives in one province (the climb/hump country,
+  s 2000-2500) - expect to run poor on the long starved
+  stretches. That is the design; the dials (stake,
+  tank, rate) are yours to move after a race on it.
+- **The smoke blob's absence**: hard landings dent the
+  nose; nothing grey throbs in your face any more.
+- **NOT in this pass**: inside-line / limit-riding
+  earners, road sections, the speed envelope, any
+  change to boost power or the drain rate.
 
 ## Quest export — status
 
