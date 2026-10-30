@@ -3008,8 +3008,14 @@ func _run() -> void:
 			fw31 = (main.wheel_mis[wi31] as MeshInstance3D).rotation_degrees.y
 		else:
 			rw31 = (main.wheel_mis[wi31] as MeshInstance3D).rotation_degrees.y
-	check(fw31 < -5.0 and absf(rw31) < 0.01,
-		"stage31: front road wheels show the lock (%.1f deg), rears stay straight" % fw31)
+	# AMENDED (FP25, FLAGGED): FP13's expectation was the
+	# honest display (0.6 rad of wheel = 6.1 deg of tire).
+	# The display now runs through the FP25 gain curve -
+	# at steer fraction 0.19 the gain is 1.87, so the same
+	# dialled lock SHOWS 11.4 deg. The lock itself, the yaw
+	# authority and the release behaviour below are unmoved.
+	check(fw31 < -10.4 and fw31 > -12.4 and absf(rw31) < 0.01,
+		"stage31: front road wheels show the lock GAINED (%.1f deg; FP25 display of the FP13 lock), rears stay straight" % fw31)
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main.test_hand_set = false
@@ -5327,6 +5333,56 @@ func _run() -> void:
 			"stage54: %s projected income is the grade-weighted offer (%.1f units)" % [tname54, float(a54["income"])])
 		check(float(a54["longest_starved_m"]) >= 0.0 and float(a54["longest_starved_m"]) <= float(a54["track_len"]),
 			"stage54: %s longest starved stretch is sane (%.0f m)" % [tname54, float(a54["longest_starved_m"])])
+
+	# ---------- stage 55: Fix Pass 25 - the steering connection ----
+	# The DISPLAY only: the gain curve at small and full lock
+	# (read in the dangle, where the dialled lock holds), then
+	# the slip offset in DRIVE, poked synchronously and read
+	# off the posed meshes with no frame in between - the
+	# model's own numbers are the census's business (stages
+	# 8/12/51 print them, unchanged by this pass).
+	main.start_race()
+	var dang55: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+	check(dang55, "stage55: dangling for the display test")
+	main.dip_timer = 1000.0
+	main.wheel_angle = 0.3
+	main._refresh_car_visuals()
+	var fw55a: float = (main.wheel_mis[0] as MeshInstance3D).rotation_degrees.y
+	var honest55a: float = rad_to_deg(0.3 / PI * main.MAX_LOCK_RAD)
+	check(fw55a < -6.0 and fw55a > -6.9,
+		"stage55: a 0.3 rad wheel shows GAINED on the tires (%.2f deg vs the honest %.2f - gain x%.2f)" % [fw55a, -honest55a, absf(fw55a) / honest55a])
+	main.wheel_angle = PI
+	main._refresh_car_visuals()
+	var fw55b: float = (main.wheel_mis[0] as MeshInstance3D).rotation_degrees.y
+	check(absf(fw55b + rad_to_deg(main.MAX_LOCK_RAD)) < 0.4,
+		"stage55: full lock displays HONEST (%.2f deg, the model's %.2f)" % [fw55b, -rad_to_deg(main.MAX_LOCK_RAD)])
+	main.wheel_angle = 0.0
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	main._do_release()
+	var drv55: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv55, "stage55: the drop lands into DRIVE for the slip display")
+	main.wheel_angle = 0.0
+	main.speed = 20.0
+	main.lat_vel = 2.0
+	main._refresh_car_visuals()
+	var fw55c: float = (main.wheel_mis[0] as MeshInstance3D).rotation_degrees.y
+	check(fw55c < -5.1 and fw55c > -6.3,
+		"stage55: a 2.0 m/s slide at 20 m/s yaws the tires toward it (%.2f deg, atan2 gives %.2f)" % [fw55c, -rad_to_deg(atan2(2.0, 20.0))])
+	main.lat_vel = -2.0
+	main._refresh_car_visuals()
+	var fw55d: float = (main.wheel_mis[0] as MeshInstance3D).rotation_degrees.y
+	check(fw55d > 5.1 and fw55d < 6.3,
+		"stage55: a leftward slide yaws the tires left (%.2f deg)" % fw55d)
+	main.speed = 6.0
+	main.lat_vel = 9.0
+	main._refresh_car_visuals()
+	var fw55e: float = (main.wheel_mis[0] as MeshInstance3D).rotation_degrees.y
+	check(absf(fw55e + rad_to_deg(main.SLIP_VIS_CAP_RAD)) < 0.4,
+		"stage55: a violent slide caps at the display cap (%.2f deg, cap %.2f)" % [fw55e, -rad_to_deg(main.SLIP_VIS_CAP_RAD)])
+	main.lat_vel = 0.0
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")

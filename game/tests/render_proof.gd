@@ -44,6 +44,16 @@ extends SceneTree
 ## Fix Pass 24 adds: capture 25 = the turbo meter's portrait
 ## (the dash face with a staged 70% fill and the payout flash
 ## lit - the state the bar shows as a landing pays).
+## Fix Pass 25 (Item 1) adds: the TIRE SIGHTLINE AUDIT - from
+## the shipped eye anchor (the fallback camera), a sampled
+## grid over each front tire's surface is classified
+## in-frustum / occluded-by-bodywork (the FP4 local-AABB
+## segment test, the tire's own AABB counting as an occluder
+## for its far side), at rest, full compression and full
+## droop. The audit sizes Item 4: it runs BEFORE any remedy.
+## Capture 26 = the steering connection's portrait: the Drop
+## Start dangle with a quarter lock dialled in, shot from the
+## anchor - the gained display the driver dials by.
 
 var failures: int = 0
 var checks: int = 0
@@ -250,6 +260,80 @@ func _label_view_check(label: Label3D, board: MeshInstance3D, cam: Camera3D, tag
 					break
 	check(blocked == 0,
 		"%s: no car geometry occludes the text (%d of %d sightlines blocked)" % [tag, blocked, samples])
+
+
+# --- Fix Pass 25 (Item 1): the tire sightline audit --------------------
+# Occluders: every visible MeshInstance3D under the car body
+# EXCEPT the boards, the grab wheel and the four road wheels
+# themselves (the FP4 _collect_occluders pattern, wheels cut).
+
+func _collect_occluders_no_wheels(n: Node, inv_arr: Array[Transform3D], box_arr: Array[AABB], to_body: Transform3D, name_arr: Array[String]) -> void:
+	for child: Node in n.get_children():
+		if child == main.panel_root or child == main.diag_root or child == main.wheel_node:
+			continue
+		if main.wheel_mis.has(child as MeshInstance3D):
+			continue
+		if child is MeshInstance3D:
+			var mi: MeshInstance3D = child as MeshInstance3D
+			if mi.is_visible_in_tree():
+				inv_arr.append((to_body * mi.global_transform).affine_inverse())
+				box_arr.append(mi.get_aabb())
+				name_arr.append(mi.name)
+		_collect_occluders_no_wheels(child, inv_arr, box_arr, to_body, name_arr)
+
+
+# Fraction of one front tire's sampled surface that the
+# anchored eye can actually see: in the fallback frustum AND
+# with a clear sightline. Sample grid in cylinder-local space
+# (axis = Y, disc in XZ): both sidewall discs (centre + three
+# rings of 8) and the tread band (12 around x 3 across). The
+# tire's own AABB joins the occluders - the far sidewall is
+# hidden by the tire itself, and AABB corners make the count
+# conservative (a sightline that clips a box corner counts
+# as blocked even where the round tire would clear it).
+func _tire_audit_frac(wi: int, occ_inv: Array[Transform3D], occ_box: Array[AABB], occ_names: Array[String], to_body: Transform3D, eye_b: Vector3) -> Dictionary:
+	var wmi: MeshInstance3D = main.wheel_mis[wi]
+	# The audit measures the mesh the driver sees (FP25 Item
+	# 4's visual radius; the pre-remedy runs measured the
+	# shipped 0.30 m mesh through WHEEL_RAD_F, its then-size).
+	var r: float = main.WHEEL_RAD_F_VIS
+	var hw: float = main.WHEEL_WID_F * 0.5
+	var pts: Array[Vector3] = []
+	for sy: float in [-hw, hw]:
+		pts.append(Vector3(0.0, sy, 0.0))
+		for ring: float in [0.3, 0.6, 0.9]:
+			for k: int in 8:
+				var a: float = TAU * float(k) / 8.0
+				pts.append(Vector3(cos(a) * r * ring, sy, sin(a) * r * ring))
+	for ty: float in [-hw * 0.5, 0.0, hw * 0.5]:
+		for k2: int in 12:
+			var a2: float = TAU * float(k2) / 12.0
+			pts.append(Vector3(cos(a2) * r, ty, sin(a2) * r))
+	var inv_all: Array[Transform3D] = occ_inv.duplicate()
+	var box_all: Array[AABB] = occ_box.duplicate()
+	var names_all: Array[String] = occ_names.duplicate()
+	inv_all.append((to_body * wmi.global_transform).affine_inverse())
+	box_all.append(wmi.get_aabb())
+	names_all.append("(the tire itself)")
+	var cam: Camera3D = main.fallback_cam
+	var n_in: int = 0
+	var n_vis: int = 0
+	var blockers: Dictionary = {}
+	for lp: Vector3 in pts:
+		var wp: Vector3 = wmi.global_transform * lp
+		if not cam.is_position_in_frustum(wp):
+			continue
+		n_in += 1
+		var wp_b: Vector3 = to_body * wp
+		var blocked: bool = false
+		for oi: int in inv_all.size():
+			if _seg_hits_aabb(inv_all[oi] * eye_b, inv_all[oi] * wp_b, box_all[oi]):
+				blocked = true
+				blockers[names_all[oi]] = int(blockers.get(names_all[oi], 0)) + 1
+				break
+		if not blocked:
+			n_vis += 1
+	return {"n": pts.size(), "in": n_in, "vis": n_vis, "blockers": blockers}
 
 
 func _init() -> void:
@@ -1049,6 +1133,70 @@ func _run() -> void:
 	cam25.look_at(main.car_body.global_transform * main.TURBO_BAR_POS, Vector3.UP)
 	await snap(cam25, "turbo_meter_view.png")
 	cam25.queue_free()
+
+	# Fix Pass 25 (Item 1): THE TIRE SIGHTLINE AUDIT. Staged
+	# in DRIVE on the ribbon (capture 25's state), boards
+	# hidden - the driving view. Suspension posed per state;
+	# the occluder set is body-relative rigid, so it is
+	# collected once. The numbers print BEFORE any remedy is
+	# applied anywhere - they size Item 4 (see the README).
+	if main.panels_visible:
+		main._toggle_panels()
+	main.fallback_cam.current = true
+	await physics_frame
+	var to_body25: Transform3D = main.car_body.global_transform.affine_inverse()
+	var occ_inv25: Array[Transform3D] = []
+	var occ_box25: Array[AABB] = []
+	var occ_names25: Array[String] = []
+	_collect_occluders_no_wheels(main.car_body, occ_inv25, occ_box25, to_body25, occ_names25)
+	for oi25: int in occ_inv25.size():
+		var bab25: AABB = occ_inv25[oi25].affine_inverse() * occ_box25[oi25]
+		print("render proof FP25 occluder %d %s: body-space centre %s size %s" % [oi25, occ_names25[oi25], str(bab25.get_center()), str(bab25.size)])
+	var eye_b25: Vector3 = to_body25 * main.fallback_cam.global_position
+	var states25: Array = [["rest", main.SUSP_REST], ["full compression", main.SUSP_TRAVEL], ["full droop", 0.0]]
+	var rest_vis25: Array[float] = [0.0, 0.0]
+	for st25: Array in states25:
+		main.susp_c[0] = float(st25[1])
+		main.susp_c[1] = float(st25[1])
+		main._refresh_car_visuals()
+		await physics_frame
+		var line25: String = "render proof FP25 tire audit (%s): " % String(st25[0])
+		for wi25: int in [0, 1]:
+			var d25: Dictionary = _tire_audit_frac(wi25, occ_inv25, occ_box25, occ_names25, to_body25, eye_b25)
+			var inpc25: float = 100.0 * float(d25["in"]) / float(d25["n"])
+			var vispc25: float = 100.0 * float(d25["vis"]) / float(d25["n"])
+			line25 += "%s in-frame %.0f%%, visible %.0f%%   " % ["FL" if wi25 == 0 else "FR", inpc25, vispc25]
+			if String(st25[0]) == "rest":
+				rest_vis25[wi25] = vispc25
+				var bl25: Dictionary = d25["blockers"]
+				var bls25: String = ""
+				for bk25: String in bl25.keys():
+					bls25 += "%s x%d, " % [bk25, int(bl25[bk25])]
+				print("render proof FP25 tire audit: %s blockers at rest - %s" % ["FL" if wi25 == 0 else "FR", bls25])
+		print(line25)
+	check(rest_vis25[0] > 0.0 and rest_vis25[1] > 0.0,
+		"FP25 audit: both front tires have a measured visible fraction at rest (FL %.0f%%, FR %.0f%%)" % [rest_vis25[0], rest_vis25[1]])
+	main.susp_c[0] = main.SUSP_REST
+	main.susp_c[1] = main.SUSP_REST
+	main._refresh_car_visuals()
+
+	# Capture 26 (Fix Pass 25): the steering connection's
+	# portrait - the Drop Start dangle, a quarter lock dialled
+	# in (wheel_angle = PI/4 held by the dangle; FP13's rule
+	# keeps it), the gained front-tire display read from the
+	# anchor. Structural only under llvmpipe.
+	main.start_race()
+	var n26: int = 0
+	while main.hang_phase != "dangle" and n26 < 4000:
+		await physics_frame
+		n26 += 1
+	check(main.hang_phase == "dangle", "capture 26: dangling for the steering portrait")
+	main.wheel_angle = PI * 0.25
+	main._refresh_car_visuals()
+	var fw26: float = (main.wheel_mis[0] as MeshInstance3D).rotation_degrees.y
+	check(fw26 < -10.0,
+		"capture 26: a quarter lock displays GAINED on the front tires (%.1f deg; the honest angle is %.1f)" % [fw26, -rad_to_deg(0.25 * main.MAX_LOCK_RAD)])
+	await snap(main.fallback_cam, "steer_connection_view.png")
 
 	print("---")
 	if failures == 0:
