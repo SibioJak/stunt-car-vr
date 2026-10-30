@@ -2385,6 +2385,10 @@ func _run() -> void:
 	# stands on the dash face at the lever's spot, registered
 	# last of the dash controls, and the panel names it as
 	# THE release; (b) a press at the dangle lets the car go
+	# AMENDED (FP26, Item 3, FLAGGED): the button has come UP
+	# - its point is the UPPER dash face now (FACE_Y 0.85,
+	# was 0.70); the check below reads the position from the
+	# constants, so only this description moved.
 	# (and logs BTN FIRE + the release's heading record);
 	# (c) a press in DRIVE registers (BTN PRESS) and does
 	# nothing - the button always answers.
@@ -2396,7 +2400,7 @@ func _run() -> void:
 		"stage25: dangling for the button test")
 	var want25: float = -main.DROP_BTN_FACE_X if main.drop_btn_left else main.DROP_BTN_FACE_X
 	check(main.drop_btn_node.position == Vector3(want25, main.DROP_BTN_FACE_Y, main.DROP_BTN_FACE_Z),
-		"stage25: drop button on the dash face at the lever's spot (%.2f, %.2f, %.2f)" % [want25, main.DROP_BTN_FACE_Y, main.DROP_BTN_FACE_Z])
+		"stage25: drop button on the UPPER dash face (%.2f, %.2f, %.2f; FP26 raised it from y 0.70)" % [want25, main.DROP_BTN_FACE_Y, main.DROP_BTN_FACE_Z])
 	check(main.dash_ctl_kinds.find("drop") == main.dash_ctl_kinds.size() - 1,
 		"stage25: the button is a dash control, registered last (idx %d of %d)" % [main.dash_ctl_kinds.find("drop"), main.dash_ctl_kinds.size()])
 	check(main._panel_text().contains("DROP BUTTON"),
@@ -2672,12 +2676,16 @@ func _run() -> void:
 			# Station exemption, measured and bounded: in the
 			# final settle the still-swinging car's low AABB
 			# corner brushes the road plane at the drop point
-			# itself (worst corner depth ~0.17 m across traces,
-			# ~0.4 s) - the hang stack's 1.2 m clearance minus
-			# the swing dip. That cell (10 m plan around the
-			# station) is counted as brush, not asserted; the
-			# ROUTE - the run-12 complaint, road and pylon
-			# mid-carry - is asserted clean.
+			# itself (worst corner depth ~0.17 m across FP12
+			# traces, ~0.4 s) - the hang stack's clearance
+			# minus the swing dip. (FP26, Item 2: the station
+			# now holds 1.70 m of air under the car, so the
+			# brush this exemption exists for should read at
+			# or near zero; the cell stays exempt - the ROUTE
+			# is what this stage asserts.) That cell (10 m
+			# plan around the station) is counted as brush,
+			# not asserted; the ROUTE - the run-12 complaint,
+			# road and pylon mid-carry - is asserted clean.
 			var at_station: bool = Vector2(cpos.x - main.anchor_target.x, cpos.z - main.anchor_target.z).length() < 10.0
 			for cd: Array in cands:
 				var sp: Vector3 = cd[0]
@@ -2937,9 +2945,28 @@ func _run() -> void:
 	# lengths is om_f 0.6*sqrt(g/5.5) = 0.80, om_l 0.6*sqrt(g/3.9)
 	# = 0.95 rad/s. The seed row is the Drop Start's own opening
 	# swing (0.34/0.26 rad -> om peaks 0.45/0.41) for the record.
+	# AMENDED (FP26, Item 2, FLAGGED - second form; the
+	# first form is recorded because it failed instructively):
+	# the seeds' graded MEANING is the release's TIP
+	# VELOCITY - _do_release forms it as om x HANG_LEN on
+	# both axes and the staged release fires at the seeded
+	# om. Measured on both geometries: contact lat
+	# 2.31 = 0.41 x 5.5 and 5.27 = 0.95 x 5.5 (old chain).
+	# The first FP26 form scaled the omegas by the
+	# pendulum's frequency ratio (0.6 rad preserved: -0.32 /
+	# 0.29 and -0.57 / 0.67) and printed contact lat 3.24 /
+	# 7.41 = om x 11.0 - the seed leg graded CROSSED-UP
+	# instead of SCRUBBED and the peak car never reached
+	# 20 m/s. So: the chain doubled (HANG_LEN 5.5 -> 11.0),
+	# the omegas HALVE for the same staged velocities -
+	# seed -0.45/0.41 -> -0.225/0.205, peak -0.80/0.95 ->
+	# -0.40/0.475. The swing ANGLE the seeds ride at halves
+	# with them; no check here reads the angle, and the
+	# dangle's full 0.6 rad envelope is staged by stages
+	# 1/42/52 on the new pendulum's own terms.
 	var g_clean: Array = await getaway.call(0.0, 0.0)
-	var g_seed: Array = await getaway.call(-0.45, 0.41)
-	var g_peak: Array = await getaway.call(-0.80, 0.95)
+	var g_seed: Array = await getaway.call(-0.225, 0.205)
+	var g_peak: Array = await getaway.call(-0.40, 0.475)
 	print("stage30: clean  t20 %.2f s, contact lat %.2f m/s, hdg %+.2f deg, grade %s, boost delta %+.1f" % [
 		float(g_clean[0]), float(g_clean[1]), float(g_clean[2]), String(g_clean[3]), float(g_clean[4])])
 	print("stage30: seed   t20 %.2f s, contact lat %.2f m/s, hdg %+.2f deg, grade %s, boost delta %+.1f" % [
@@ -3282,6 +3309,10 @@ func _run() -> void:
 	# arms the gate (>= REBOUND_GATE_VY 4.5; Drop Start drops
 	# land at 3.9 and drumbeat hops lower still - both keep the
 	# stock behaviour, stages 2c/30 guard that side).
+	# (FP26 note: drops land at ~5.8 since the drop doubled -
+	# over the gate's vy on its face, and still excluded, as
+	# they always were, by the air_from_release flag in the
+	# gate itself, never by their speed.)
 	main._set_track("circuit")
 	await frames(5)
 	var cf35: Dictionary = main.track_data["circuit"]["features"]
@@ -4097,6 +4128,15 @@ func _run() -> void:
 	# bounded, and the pivot never strays past its excursion
 	# budget from the station. The drop fall must stay in
 	# the film's 0.3-0.5 s band (base 0.44 s).
+	# AMENDED (FP26, Item 2, FLAGGED): the drop DOUBLED on
+	# the owner's order, so the fall band is the new drop's
+	# own (0.50-0.70 s; free fall over 1.70 m = 0.59 s) and
+	# the sway census re-derives on the doubled pendulum:
+	# fore half-period pi*sqrt(11.0/g) = 3.33 s (band
+	# 2.8-3.9), and the sample window grows 2700 -> 3600
+	# frames so the slower swing still yields >= 8 fore
+	# intervals. The spread floor (0.25 s) and the cone /
+	# pivot budgets are mechanism claims and stand.
 	main._set_track("ribbon")
 	main.start_race()
 	var ok42: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
@@ -4106,7 +4146,7 @@ func _run() -> void:
 	var thl42: Array = []
 	var cone42: float = 0.0
 	var poff42: float = 0.0
-	for i42: int in 2700:
+	for i42: int in 3600: # FP26: was 2700 - the doubled pendulum needs the longer window
 		await physics_frame
 		thf42.append(main.pend_th_f)
 		thl42.append(main.pend_th_l)
@@ -4140,13 +4180,13 @@ func _run() -> void:
 	var ivl42: Array = zc42.call(thl42)
 	var sf42: Array = stats42.call(ivf42)
 	var sl42: Array = stats42.call(ivl42)
-	print("stage42: sway half-periods fore n=%d mean %.2f min %.2f max %.2f (base: mean 2.36, spread 0.01); lat n=%d mean %.2f min %.2f max %.2f" % [
+	print("stage42: sway half-periods fore n=%d mean %.2f min %.2f max %.2f (FP25 base: mean 2.36, spread 0.01; FP26 doubled pendulum: 3.33 expected); lat n=%d mean %.2f min %.2f max %.2f" % [
 		ivf42.size(), float(sf42[0]), float(sf42[1]), float(sf42[2]), ivl42.size(), float(sl42[0]), float(sl42[1]), float(sl42[2])])
 	check(ivf42.size() >= 8, "stage42: enough fore sway cycles to judge (%d)" % ivf42.size())
 	check(float(sf42[2]) - float(sf42[1]) >= 0.25,
 		"stage42: the fore sway is IRREGULAR now - half-period spread %.2f s (base 0.01)" % (float(sf42[2]) - float(sf42[1])))
-	check(float(sf42[0]) >= 1.9 and float(sf42[0]) <= 2.9,
-		"stage42: the mean sway period stays the pendulum's own (%.2f s)" % float(sf42[0]))
+	check(float(sf42[0]) >= 2.8 and float(sf42[0]) <= 3.9,
+		"stage42: the mean sway period stays the pendulum's own (%.2f s; FP26 band 2.8-3.9 around 3.33)" % float(sf42[0]))
 	check(cone42 < 1.05,
 		"stage42: the swing cone stays bounded under the nudge (max %.2f rad)" % cone42)
 	check(poff42 <= 0.45,
@@ -4156,9 +4196,9 @@ func _run() -> void:
 	while main.mode != main.MODE_DRIVE and fd42 < 300:
 		await physics_frame
 		fd42 += 1
-	print("stage42: drop fall %.2f s (%d frames, base 0.44)" % [float(fd42) / 90.0, fd42])
-	check(float(fd42) / 90.0 >= 0.30 and float(fd42) / 90.0 <= 0.50,
-		"stage42: the short drop stays short (%.2f s in the film's 0.3-0.5 s band)" % (float(fd42) / 90.0))
+	print("stage42: drop fall %.2f s (%d frames, FP25 base 0.44; FP26 doubled drop: 0.59 expected)" % [float(fd42) / 90.0, fd42])
+	check(float(fd42) / 90.0 >= 0.50 and float(fd42) / 90.0 <= 0.70,
+		"stage42: the doubled drop falls its distance (%.2f s in the FP26 band 0.50-0.70; the film's 0.3-0.5 band governed the old short drop)" % (float(fd42) / 90.0))
 
 	# ---------- stage 43: Fix Pass 15 (Item 1) - THE TELEGRAPHED LIMIT ----
 	# One signal (demand-vs-capacity per axle, computed in
@@ -4562,6 +4602,21 @@ func _run() -> void:
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	# (c) wheel soft lock: latch on the rim, then steer from
 	# OUTSIDE the grab radius - the latched hand keeps the wheel.
+	# AMENDED (FP26, Item 3, FLAGGED): the hand is PARKED away
+	# and the grip released before the rim approach. FP26
+	# raised the drop button to 0.212 m from the staged rim
+	# point - inside the 0.25 m teleport cap - so the old
+	# one-poll jump from the button point (b) left its sweep
+	# starting inside the button's zone, and the FP17
+	# arbitration honestly awarded the squeeze to the button.
+	# A real hand arrives continuously and engages at the rim,
+	# where the button (0.212 m off, zone 0.15) is no
+	# candidate; the park makes the staged jump a teleport,
+	# endpoint-tested like the arrival it stands for. The
+	# claim - rim latch, soft lock - is unmoved.
+	main.test_hand_pos["R"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	var hub46: Vector3 = main.car.global_transform * main._wheel_hub_local()
 	var pv46: Vector3 = main._wheel_plane_v()
 	var rim_pt46 = func(r: float, phi: float) -> Vector3:
@@ -5132,8 +5187,12 @@ func _run() -> void:
 		"stage53: race start deals the stake (%.0f)" % main.boost_meter)
 	check(absf(main.turbo_fill_frac - 0.5) < 0.02,
 		"stage53: the meter's fill is the stake in the tank (%.2f)" % main.turbo_fill_frac)
-	check(main.turbo_fill_mi != null and main.turbo_fill_mi.get_parent() == main.car_body,
-		"stage53: the turbo fill is built on the car body - always visible, on no panel")
+	# AMENDED (FP26, Item 1, FLAGGED): the meter's mesh is
+	# the flask's liquid now (FP24's bar is deleted - the
+	# wheel hid it); the claim is the same: built on the car
+	# body, on no panel, never hidden.
+	check(main.flask_liquid_mi != null and main.flask_node != null and main.flask_node.get_parent() == main.car_body,
+		"stage53: the flask stands on the car body - always visible, on no panel")
 	# A staged racing flight: known height, optional lateral
 	# velocity (the grade's lever), optional rebound flag.
 	# Returns [air_s, grade, units_paid, meter_after].
@@ -5383,6 +5442,93 @@ func _run() -> void:
 	check(absf(fw55e + rad_to_deg(main.SLIP_VIS_CAP_RAD)) < 0.4,
 		"stage55: a violent slide caps at the display cap (%.2f deg, cap %.2f)" % [fw55e, -rad_to_deg(main.SLIP_VIS_CAP_RAD)])
 	main.lat_vel = 0.0
+
+	# ---------- stage 56: Fix Pass 26 (Item 1) - THE FLASK ----
+	# FP24's dash-face bar is deleted (the wheel hid it from
+	# the real seat); the meter is a liquid vessel in the
+	# dash-top row. Staged: (a) the bar's nodes are gone and
+	# the flask is NOT a dash control - a gauge, never a
+	# control; (b) the liquid's LEVEL is the tank across its
+	# range; (c) the SLOSH spring, driven through the
+	# test_flask_accel override (the test_pivot_accel
+	# pattern): under a staged lateral acceleration the
+	# surface leans with a LAG (it is not a mirror), and
+	# with the acceleration gone it settles back to its rest
+	# tilt. The sightline proof is the render proof's
+	# capture-25 sweep (the bar failed exactly there).
+	main._set_track("ribbon")
+	main.start_race()
+	main.debug_set_hang_dangle()
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	main.dip_timer = 1000.0
+	await frames(30)
+	var bar_found56: bool = false
+	var stack56: Array[Node] = [main.car_body]
+	while not stack56.is_empty():
+		var nd56: Node = stack56.pop_back()
+		for ch56: Node in nd56.get_children():
+			stack56.append(ch56)
+		if nd56.name == "TurboFill" or nd56.name == "TurboTrough":
+			bar_found56 = true
+	check(not bar_found56 and main.flask_node != null and main.flask_node.get_parent() == main.car_body,
+		"stage56: FP24's bar is deleted outright; the flask stands on the car body in the dash row")
+	check(main.dash_ctl_kinds.size() == 8 and not main.dash_ctl_kinds.has("flask"),
+		"stage56: the flask is not a dash control - the roster is unchanged (%s)" % str(main.dash_ctl_kinds))
+	main.boost_meter = main.BOOST_CAPACITY
+	await frames(2)
+	check(absf(main.flask_level_h - main.FLASK_LIQ_MAX_H) < 0.002,
+		"stage56: a full tank stands at the vessel's full line (%.3f m)" % main.flask_level_h)
+	main.boost_meter = 0.0
+	await frames(2)
+	check(absf(main.flask_level_h - main.FLASK_LIQ_MIN_H) < 0.002,
+		"stage56: an empty tank stands at the vessel's empty line (%.3f m)" % main.flask_level_h)
+	main.boost_meter = main.BOOST_START_STOCK
+	await frames(2)
+	check(absf(main.flask_level_h - lerpf(main.FLASK_LIQ_MIN_H, main.FLASK_LIQ_MAX_H, 0.5)) < 0.002,
+		"stage56: the stake stands at half vessel (%.3f m)" % main.flask_level_h)
+	# The spring's own claims need a still car, and the
+	# dangle is never still - FP15's gusts work the pendulum
+	# (stages 1/42 judge that; an unpinned first form of this
+	# stage watched its own rest sample wander 0.09 rad and
+	# the settle drift print 0.060 against a 0.035 bound).
+	# So the stage PINS the pendulum for the slosh sequence:
+	# what remains is the pivot's gust creep, ~0.01 rad of
+	# tilt noise, inside every bound below. The pin is
+	# test-side only; production has no such state.
+	var pin56: Callable = func() -> void:
+		main.pend_th_f = 0.0
+		main.pend_th_l = 0.0
+		main.pend_om_f = 0.0
+		main.pend_om_l = 0.0
+	for pi56: int in 90:
+		pin56.call()
+		await frames(1)
+	var rest56: Vector2 = main.flask_tilt
+	main.test_flask_accel_on = true
+	main.test_flask_accel = Vector3(2.5, 0.0, 0.0)
+	for pi56b: int in 5:
+		pin56.call()
+		await frames(1)
+	var tilt_early56: float = (main.flask_tilt - rest56).length()
+	for pi56c: int in 40:
+		pin56.call()
+		await frames(1)
+	var tilt_late56: float = (main.flask_tilt - rest56).length()
+	print("stage56: slosh under a staged 2.5 m/s^2 world-X accel - tilt %.3f rad at 0.06 s, %.3f at 0.5 s (uncapped target %.2f, cap %.2f)" % [
+		tilt_early56, tilt_late56, atan2(2.5, 9.8), main.FLASK_SLOSH_MAX_RAD])
+	check(tilt_late56 > 0.12 and tilt_early56 < tilt_late56 * 0.6,
+		"stage56: the liquid LAGS, then leans (early %.3f, late %.3f rad)" % [tilt_early56, tilt_late56])
+	main.test_flask_accel_on = false
+	main.test_flask_accel = Vector3.ZERO
+	for pi56d: int in 270:
+		pin56.call()
+		await frames(1)
+	print("stage56: settled tilt %s vs rest %s (drift %.3f rad)" % [str(main.flask_tilt), str(rest56), (main.flask_tilt - rest56).length()])
+	check((main.flask_tilt - rest56).length() < 0.035,
+		"stage56: with the shove gone the surface settles back to rest (drift %.3f rad)" % (main.flask_tilt - rest56).length())
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")

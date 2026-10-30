@@ -44,6 +44,13 @@ extends SceneTree
 ## Fix Pass 24 adds: capture 25 = the turbo meter's portrait
 ## (the dash face with a staged 70% fill and the payout flash
 ## lit - the state the bar shows as a landing pays).
+## Fix Pass 26 (Item 1) replaces the subject: the bar is
+## deleted (the wheel hid it from the real seat) and capture
+## 25 is the FLASK's portrait - plus the sightline sweep the
+## bar never faced: from the shipped eye anchor, a sampled
+## grid over the flask's silhouette must clear the wheel -
+## rim, hub and spokes - at centre and at full lock both
+## ways (and at the quarter locks for the record).
 ## Fix Pass 25 (Item 1) adds: the TIRE SIGHTLINE AUDIT - from
 ## the shipped eye anchor (the fallback camera), a sampled
 ## grid over each front tire's surface is classified
@@ -1109,20 +1116,22 @@ func _run() -> void:
 		await physics_frame
 	await snap(main.fallback_cam, "dip_valley_view.png")
 
-	# Capture 25 (Fix Pass 24, Items 1+2): the turbo meter's
-	# portrait - the dash face at a staged 70% fill with the
-	# payout flash lit: the state the bar shows in the moment
-	# a landing pays. Structural checks only - under this
-	# sandbox's Compatibility/llvmpipe renderer the capture
-	# is not colour truth.
+	# Capture 25 (Fix Pass 26, Item 1): the FLASK's portrait -
+	# the dash-top vessel at a staged 70% fill with the payout
+	# flash lit: the state the liquid shows in the moment a
+	# landing pays. (FP24's subject was the dash-face bar;
+	# the wheel hid it from the real seat and it is deleted.)
+	# Structural checks only - under this sandbox's
+	# Compatibility/llvmpipe renderer the capture is not
+	# colour truth.
 	main._set_track("ribbon")
 	main.start_race()
 	main.debug_warp_to_s(30.0)
 	main.boost_meter = 84.0
 	await physics_frame
 	await physics_frame
-	check(main.turbo_fill_mi != null and main.turbo_fill_mi.visible,
-		"capture 25: the turbo fill exists and is visible in DRIVE")
+	check(main.flask_node != null and main.flask_liquid_mi != null and main.flask_liquid_mi.visible,
+		"capture 25: the flask and its liquid exist and are visible in DRIVE")
 	check(absf(main.turbo_fill_frac - 0.70) < 0.02,
 		"capture 25: the staged fill is the staged stock (%.2f)" % main.turbo_fill_frac)
 	main.pay_flash_t = main.PAY_FLASH_S
@@ -1130,9 +1139,103 @@ func _run() -> void:
 	main.car_body.add_child(cam25)
 	cam25.position = Vector3(0.55, 1.35, 0.25)
 	await physics_frame
-	cam25.look_at(main.car_body.global_transform * main.TURBO_BAR_POS, Vector3.UP)
+	cam25.look_at(main.car_body.global_transform * main.FLASK_POS, Vector3.UP)
 	await snap(cam25, "turbo_meter_view.png")
 	cam25.queue_free()
+
+	# Fix Pass 26 (Item 1): THE FLASK SIGHTLINE SWEEP - the
+	# discipline the FP24 bar failed in the owner's headset.
+	# Staged in the settled dangle, boards hidden. A grid of
+	# sample points over the flask's silhouette (every flask
+	# mesh's AABB corners + face points, in body space) is
+	# sighted from the shipped eye anchor; a sightline is
+	# blocked if it crosses the wheel plane inside the rim
+	# band or hub disc (the FP4 annulus test) or hits a spoke
+	# box (exact local-AABB test on the spin node's box
+	# meshes, re-collected at each wheel angle). The wheel is
+	# posed at CENTRE, FULL LOCK both ways (wheel_angle =
+	# +-PI, the steer clamp's ends) and the quarter locks.
+	main.start_race()
+	main.debug_set_hang_dangle()
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	main.dip_timer = 1000.0
+	if main.panels_visible:
+		main._toggle_panels()
+	await physics_frame
+	var to_body26: Transform3D = main.car_body.global_transform.affine_inverse()
+	var eye_b26: Vector3 = to_body26 * main.fallback_cam.global_position
+	var hub_b26: Vector3 = to_body26 * main.wheel_node.global_position
+	var axis_b26: Vector3 = (to_body26.basis * main.wheel_node.global_transform.basis.y).normalized()
+	var flask_pts26: Array[Vector3] = []
+	var fstack26: Array[Node] = [main.flask_node]
+	while not fstack26.is_empty():
+		var fnd26: Node = fstack26.pop_back()
+		for fch26: Node in fnd26.get_children():
+			fstack26.append(fch26)
+		var fmi26: MeshInstance3D = fnd26 as MeshInstance3D
+		if fmi26 != null:
+			var fab26: AABB = fmi26.get_aabb()
+			var fxf26: Transform3D = to_body26 * fmi26.global_transform
+			for ci26: int in 8:
+				flask_pts26.append(fxf26 * fab26.get_endpoint(ci26))
+			for fx26: float in [0.25, 0.5, 0.75]:
+				for fy26: float in [0.25, 0.5, 0.75]:
+					flask_pts26.append(fxf26 * Vector3(
+						fab26.position.x + fab26.size.x * fx26,
+						fab26.position.y + fab26.size.y * fy26,
+						fab26.end.z))
+					flask_pts26.append(fxf26 * Vector3(
+						fab26.position.x + fab26.size.x * fx26,
+						fab26.end.y,
+						fab26.position.z + fab26.size.z * fy26))
+	var sweep_blocked26: int = 0
+	var sweep_n26: int = 0
+	var sweep_min_rad26: float = 1e9
+	for wa26: float in [0.0, PI, -PI, PI * 0.5, -PI * 0.5]:
+		main.wheel_angle = wa26
+		main._refresh_car_visuals()
+		await physics_frame
+		var spoke_inv26: Array[Transform3D] = []
+		var spoke_box26: Array[AABB] = []
+		for sch26: Node in main.wheel_spin.get_children():
+			var smi26: MeshInstance3D = sch26 as MeshInstance3D
+			if smi26 != null and smi26.mesh is BoxMesh:
+				spoke_inv26.append(smi26.global_transform.affine_inverse())
+				spoke_box26.append(smi26.get_aabb())
+		var blocked26: int = 0
+		for fp26: Vector3 in flask_pts26:
+			sweep_n26 += 1
+			var d26: Vector3 = fp26 - eye_b26
+			var den26: float = d26.dot(axis_b26)
+			if absf(den26) > 1e-9:
+				var t26: float = (hub_b26 - eye_b26).dot(axis_b26) / den26
+				if t26 > 0.02 and t26 < 0.98:
+					var rel26: Vector3 = eye_b26 + d26 * t26 - hub_b26
+					var rad26: float = (rel26 - axis_b26 * rel26.dot(axis_b26)).length()
+					sweep_min_rad26 = minf(sweep_min_rad26, rad26)
+			if _seg_hits_wheel(eye_b26, fp26, hub_b26, axis_b26):
+				blocked26 += 1
+				continue
+			for si26: int in spoke_inv26.size():
+				if _seg_hits_aabb(spoke_inv26[si26] * eye_b26, spoke_inv26[si26] * fp26, spoke_box26[si26]):
+					blocked26 += 1
+					break
+		print("render proof FP26 flask sweep: wheel %+.2f rad - %d of %d sightlines blocked" % [wa26, blocked26, flask_pts26.size()])
+		sweep_blocked26 += blocked26
+	check(sweep_blocked26 == 0,
+		"FP26 flask sweep: the flask is NEVER behind the rim, hub or spokes (%d of %d sightlines blocked; min wheel-plane crossing radius %.3f m, rim band ends 0.245, spokes reach 0.201)" % [sweep_blocked26, sweep_n26, sweep_min_rad26])
+	main.wheel_angle = 0.0
+	main._refresh_car_visuals()
+	# Restore the state the FP25 audit below was written
+	# against (DRIVE on the ribbon at s 30, capture 25's
+	# staged stock).
+	main.debug_warp_to_s(30.0)
+	main.boost_meter = 84.0
+	await physics_frame
+	await physics_frame
 
 	# Fix Pass 25 (Item 1): THE TIRE SIGHTLINE AUDIT. Staged
 	# in DRIVE on the ribbon (capture 25's state), boards
