@@ -998,13 +998,12 @@ var seat_trim: float = 0.0
 const DROP_BTN_FACE_X: float = 0.42 # |x| of the button on the face (the lever's spot)
 const DROP_BTN_FACE_Y: float = 0.70
 const DROP_BTN_FACE_Z: float = -0.44
-const DROP_GRIND_S: float = 0.40 # the felt refusal's duration after an attach/carry press
 var drop_btn_node: Node3D # the registered dash control node
 var drop_btn_bracket: MeshInstance3D
 var drop_btn_left: bool = false # persisted mirror (lefty option)
 var drop_btn_base_z: float = DROP_BTN_FACE_Z # the dip's rest (articulation moves z, not y)
-var drop_grind: Dictionary = {"L": 0.0, "R": 0.0} # felt-refusal seconds left, per hand
-var drop_grind_tick: Dictionary = {"L": 0.0, "R": 0.0} # the grind train's pulse clock
+# (FP20's felt-refusal grind state lived here until Fix Pass
+# 22 deleted the SPENT outcome it served - see _press_drop_button.)
 var xr_iface: XRInterface # stored at rig build for haptics
 # Fix Pass 3 live diagnostics (panel DIAG block, refreshed at ~5 Hz):
 # raw grip-channel values per hand, exactly as the runtime delivers.
@@ -1087,7 +1086,7 @@ var last_release_err_deg: float = 0.0
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
-const GRAB_LOG_BUILD: String = "FP20 (base 7377bc3)"
+const GRAB_LOG_BUILD: String = "FP22 (base d8be713)"
 const GRAB_LOG_MAX_BYTES: int = 262144 # 256 KB tail kept across launches
 
 
@@ -1150,7 +1149,7 @@ func _ready() -> void:
 			if not prior17.ends_with("\n"):
 				grab_log_file.store_line("")
 		grab_log_file.store_line("=== SESSION %s %s ===" % [GRAB_LOG_BUILD, Time.get_datetime_string_from_system()])
-		grab_log_file.store_line("grab log - events: LAT latch, FIRE activation, REL latch release, NOLAT zone entry unlatched, RIM passenger attach, BTN the drop button (FIRE at the dangle / SPENT in attach or carry / PRESS in drive or air), RELEASE the drop's heading record (HDG vs SEC travel direction, ERR the difference)")
+		grab_log_file.store_line("grab log - events: LAT latch, FIRE activation, REL latch release, NOLAT zone entry unlatched, RIM passenger attach, BTN the drop button (FIRE on the chains, any hang phase / PRESS in drive or air), RELEASE the drop's heading record (HDG vs SEC travel direction, ERR the difference)")
 		grab_log_file.flush()
 	_load_settings()
 	_build_environment()
@@ -3353,7 +3352,7 @@ func _panel_text() -> String:
 	lines.append("Grab wheel: GRIP near wheel, turn hand")
 	lines.append("Throttle R trigger / Brake L trigger")
 	lines.append("Boost: R A button (while driving)")
-	lines.append("Release: press the DROP BUTTON (dash face)")
+	lines.append("Release: DROP BUTTON (dash face) - on chains it drops you, any time")
 	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
 	lines.append("Call crane: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
@@ -3878,7 +3877,9 @@ func _input(event: InputEvent) -> void:
 		return
 	match k.keycode:
 		KEY_SPACE:
-			if mode == MODE_HANG and hang_phase == "dangle":
+			# Fix Pass 22: the desktop twin of the drop button
+			# follows it - on the chains, any phase, it drops.
+			if mode == MODE_HANG:
 				_do_release()
 		KEY_L:
 			if mode == MODE_DRIVE:
@@ -4218,47 +4219,33 @@ func _press_drop_button(hand: String) -> void:
 	# in every phase (the dip, the tick, and a BTN line in the
 	# grab log, phase-tagged), and what it DOES is the
 	# context:
-	#   dangle       -> FIRE: the release, downstream
-	#                   identical to the retired lever's
-	#                   detent fire.
-	#   attach/carry -> SPENT: the chains hold, and the
-	#                   refusal is FELT - a grind of controller
-	#                   rumble stepped by _update_drop_grind -
-	#                   never silence (the grind floor).
-	#   drive/air    -> PRESS: it answers (a dull tick) and
-	#                   does nothing. It never sits mute.
+	#   on the chains -> FIRE: the release.
+	#   drive/air     -> PRESS: it answers (a dull tick) and
+	#                    does nothing - not on chains, nothing
+	#                    to release. It never sits mute.
+	# Fix Pass 22 (Item 1): FP20's middle row - attach/carry
+	# SPENT, the chains hold, the refusal grinds - is DELETED
+	# by the owner's run-19 ruling, delivered with the button
+	# in his hands: "when you're being droned... the button
+	# doesn't release you even though you're over track. It
+	# won't activate until the text changes to something or
+	# other. Need to get rid of that. If you're on chains, the
+	# button works. period. Not over the track? Don't press
+	# the button." The gate was the defect: on the chains -
+	# ANY hang phase, any position - the press fires the
+	# release, and where the car falls is the driver's
+	# business. (The grind machinery went with the SPENT
+	# outcome it served: there is no un-armed state left for
+	# a refusal to refuse.)
 	var g20: float = float(diag_grip[hand])
-	if mode == MODE_HANG and hang_phase == "dangle":
-		_grab_event("%s BTN FIRE dangle g%.2f" % [hand, g20])
+	if mode == MODE_HANG:
+		_grab_event("%s BTN FIRE %s g%.2f" % [hand, hang_phase, g20])
 		_pulse_detent(hand)
 		_do_release()
-	elif mode == MODE_HANG:
-		_grab_event("%s BTN SPENT %s g%.2f" % [hand, hang_phase, g20])
-		drop_grind[hand] = DROP_GRIND_S
-		drop_grind_tick[hand] = 0.0
-		_pulse_hand(hand, 0.65, 0.10)
 	else:
 		var ph20: String = "drive" if mode == MODE_DRIVE else ("air" if mode == MODE_AIR else "done")
 		_grab_event("%s BTN PRESS %s g%.2f" % [hand, ph20, g20])
 		_pulse_hand(hand, 0.25, 0.05)
-
-
-func _update_drop_grind(delta: float) -> void:
-	# Fix Pass 20 (Item 1): the grind floor, stepped from
-	# _physics_process. While a hand's refusal time runs, its
-	# controller gets a train of short strong pulses - the
-	# press straining against the chains, felt in the hand
-	# that made it. Headless there is no interface and
-	# _pulse_hand no-ops; the state is what the stages assert.
-	# (Whether the train is PERCEPTIBLE on the live rig is
-	# the owner's verdict - unverifiable headless.)
-	for hand20: String in ["L", "R"]:
-		if float(drop_grind[hand20]) > 0.0:
-			drop_grind[hand20] = maxf(0.0, float(drop_grind[hand20]) - delta)
-			drop_grind_tick[hand20] = float(drop_grind_tick[hand20]) - delta
-			if float(drop_grind_tick[hand20]) <= 0.0:
-				drop_grind_tick[hand20] = 0.07
-				_pulse_hand(hand20, 0.55, 0.05)
 
 
 func _pulse_hand(hand: String, amp: float, dur: float) -> void:
@@ -4944,9 +4931,11 @@ func _begin_recovery(_catch_pos: Vector3, from_s: float) -> void:
 	# and the car is placed on the service pad under the rig,
 	# exactly as at the Drop Start: attach, lift, slew,
 	# dangle. anchor_target itself is untouched: the dangle
-	# station is exactly where Fix Pass 2 put it. Nothing
-	# arms during the slew: the wheel and the drop lever
-	# latch only in the dangle, and the pendulum state is
+	# station is exactly where Fix Pass 2 put it. The wheel
+	# still latches only in the dangle; the DROP BUTTON,
+	# since Fix Pass 22, fires from any phase (on chains it
+	# drops you, period - an early press just falls from
+	# wherever the slew had reached). The pendulum state is
 	# never touched by the phase transitions, so the swing
 	# the car arrives with is the swing it dangles with.
 	var pickup: Vector3 = Vector3(fr["pos"]) + Vector3(fr["side"]) * (HALF_WIDTH + CRANE_PICKUP_OFF)
@@ -5063,9 +5052,26 @@ func _find_drop_s(from_s: float) -> float:
 
 
 func _do_release() -> void:
-	if mode != MODE_HANG or hang_phase != "dangle":
+	if mode != MODE_HANG:
 		return
+	# Fix Pass 22 (Item 1): the phase gate that stood here
+	# (dangle only) is DELETED - the owner's run-19 ruling:
+	# on the chains, the button drops you, from any phase.
+	# The DANGLE path below is byte-identical to FP20. An
+	# off-station (attach/carry) release differs only where
+	# the crane's state honestly differs:
+	#   - it falls from where the car IS: the section under
+	#     the car seeds the air (air_s_est / air_start_s) and
+	#     takes the heading record, not the drop station;
+	#   - it keeps the carrier's horizontal velocity - the
+	#     pivot is moving mid-slew, and the car's world
+	#     velocity is the pivot's plus the pendulum tip's.
+	# The pendulum axes stay the drop frame's in every phase
+	# (_step_pendulum), so the tip construction is unchanged.
+	var at_station: bool = hang_phase == "dangle"
+	var rel_s: float = drop_target_s if at_station else _project_wide_s(car.global_position)
 	var fr: Dictionary = _frame_at(drop_target_s)
+	var sec_fr: Dictionary = fr if at_station else _frame_at(rel_s)
 	var f: Vector3 = fr["tan"]
 	var r: Vector3 = fr["side"]
 	# pendulum tip velocity + a little forward push: you drop swinging
@@ -5074,17 +5080,19 @@ func _do_release() -> void:
 	# tip velocity carries in (timing the release stays the skill),
 	# and a release mid-slack keeps the car's free-fall velocity.
 	air_vel = tip + f * 3.0
+	if not at_station:
+		air_vel += Vector3(carrier_vel.x, 0.0, carrier_vel.z)
 	if slack_t > 0.0:
 		air_vel = hang_vel + f * 3.0
 	# Fix Pass 10 (Item 2): the carrier's vertical motion at the
 	# release carries in (was the procedural dip velocity).
 	air_vel.y += carrier_vel.y * 0.5
-	air_s_est = drop_target_s
-	air_start_s = drop_target_s # a botched release falls from HERE
+	air_s_est = rel_s
+	air_start_s = rel_s # a botched release falls from HERE
 	air_time = 0.0
 	below_band_t = 0.0 # FP12: a release is a new air episode
 	lost_lat_t = 0.0
-	air_exit_y = float(_frame_at(drop_target_s)["pos"].y)
+	air_exit_y = float(_frame_at(rel_s)["pos"].y)
 	air_from_gap = false
 	air_from_release = true # FP14 (Item 1): a drop is not a jump - its landing never arms the rebound gate
 	# Fix Pass 9: the released car flies and lands under the
@@ -5100,10 +5108,14 @@ func _do_release() -> void:
 	# it for the stages). The run-18 backwards drop left no
 	# trace anywhere; from this pass on, a wrong-way release
 	# states its own error in the driver's log.
-	last_release_s = drop_target_s
+	# Fix Pass 22: releases fire from any phase now; an
+	# off-station release is measured against the section
+	# UNDER THE CAR at release (sec_fr), not the station it
+	# never reached.
+	last_release_s = rel_s
 	last_release_hdg_deg = rad_to_deg(car_heading)
-	last_release_sec_deg = rad_to_deg(_frame_yaw(fr["tan"]))
-	last_release_err_deg = rad_to_deg(wrapf(car_heading - _frame_yaw(fr["tan"]), -PI, PI))
+	last_release_sec_deg = rad_to_deg(_frame_yaw(sec_fr["tan"]))
+	last_release_err_deg = rad_to_deg(wrapf(car_heading - _frame_yaw(sec_fr["tan"]), -PI, PI))
 	_grab_event("RELEASE s%.0f HDG %+.1f SEC %+.1f ERR %+.1f" % [
 		last_release_s, last_release_hdg_deg, last_release_sec_deg, last_release_err_deg])
 	yaw_rate = 0.0
@@ -5142,7 +5154,6 @@ func _physics_process(delta: float) -> void:
 		slip_state = 0.0 # tires unloaded: no slip, no skid
 		tire_ratio = 0.0 # Fix Pass 15 (Item 1): and no telegraph either
 		tire_band = 0.0
-	_update_drop_grind(delta) # Fix Pass 20 (Item 1): the felt refusal's pulse train
 	_update_ctl_articulation(delta) # Fix Pass 13 (Item 5): seat levers + button dips
 	_update_lean_reading()
 	_update_suspension(delta)
@@ -6536,8 +6547,14 @@ func _refresh_car_visuals() -> void:
 	# state label text
 	if state_label != null:
 		if mode == MODE_HANG:
-			state_label.text = "DROP START" if is_drop_start and hang_phase == "dangle" else (
-				"PRESS RELEASE" if hang_phase == "dangle" else "DRONE LIFT...")
+			# Fix Pass 22 (Item 2): ONE line for the whole hang,
+			# in the crane's name, saying the one true thing -
+			# the button drops you, from any phase. The phase
+			# variants it replaces ("DRONE LIFT..." until the
+			# dangle, then "PRESS RELEASE") were the dead
+			# gate's visible face: they implied a permission
+			# window, and named a drone that no longer flies.
+			state_label.text = "CRANE LIFT — BUTTON TO DROP"
 		elif mode == MODE_DONE:
 			state_label.text = "FINISH!"
 		elif mode == MODE_AIR:
