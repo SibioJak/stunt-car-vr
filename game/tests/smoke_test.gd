@@ -3287,9 +3287,10 @@ func _run() -> void:
 	# (a) Drop Start is a pickup: the car starts ON THE PAD
 	# beside the start line, the crane attaches, lifts and
 	# slews it to the station; the wheel stays gated during
-	# the journey and (since Fix Pass 20) the DROP BUTTON
-	# presses there - registered, refused, felt - while the
-	# pendulum state crosses the carry->dangle transition
+	# the journey and (since Fix Pass 22) the DROP BUTTON
+	# DROPS the car from the journey - the press below fires
+	# in ATTACH, the stage restarts, and the pendulum state
+	# crosses the fresh hang's carry->dangle transition
 	# untouched. (b) Two staged falls'
 	# trigger->dangle seconds, printed against the FP12
 	# retrace numbers the drone era left behind.
@@ -3306,22 +3307,21 @@ func _run() -> void:
 	# "the drop lever does not latch during transport" - the
 	# phase freeze the owner's interactivity law repealed
 	# ("a thing that doesn't interact is boring and
-	# frustrating"). The BUTTON presses during transport: it
-	# registers (BTN SPENT), the refusal grind runs, and
-	# nothing drops. The wheel's transport gate was never
-	# the owner's complaint and stands, probed as before.
+	# frustrating"). FP20 staged the button pressing during
+	# transport: registered (BTN SPENT), the refusal grind
+	# running, nothing dropping.
+	# REPLACED AGAIN, FLAGGED (FP22): the owner's run-19
+	# ruling deleted the gate itself - "If you're on chains,
+	# the button works. period." A press during transport
+	# now FIRES the release: BTN FIRE + the heading record,
+	# and the car leaves the chains mid-attach. The grind
+	# has no un-armed state left to refuse and is gone with
+	# the SPENT outcome. The wheel's transport gate was
+	# never the owner's complaint and stands, probed FIRST
+	# (the press ends the hang it would be probed in).
 	main.test_hand_set = true
 	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
 	main.test_grip["L"] = 0.0
-	var mark34: int = main.grab_events.size()
-	grip_press_ctl("drop", "R")
-	var ev34: String = ""
-	for ei34: int in range(mark34, main.grab_events.size()):
-		ev34 += main.grab_events[ei34] + " "
-	check(ev34.contains("R BTN SPENT attach") and main.mode == main.MODE_HANG and main.hang_phase == "attach",
-		"stage34: a press during transport registers as SPENT - the chains hold, nothing drops")
-	check(float(main.drop_grind["R"]) > 0.0,
-		"stage34: the refused press GRINDS (refusal time %.2f s still running)" % float(main.drop_grind["R"]))
 	var hub34: Vector3 = main._wheel_hub_local()
 	var pv34: Vector3 = main._wheel_plane_v()
 	main.test_grip["R"] = 1.0
@@ -3330,7 +3330,22 @@ func _run() -> void:
 	check(main.grab_hand == "",
 		"stage34: the wheel does not grab during transport")
 	main.test_grip["R"] = 0.0
+	var mark34: int = main.grab_events.size()
+	grip_press_ctl("drop", "R")
+	var ev34: String = ""
+	for ei34: int in range(mark34, main.grab_events.size()):
+		ev34 += main.grab_events[ei34] + " "
+	check(ev34.contains("R BTN FIRE attach") and main.mode == main.MODE_AIR,
+		"stage34: a press during transport FIRES - the car leaves the chains in ATTACH")
+	check(ev34.contains("RELEASE"),
+		"stage34: the transport release writes its heading record")
 	main.test_hand_set = false
+	# The press spent the hang; restart so the continuity
+	# run below rides a fresh Drop Start's carry -> dangle.
+	main.start_race()
+	await frames(4)
+	check(main.mode == main.MODE_HANG and main.hang_phase == "attach",
+		"stage34: the restart returns to a fresh attach (phase %s)" % main.hang_phase)
 	var f34: int = 0
 	var pend_prev34: Vector4 = Vector4(main.pend_th_f, main.pend_th_l, main.pend_om_f, main.pend_om_l)
 	var pend_jump34: float = 0.0
@@ -4924,9 +4939,12 @@ func _run() -> void:
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	check(ev47.call(mark47e).contains("SEATUP REL"),
 		"stage47: (e) the seat lever's release is logged (SEATUP REL - Item 2)")
-	# (d) the button's telemetry: SPENT in attach, FIRE +
-	# the RELEASE heading record at the dangle - and both
-	# on disk, under this build's session header.
+	# (d) the button's telemetry: FIRE + the RELEASE
+	# heading record - in ATTACH since Fix Pass 22 (the
+	# gate is deleted; FP20's SPENT-in-attach expectation
+	# is REPLACED here, flagged, not silently edited), and
+	# at the dangle as before - and both on disk, under
+	# this build's session header.
 	main.start_race() # attach phase - no dangle shortcut
 	await frames(4)
 	main.dip_timer = 1000.0
@@ -4935,10 +4953,9 @@ func _run() -> void:
 	var mark47f: int = main.grab_events.size()
 	grip_press_ctl("drop", "R")
 	var eva47f: String = ev47.call(mark47f)
-	check(eva47f.contains("R BTN SPENT attach") and main.mode == main.MODE_HANG,
-		"stage47: (d) a press in ATTACH is SPENT on the record - and the car still hangs")
-	check(float(main.drop_grind["R"]) > 0.0,
-		"stage47: (d) the refused press leaves the grind running (%.2f s)" % float(main.drop_grind["R"]))
+	check(eva47f.contains("R BTN FIRE attach") and eva47f.contains("RELEASE") and main.mode == main.MODE_AIR,
+		"stage47: (d) a press in ATTACH FIRES on the record - the car leaves the chains")
+	main.start_race() # the attach press spent that hang; a fresh one for the dangle half
 	main.debug_set_hang_dangle()
 	await frames(4)
 	main.dip_timer = 1000.0
@@ -4960,7 +4977,7 @@ func _run() -> void:
 		f47.close()
 		check(txt47.contains("=== SESSION") and txt47.contains(main.GRAB_LOG_BUILD),
 			"stage47: (f) the log carries this launch's session header (build tag + wall clock)")
-		check(txt47.contains("BTN SPENT") and txt47.contains("RELEASE"),
+		check(txt47.contains("BTN FIRE") and txt47.contains("RELEASE"),
 			"stage47: (f) the file itself carries the button + release telemetry, not just the ring")
 	main.test_hand_set = false
 
@@ -5177,6 +5194,54 @@ func _run() -> void:
 		"stage51: the flat home straight separates nothing (corner air frames %d, min corner load %.2f)" % [sum51d, min51d])
 	main.test_throttle = 0.0
 	main.wheel_angle = 0.0
+
+	# ---------- stage 52: Fix Pass 22 - ON CHAINS, THE BUTTON DROPS YOU ----
+	# The owner's run-19 ruling, staged: a press during CARRY,
+	# from a known moving crane state, releases the car; the
+	# fall converts the crane's state (swing tip + push + the
+	# carrier's own velocity); the heading record is taken
+	# against the section under the car; and the mode flow
+	# resolves sane (drive or re-recovery). Stages 34(a) and
+	# 47(d) carry the ATTACH press; this stage carries CARRY
+	# and the one-line hang banner (Item 2).
+	# (b) the banner first: one line, every hang phase.
+	main._set_track("ribbon")
+	main.start_race()
+	await frames(4)
+	check(main.mode == main.MODE_HANG and main.state_label.text == "CRANE LIFT — BUTTON TO DROP",
+		"stage52: (b) the hang banner is the one line in ATTACH (%s)" % main.state_label.text)
+	main.debug_set_hang_dangle()
+	await frames(4)
+	check(main.state_label.text == "CRANE LIFT — BUTTON TO DROP",
+		"stage52: (b) the same line at the dangle - no permission window implied (%s)" % main.state_label.text)
+	# (a) the carry press.
+	main._set_track("circuit")
+	main.debug_force_fall_at(900.0)
+	var rec52: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 3000)
+	check(rec52, "stage52: (a) setup - the staged fall is recovered onto the chains")
+	var mov52: bool = await wait_until(func() -> bool: return main.hang_phase == "carry" and main.carrier_vel.length() > 1.5, 3000)
+	check(mov52, "stage52: (a) setup - the crane is mid-slew (phase %s, carrier %.1f m/s)" % [main.hang_phase, main.carrier_vel.length()])
+	var fr52: Dictionary = main._frame_at(main.drop_target_s)
+	var tip52: Vector3 = (Vector3(fr52["tan"]) * (main.pend_om_f * cos(main.pend_th_f)) + Vector3(fr52["side"]) * (main.pend_om_l * cos(main.pend_th_l))) * main.HANG_LEN
+	var want52: Vector3 = tip52 + Vector3(fr52["tan"]) * 3.0 + Vector3(main.carrier_vel.x, main.carrier_vel.y * 0.5, main.carrier_vel.z)
+	var sec52: float = main._project_wide_s(main.car.global_position)
+	main.dip_timer = 1000.0
+	var mark52: int = main.grab_events.size()
+	grip_press_ctl("drop", "R")
+	var ev52: String = ""
+	for ei52: int in range(mark52, main.grab_events.size()):
+		ev52 += main.grab_events[ei52] + " "
+	check(ev52.contains("R BTN FIRE carry") and main.mode == main.MODE_AIR,
+		"stage52: (a) a press in CARRY fires - the car leaves the chains mid-slew")
+	check(ev52.contains("RELEASE"),
+		"stage52: (a) the carry release writes its heading record")
+	check(main.air_vel.distance_to(want52) < 0.05,
+		"stage52: (a) the fall converts the crane's state - swing tip + push + the carrier's velocity (air_vel %s, want %s)" % [str(main.air_vel), str(want52)])
+	check(absf(main.last_release_s - sec52) < 1.0,
+		"stage52: (a) the heading record is taken against the section under the car (s %.0f vs %.0f)" % [main.last_release_s, sec52])
+	var sane52: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE or main.mode == main.MODE_HANG, 4000)
+	check(sane52, "stage52: (a) the mid-slew drop resolves sane - drive or re-recovery (mode %d)" % main.mode)
+	main.test_hand_set = false
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
