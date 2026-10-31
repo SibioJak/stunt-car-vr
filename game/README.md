@@ -54,6 +54,14 @@ edge — support truly gone, not at first edge contact.
 VR (Quest):
 - **Grab wheel:** squeeze GRIP near the wheel, turn the hand. Last
   hand to grab drives; the other hand takes over when it lets go.
+  Since Fix Pass 29 the wheel's semantics are the rebuilt ones:
+  letting go HOLDS the angle (no bleed to centre), a hand coming
+  back from a dash button takes the wheel in one step, two hands
+  steer by the line between them, and the right thumbstick is a
+  steering source in its own right — the fallback in WHEEL steer
+  mode, the primary in STICK mode (persisted; hold the right A
+  button while hanging to flip it, N on desktop; the DIAG WHEEL
+  line's SRC field names the live source over the mode)
 - Throttle: right trigger · Brake: left trigger · Boost: right A
   button (while driving) — since Fix Pass 24 the boost is a
   tank (120 units = 4 s, 60 dealt at the start) that racing
@@ -71,7 +79,10 @@ VR (Quest):
   dangling) — since Fix Pass 9 either order works: squeeze-then-touch
   or touch-then-squeeze; the flip fires when grip and proximity
   meet, once per entry
-- Call the drone (while driving): left X button
+- Call the drone (while driving): left X button — and since Fix
+  Pass 29, left X while HANGING is the drop (the same release as
+  the DROP BUTTON / SPACE, in every hang phase; the crane call
+  is DRIVE-only, so X keeps both jobs)
 - Restart race: left Y button · Info panels show/hide: right B
   button (Fix Pass 12 — the boards are hidden by default; B
   calls them up and puts them away. Lean experiment on/off
@@ -3847,6 +3858,240 @@ from the survivors only. Not in this pass: Track 01
 itself, the desert setting's dressing (the lab is
 deliberately bare country), any physics or economy
 change.
+
+## Fix Pass 29 — The Wheel, Rebuilt (steering semantics)
+
+Base: FP28 final (4171a87). The owner's ruling,
+2026-10-31: after driving the lab he named steering as
+the problem before anything else — "trying to reapply
+your grip, or readjust, just feel futile and you feel
+control rapidly slipping away… even pressing the red
+button is dangerous because you have to quickly grip
+the wheel again and it may not be at a great angle" —
+and the root cause in his own words: "the problem is,
+as a player, you're holding nothing." A research pass
+(the field's shipped behaviour for virtual wheels)
+supplied the spec; he picked the rebuild over the
+VTOL-tilt and stick-primary alternatives (the stick
+became an option inside it — his addition: "thumbstick
+driving should be an option for people"). This pass
+changes INPUT SEMANTICS ONLY: the car model, tire
+physics, the FP25 wheel visual/gain, the economy, the
+crane and all three tracks are untouched.
+
+### What changed
+
+- **Hold state (Item 1).** The ungripped bleed is
+  deleted: through FP28, a released wheel in DRIVE was
+  centred by THREE stacked terms — _poll_grab's 1.6
+  rad/s move_toward running in BOTH hand polls (3.2
+  rad/s effective) plus the desktop block's 2.2 rad/s,
+  which ran in XR too. At a half-second button press
+  the wheel could unwind ~45° mid-corner while the
+  driver blind-grabbed for it: the "control rapidly
+  slipping away" of the report, in code. No shipped VR
+  wheel game found auto-centres at a fixed rate with
+  the hand off; the documented behaviour is hold-state
+  (a real car's self-centring is caster torque —
+  speed/load-dependent, ~zero standing still). Now: in
+  XR an ungripped wheel holds its angle EXACTLY, and
+  the desktop steering block (keys + its 2.2 rad/s
+  DRIVE centring) is gated to the desktop path, where
+  its behaviour is byte-identical to before.
+- **One-step regrip (Item 2a).** FP17's ownership law
+  (a dash latch ends only on grip release) made the
+  press-a-button-then-steer sequence two steps:
+  release, re-squeeze. Repealed for the wheel: a
+  gripping hand that owns a dash latch, has left every
+  dash zone, and arrives inside the wheel's radius
+  takes the wheel in the SAME poll; the latch ends
+  cleanly as part of the transfer (a seat latch writes
+  its REL record from the transfer; nothing is left
+  stuck "fired"). The arrival test is zone-exit plus
+  radius, never radius alone — the dash-top row lives
+  inside the wheel's 0.40 m radius, so a hand still ON
+  its button (the SIDE hold above all) keeps its latch,
+  and the seat levers (0.82 m from the hub) are never
+  stolen mid-trim. The reverse stays sticky: a hand
+  DRIVING the wheel is never taken by dash proximity
+  (stage 47(b), unchanged).
+- **Clamp absorption (Item 2b).** Turn past the ±PI
+  lock and the steering reference advances WITH the
+  hand while the wheel sits pinned — the clamped
+  excess is absorbed into the reference — so return
+  travel bites on the first degree back. No dead
+  unwind. (Both steering modes: single-hand
+  grab_prev_ang and the two-hand line_prev_ang.)
+- **Two-hand line steering (Item 3).** With a passenger
+  on the rim, the steering delta is the change in the
+  clock angle of the LINE between the two hands about
+  the hub axis (the documented two-hand model:
+  translating both hands together does not steer;
+  either hand orbiting does). Join re-bases the line
+  reference at the join frame; leave re-bases the
+  remaining hand's around-hub reference at the leave
+  frame — staged jumps: 0.000° both ways. A hand
+  within 0.06 m of the hub axis freezes the reference
+  (a crossing hand's line is degenerate); the exit
+  re-bases — staged hub-cross spike: 0.000°. Haptics:
+  a small tick on the joining/leaving hand, and a soft
+  pulse on any wheel release, lighter than the grab's
+  (release confirmation is half of what a rim tells
+  you; whether any of it is perceptible on the rig is
+  UNVERIFIED — the owner's ears-and-hands rule).
+- **Stick fallback + STEERING MODE (Item 4).** The
+  RIGHT thumbstick's primary X axis is a steering RATE
+  input (2.6 rad/s at full deflection — the desktop
+  keys' rate; 0.12 deadzone); the angle HOLDS when the
+  stick centres. It substitutes for the wheel exactly
+  where the wheel is live (drive, air, the dangle —
+  the pre-dialled lock included) and only while no
+  hand grips: a grab seizes mid-frame (the stick poll
+  runs after the grabs), releasing hands authority
+  back with the angle held — last touched wins, no
+  jump in either direction, because the stick only
+  ever ADDS rate to the held angle. The persisted
+  STEERING MODE (user://settings.cfg, "steer"/"mode",
+  beside the seat trim and drop side) names the
+  at-rest authority: WHEEL (default — the stick is the
+  fallback) or STICK (the stick is the primary; a grab
+  still seizes). Toggled by HOLDING the right A button
+  in the hang for 0.8 s — the Y restart's own gesture,
+  in the mode where A has no other job — or the
+  desktop N key; the flip is announced on the
+  touchdown readout and written to the grab log. The
+  DIAG WHEEL line gains SRC <live source>/<mode>, so
+  a screenshot states what was steering.
+- **Drop to X (Item 5).** Left X in the hang fires the
+  release — its own event line (LX DROP FIRE), the
+  detent pulse, _do_release — in every hang phase
+  (FP22's law), the dash button's exact outcome with
+  the hand never leaving the wheel. X's prior jobs are
+  untouched: the hang press still writes its BTN-log
+  note, and the DRIVE crane call stands (the modes
+  never overlap; X keeps both jobs). The physical
+  dash button remains fully functional.
+- **Commands list** (panel): the steering line now
+  names the stick, the release line names X, a steer
+  mode line names the A-hold, and the desktop line
+  names N. Every accepted input is listed, per the
+  standing rule.
+
+### Census — the stages that changed, and only those
+
+Baseline FP28 smoke re-run on the untouched tree this
+session: ALL 559 PASSED (guard 70). The FP29 run's
+evidence lines were diffed against it line by line:
+
+- **Stage 32 (amended, flagged)**: "X in the hang is
+  inert (the crane call is DRIVE-only)" is replaced —
+  X now DROPS in the hang (LX DROP FIRE + the RELEASE
+  heading record in the stage's own events), the press
+  is still named in the hang input log, and the stage
+  re-dangles so its boost-arming checks run in the hang
+  they were written against. Old expectation: mode
+  stays HANG/dangle after the press. New: mode AIR,
+  then DRIVE, then a fresh dangle. (+3 checks net.)
+- **Stage 47(e) (amended, flagged)**: FP17's "a
+  dash-latched hand cannot take the wheel mid-squeeze"
+  is replaced by the new law — the seat-latched hand
+  arriving at the rim takes the wheel in the same poll
+  (WHEEL LAT), the transfer writes the SEATUP REL, and
+  the hand steers +0.30 rad on the next poll. (+1 check
+  net.) The rest of stage 47 (a1/a2/b/b2/d) is
+  byte-identical: a free wheel is still not latched by
+  a pressing hand (the press is not an arrival), and a
+  held wheel still cannot press.
+- **Stage 46 (printed value only)**: its telemetry
+  check prints the SESSION ring's cumulative size;
+  the count moved 220 -> 223 on the strength of the
+  new event lines the amended stage 32 writes (LX
+  DROP FIRE + RELEASE and kin). The assertion itself
+  is unchanged and passes.
+- **Every other stage is byte-identical** — same
+  verdicts, same measured values (this run's diff
+  shows not even the usual stage-9/stage-46 run
+  variance). In particular, NO existing stage's
+  scripted driving releases the wheel mid-drive
+  through the grab path and reads the angle afterwards
+  (the drive stages poke wheel_angle directly or hold
+  it every frame), so the hold-state repeal has no
+  other staged expectation to re-derive; stage 31's
+  dangle hold ("releasing the grip keeps the lock
+  dialled") already lived outside the bleed's
+  DRIVE-only reach and is unchanged.
+- **New: stage 59** (31 checks) — the pass's own
+  proofs, listed in the brief: toggle input +
+  persistence, X-drop, STICK from rest / seize /
+  return, HOLD (a lock dialled at a pinned 20 m/s,
+  released, and bit-exact after 240 ungripped polls),
+  one-step regrip, clamp absorption (pin at PI, +30°
+  absorbed, −10° answers with −10°), the line (join
+  0.000°, +30° of line = +29.8° of wheel, leave
+  0.000°, hub-cross frozen with a 0.000° exit), and
+  the WHEEL-mode fallback (rate-exact +1.30 rad per
+  0.5 s at full stick, centre holds, grab seizes with
+  zero jump). API guard gains XRController3D
+  .get_vector2 (71 total).
+
+### Verification
+
+- Smoke: **ALL 595 CHECKS PASSED** (was 559 baseline).
+  API guard: **ALL 71 CHECKS PASSED**. Zero script errors;
+  the preflight audit (grammar parse + inference scan
+  of every changed hunk) is clean, and both scripts
+  pass the engine's own analyzer check.
+- Render proof: **151 of 152 checks passed; the one failure is the pre-existing sandbox hub-reach artifact ("wheel hub 0.31 m below the eye"), identical in the FP28 baseline proof — not an FP29 regression** (any failure named
+  and compared against the FP28 baseline proof's
+  pre-existing sandbox artifact). The proof itself
+  convicted two FP29 defects on its first run, both
+  fixed in-pass: (1) the commands panel's text had
+  grown past its board (1.46 m of text on the 1.24 m
+  board, 4 of 63 text sightlines occluded) - the
+  label's pixel size takes the FP12 remedy again
+  (0.00105 -> 0.00084; the text now measures
+  0.54 x 1.16 m, 0 sightlines blocked); (2) the
+  both-hands capture's staged driver move vanished
+  whole (delta 0.0) because the line reference was
+  based at the driver's next poll instead of at the
+  join - the reference is now born in
+  _update_rim_attach, at the attach instant, and the
+  capture's expectations are re-derived under the
+  line law and flagged in place (one hand moving
+  0.5 rad about the hub with the other fixed turns
+  the wheel by the chord delta, measured 0.25 rad;
+  the passenger rep rides exactly that).
+- UNVERIFIED (XR layer, by design): whether the
+  hold/one-step/line semantics FEEL right in the
+  headset; stick steering feel and the 0.12 deadzone;
+  haptic tick/pulse perceptibility; the DIAG SRC
+  field's legibility in situ; panel line lengths at
+  the new wording. Headless stages prove the logic on
+  synthetic poses/states; the verdict is the owner's,
+  in the seat.
+
+### What you're judging
+
+The wheel, from your hands only. Let go mid-corner:
+the lock HOLDS — the car keeps the line you left it
+on instead of unwinding toward centre while you
+blink. Press the red button (or don't — X drops you
+now, hand never leaving the wheel) and come back:
+one squeeze on the rim and you are steering, no
+release-and-regrip two-step, and the wheel is at the
+angle your hand expects. Turn past the lock and the
+first degree back bites. Put both hands on: the line
+between them steers, and hands joining, leaving, or
+crossing the hub never jump the wheel. And the
+option, for you or for anyone who'd rather: hold R A
+in the hang to flip STEERING MODE to STICK and drive
+on the right thumbstick — the angle holds when you
+centre it, and grabbing the wheel still seizes
+steering for exactly as long as you hold it. Not in
+this pass: any change to how the car itself drives —
+same tires, same gain curve, same economy. If the
+car feels different, it is because the wheel finally
+stays where you put it.
 
 ## Quest export — status
 
