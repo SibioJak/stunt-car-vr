@@ -114,6 +114,15 @@ const WHEEL_FWD_F_VIS: float = 0.40 # front visual forward step, m (mesh only) -
 # gain = 1 + (GAIN0 - 1) * (1 - smoothstep(0, FULL, |steer|)).
 const STEER_VIS_GAIN0: float = 2.2 # display gain at centre
 const STEER_VIS_FULL: float = 0.55 # steer fraction at/above which the display is honest
+# Fix Pass 29 (Items 3-4): the rebuilt wheel's constants -
+# the stick is a RATE input at the desktop keys' own rate;
+# its deadzone keeps a resting thumb from steering; the
+# two-hand line freezes its reference while either hand is
+# this close to the hub axis (a crossing hand's line is
+# degenerate there, and acting on it would spike the wheel).
+const STICK_STEER_RATE: float = 2.6 # rad/s at full deflection
+const STICK_DEAD: float = 0.12
+const LINE_HUB_FREEZE_M: float = 0.06
 # The slip angle joins the display (Item 3): the front tires
 # yaw toward where the car is actually sliding by
 # atan2(lat_vel, |speed|), honestly scaled and capped, so a
@@ -1126,6 +1135,13 @@ var drop_btn_node: Node3D # the registered dash control node
 var drop_btn_bracket: MeshInstance3D
 var drop_btn_left: bool = false # persisted mirror (lefty option)
 var drop_btn_base_z: float = DROP_BTN_FACE_Z # the dip's rest (articulation moves z, not y)
+# Fix Pass 29 (Item 4): the persisted STEERING MODE - which
+# source holds steering authority at rest. 0 = WHEEL (the
+# grabbed wheel is primary; the right thumbstick is the
+# fallback while ungripped), 1 = STICK (the thumbstick is
+# primary; a wheel grab still seizes while held - "last
+# touched wins" in both modes, see _poll_stick_steer).
+var steer_mode: int = 0
 # (FP20's felt-refusal grind state lived here until Fix Pass
 # 22 deleted the SPENT outcome it served - see _press_drop_button.)
 var xr_iface: XRInterface # stored at rig build for haptics
@@ -1181,6 +1197,20 @@ var rep_dot: Dictionary = {} # hand -> the rep's origin-dot mesh (the candidate/
 # rep rides the rim (see _update_rim_attach).
 var rim_attach: Dictionary = {"L": false, "R": false}
 var rim_local: Dictionary = {"L": Vector3.ZERO, "R": Vector3.ZERO}
+# Fix Pass 29 (Item 3): two-hand LINE steering state. While
+# a rim passenger rides with the driver, the steering delta
+# is the change in the clock angle of the LINE between the
+# two hands about the hub axis (the documented two-hand
+# model: translating both hands together does not steer,
+# either hand orbiting does). line_prev_ang is the line
+# angle's reference - it re-bases at every join, leave and
+# hub-cross exit, so transitions never jump the wheel.
+# line_frozen marks a hub cross in progress (either hand
+# inside LINE_HUB_FREEZE_M of the hub axis): the reference
+# holds and no delta accrues until the hand exits.
+var line_active: bool = false
+var line_prev_ang: float = 0.0
+var line_frozen: bool = false
 # Fix Pass 16 (Item 5): grab telemetry. grab_events is the
 # session's event ring (also written to user://grab_log.txt);
 # the counters and per-hand session squeeze peaks ride along so
@@ -3231,7 +3261,7 @@ func _build_cockpit() -> void:
 	panel_label = Label3D.new()
 	panel_label.position = Vector3(-0.368, 0.555, 0.02)
 	panel_label.font_size = 30
-	panel_label.pixel_size = 0.00105 # FP12: the controls list grew (shifter/panels lines); ~9% smaller type keeps it on its board
+	panel_label.pixel_size = 0.00084 # FP12: the controls list grew (shifter/panels lines); ~9% smaller type keeps it on its board. FP29: the list grew again (steering-mode line, stick + X named); the FP29 render proof measured the text at 1.46 m tall against the 1.24 m board, so the type shrinks again by the measured ratio - same FP12 remedy, new number.
 	panel_label.width = 640.0
 	panel_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel_label.modulate = Color(0.92, 0.95, 1.0)
@@ -3354,10 +3384,11 @@ func _panel_text() -> String:
 		lines.append("STATE %s  TD %s" % [_state_name(), last_touchdown])
 	lines.append("LEAN EXP %s  GRIP x%.2f" % ["ON" if lean_on else "OFF", grip_mult])
 	lines.append("-- VR CONTROLS --")
-	lines.append("Grab wheel: GRIP near wheel, turn hand")
+	lines.append("Steering: GRIP wheel + turn hand (one or both), or R thumbstick")
 	lines.append("Throttle R trigger / Brake L trigger")
 	lines.append("Boost: R A button (while driving) - the dash-top FLASK's liquid is the tank; air pays it back")
-	lines.append("Release: DROP BUTTON (upper dash face) - on chains it drops you, any time")
+	lines.append("Release: DROP BUTTON (upper dash face) or L X button - on chains it drops you, any time")
+	lines.append("Steer mode WHEEL/STICK: HOLD R A button while hanging")
 	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
 	lines.append("Call crane: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
@@ -3366,7 +3397,7 @@ func _panel_text() -> String:
 	lines.append("restart race: L Y button")
 	lines.append("Panels: R B button (show/hide)")
 	lines.append("-- DESKTOP --")
-	lines.append("W/S throttle/brake, A/D steer, SHIFT boost")
+	lines.append("W/S throttle/brake, A/D steer, SHIFT boost, N steer mode")
 	lines.append("SPACE release")
 	lines.append("TAB panels, L lift, T lean, J jitter, G view A/B, M drop side, Q/E lean body")
 	lines.append("PgUp/PgDn seat trim, R restart race")
@@ -3419,7 +3450,11 @@ func _build_diag_block() -> String:
 	# the ANCHOR and ZONE lines are at the label's wrap width
 	# already (the proof's cockpit capture showed both wrapping
 	# when SEAT and the two new zone tags first landed).
-	lines.append("WHEEL %+d DEG JIT %s SEAT %+.2f VIEW %s DROP %s" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF", seat_trim, "B" if view_gain_mode == 1 else "A", "L" if drop_btn_left else "R"])
+	# Fix Pass 29 (Item 4): the WHEEL line gains SRC - the
+	# live steering source over the persisted mode
+	# (STICK/WHEEL, WHEEL/WHEEL, -/WHEEL...) - so a capture
+	# states outright what was steering the car.
+	lines.append("WHEEL %+d DEG JIT %s SEAT %+.2f VIEW %s DROP %s SRC %s/%s" % [int(round(rad_to_deg(wheel_angle))), "ON" if jitter_on else "OFF", seat_trim, "B" if view_gain_mode == 1 else "A", "L" if drop_btn_left else "R", _steer_source(), "STICK" if steer_mode == 1 else "WHEEL"])
 	# Fix Pass 13 (Item 1): the last touchdown's connection,
 	# same numbers the readout showed - so a capture carries
 	# the ruling with it.
@@ -3752,7 +3787,15 @@ func _poll_inputs(delta: float) -> void:
 		steer_key -= 1.0
 	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
 		steer_key += 1.0
-	if grab_hand == "":
+	# Fix Pass 29 (Item 1): this block serves the DESKTOP
+	# path ONLY. In XR the wheel's angle is owned by the
+	# grab/stick logic (_poll_grab / _poll_stick_steer) and an
+	# ungripped wheel HOLDS its angle - the keys' rate and
+	# return-to-centre must not reach in from underneath
+	# (through FP28 they stacked on the grab path's own
+	# bleed: three centring terms on one released wheel).
+	# Desktop behaviour (xr_ok false) is byte-identical.
+	if not xr_ok and grab_hand == "":
 		if steer_key != 0.0:
 			wheel_angle = clampf(wheel_angle + steer_key * 2.6 * delta, -PI, PI)
 		elif mode == MODE_DRIVE:
@@ -3770,6 +3813,11 @@ func _poll_inputs(delta: float) -> void:
 		in_brake = maxf(in_brake, _input_float(lc, &"trigger"))
 		_poll_grab("L", lc, delta)
 		_poll_grab("R", rc, delta)
+		# Fix Pass 29 (Item 4): the stick poll runs AFTER the
+		# grabs, so a grip that latches on this very frame has
+		# already seized the wheel before the stick is read -
+		# "last touched wins" with no contested frame.
+		_poll_stick_steer(delta)
 		# Fix Pass 13 (Item 4): the face/stick buttons live in
 		# _poll_xr_buttons now (hang gates + the hang input
 		# log); gripping[] was just refreshed by the grabs.
@@ -3807,6 +3855,13 @@ func _poll_inputs(delta: float) -> void:
 #     deliberate route and is never gated.
 #   - Left X stays exactly as gated as it was (DRIVE only) -
 #     asserted in stage 32.
+# Fix Pass 29 (Item 5) amends the X line of that contract:
+# X in the hang is the DROP now (the owner's call - "hit Y
+# or X and be done with it"; Y was already the restart, so
+# X took the drop). The note still logs, the press drops,
+# and the DRIVE crane call stands - the modes never
+# overlap, so neither job was displaced. Stage 32's
+# inert-in-the-hang expectation is amended with it.
 # And every face-button edge during MODE_HANG is logged to
 # the DIAG board (BTN line) with its race time, so the next
 # mystery names itself.
@@ -3814,8 +3869,15 @@ const HANG_RESTART_HOLD_S: float = 0.8
 var boost_arm_blocked: bool = false
 var y_hold_t: float = 0.0
 var y_hold_fired: bool = false
+# Fix Pass 29 (Item 4): the R A button's hang hold clock -
+# the STEERING MODE toggle rides the Y restart's own
+# pattern (a deliberate hold in the hang, where A has no
+# other job; see _poll_xr_buttons).
+var a_hold_t: float = 0.0
+var a_hold_fired: bool = false
 var hang_btn_log: Array[String] = []
 var test_btn: Dictionary = {"L": {}, "R": {}} # posed button states (test_mode)
+var test_stick: Dictionary = {"L": Vector2.ZERO, "R": Vector2.ZERO} # posed stick axes (test_mode)
 
 
 func _btn_state(hand: String, ctrl: XRController3D, action: StringName) -> bool:
@@ -3831,6 +3893,62 @@ func _hang_btn_note(tag: String) -> void:
 	hang_btn_log.append("%d:%s" % [int(race_time), tag])
 	while hang_btn_log.size() > 6:
 		hang_btn_log.pop_front()
+
+
+func _stick_vec(hand: String, ctrl: XRController3D) -> Vector2:
+	# The thumbstick's primary axes. test_mode substitutes a
+	# posed vector (same pattern as test_btn / test_grip) so
+	# the smoke drives the production stick logic headless.
+	if test_mode:
+		return test_stick[hand]
+	if ctrl == null:
+		return Vector2.ZERO
+	return ctrl.get_vector2(&"primary")
+
+
+func _poll_stick_steer(delta: float) -> void:
+	# Fix Pass 29 (Item 4): the RIGHT thumbstick as a steering
+	# RATE input - full deflection turns the wheel at the
+	# desktop keys' own 2.6 rad/s, and the angle HOLDS when
+	# the stick centres (a rate, not a position: there is no
+	# spring back, because there is no spring). It substitutes
+	# for the wheel exactly where the wheel is live (drive,
+	# air, the dangle - the pre-dialled lock included) and
+	# only while NO hand grips the wheel: a grab seizes
+	# authority mid-frame (this poll runs after the grabs in
+	# _poll_inputs) and releasing hands it back with the
+	# angle held - "last touched wins", no jump in either
+	# direction, because the stick only ever ADDS rate to the
+	# held angle. The persisted STEERING MODE names which
+	# source the driver calls primary (DIAG's SRC field
+	# reports the live one); the mechanism is the same in
+	# both modes - in WHEEL mode the stick is the fallback
+	# that answers while your hands are off the wheel, in
+	# STICK mode it is simply how you steer.
+	var wheel_live29: bool = mode == MODE_DRIVE or mode == MODE_AIR \
+		or (mode == MODE_HANG and hang_phase == "dangle")
+	if not wheel_live29 or grab_hand != "":
+		return
+	var sx29: float = _stick_vec("R", hand_ctrl["R"]).x
+	if absf(sx29) < STICK_DEAD:
+		return
+	wheel_angle = clampf(wheel_angle + sx29 * STICK_STEER_RATE * delta, -PI, PI)
+
+
+func _steer_source() -> String:
+	# Fix Pass 29 (Item 4): the live steering authority, for
+	# the DIAG board - the driver can SEE which source is
+	# steering, per the surface-the-ruling rule. A gripping
+	# hand outranks everything; STICK mode's stick is the
+	# standing authority; in WHEEL mode the stick names
+	# itself only while it is actually deflecting.
+	if grab_hand != "":
+		return "WHEEL"
+	if steer_mode == 1:
+		return "STICK"
+	if mode == MODE_DRIVE and absf(_stick_vec("R", hand_ctrl["R"]).x) >= STICK_DEAD:
+		return "STICK"
+	return "-"
 
 
 func _seat_trim_held() -> String:
@@ -3875,6 +3993,17 @@ func _poll_xr_buttons(delta: float) -> void:
 			_hang_btn_note("RB")
 		if x_edge:
 			_hang_btn_note("LX")
+			# Fix Pass 29 (Item 5): X is the drop, too. The
+			# note above still logs the press; the press now
+			# also FIRES the release - the same outcome the
+			# dash button's press produces in the hang (its
+			# own event line, the detent pulse, _do_release),
+			# in every hang phase (FP22's law). The hand
+			# never leaves the wheel to drop any more - that
+			# was the owner's whole point.
+			_grab_event("LX DROP FIRE %s" % hang_phase)
+			_pulse_detent("L")
+			_do_release()
 		if y_edge:
 			_hang_btn_note("LY")
 	# Fix Pass 11 (Item 1): squeeze BOTH grips = recenter.
@@ -3886,6 +4015,21 @@ func _poll_xr_buttons(delta: float) -> void:
 		boost_arm_blocked = true
 	if not a_now:
 		boost_arm_blocked = false
+	# Fix Pass 29 (Item 4): hold R A in the hang (0.8 s, the
+	# Y restart's own threshold) = STEERING MODE toggle.
+	# A has no hang job to displace - its held state only
+	# blocks boost arming - and the hang is where this
+	# game's deliberate settings live (the restart taught
+	# the gesture). Once per hold; the flip announces
+	# itself in _toggle_steer_mode.
+	if mode == MODE_HANG and a_now:
+		a_hold_t += delta
+		if a_hold_t >= HANG_RESTART_HOLD_S and not a_hold_fired:
+			a_hold_fired = true
+			_toggle_steer_mode()
+	else:
+		a_hold_t = 0.0
+		a_hold_fired = false
 	if a_now and not boost_arm_blocked:
 		in_boost = true
 	# Left X: the drone call - DRIVE only, unchanged.
@@ -3937,6 +4081,10 @@ func _input(event: InputEvent) -> void:
 			_toggle_view_gain()
 		KEY_M:
 			_toggle_drop_btn_side()
+		KEY_N:
+			# Fix Pass 29 (Item 4): the desktop twin of the
+			# hang's R A hold - STEERING MODE toggle.
+			_toggle_steer_mode()
 		KEY_R:
 			start_race()
 		KEY_TAB:
@@ -4086,12 +4234,17 @@ func _load_settings() -> void:
 		seat_trim = clampf(float(cfg.get_value("seat", "trim", 0.0)),
 			-SEAT_TRIM_MAX, SEAT_TRIM_MAX)
 		drop_btn_left = bool(cfg.get_value("lever", "left", false))
+		# Fix Pass 29 (Item 4): the steering mode rides the
+		# same file, as a word (a future third scheme must
+		# not need a migration).
+		steer_mode = 1 if String(cfg.get_value("steer", "mode", "wheel")) == "stick" else 0
 
 
 func _save_settings() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("seat", "trim", seat_trim)
 	cfg.set_value("lever", "left", drop_btn_left) # the key predates the button (FP20) and is kept
+	cfg.set_value("steer", "mode", "stick" if steer_mode == 1 else "wheel") # FP29 (Item 4)
 	cfg.save("user://settings.cfg")
 
 
@@ -4183,6 +4336,22 @@ func _toggle_view_gain() -> void:
 	view_gain_mode = 1 - view_gain_mode
 
 
+func _toggle_steer_mode() -> void:
+	# Fix Pass 29 (Item 4): WHEEL <-> STICK. Persisted on
+	# the flip like the drop side, and ANNOUNCED on the
+	# touchdown readout like it too (the SIDE flip's FP16
+	# lesson: a silent setting change is a bug report
+	# waiting to happen) - plus a grab-log line, so the
+	# session record names the scheme every drive ran on.
+	steer_mode = 1 - steer_mode
+	_save_settings()
+	_update_panel()
+	_grab_event("STEER MODE %s" % ("STICK" if steer_mode == 1 else "WHEEL"))
+	if contact_label != null:
+		contact_label.text = "STEER MODE: %s" % ("STICK" if steer_mode == 1 else "WHEEL")
+		contact_readout_t = 2.5
+
+
 # Fix Pass 15 (Item 3) set the side mechanism; Fix Pass 20
 # (Item 1) retargets it on the DROP BUTTON. _apply places the
 # button + bracket on the face at the current side (build,
@@ -4227,6 +4396,16 @@ func _wheel_plane_v() -> Vector3:
 	# about X). Paired with car-space +X it spans the wheel plane.
 	var t: float = deg_to_rad(WHEEL_TILT_DEG)
 	return Vector3(0.0, -sin(t), cos(t))
+
+
+func _hand_plane_coords(hand: String) -> Vector2:
+	# Fix Pass 29 (Item 3): a hand's position IN THE WHEEL
+	# PLANE, hub-relative - x along car +X, y along the
+	# wheel-plane basis (_wheel_plane_v). The same projection
+	# _hand_wheel_angle reads a single hand's angle from; the
+	# two-hand LINE is measured between two of these.
+	var local: Vector3 = car.to_local(_hand_pos(hand)) - _wheel_hub_local()
+	return Vector2(local.x, local.dot(_wheel_plane_v()))
 
 
 func _hand_wheel_angle(hand: String) -> float:
@@ -4539,6 +4718,21 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 			var sdir2: float = 1.0 if dash_ctl_kinds[fi] == "seatup" else -1.0
 			_apply_seat_trim(seat_trim + sdir2 * SEAT_TRIM_RATE * _delta)
 		side_hold_t[hand] = 0.0
+	# Fix Pass 29 (Item 2a): the ONE-STEP REGRIP test. A
+	# gripping hand that owns a dash latch (owner17 "dash")
+	# but has LEFT every dash zone (zone_now -1) and arrived
+	# inside the wheel's radius takes the wheel in this same
+	# poll - FP17's rule (ownership ends only on grip
+	# release) made press-a-button-then-steer a two-step at
+	# the exact moment the wheel was needed. The wheel
+	# outranks the dash on ARRIVAL; the dash-top row lives
+	# INSIDE the wheel's radius, so the arrival test is zone
+	# exit plus the radius, never the radius alone - a hand
+	# still ON its button (the SIDE hold above all) keeps
+	# its latch, and the seat levers sit far outside the
+	# radius, so a trim in progress is never stolen either.
+	var transfer29: bool = held and grab_hand == "" and owner17 == "dash" \
+		and zone_now == -1
 	# --- THE WHEEL (soft lock) ---
 	# Fix Pass 13 (Item 3): the wheel is also live in the
 	# DANGLE - the driver dials in the landing lock while the
@@ -4559,6 +4753,14 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 		if not held:
 			grab_hand = ""
 			_grab_event("%s WHEEL REL g%.2f" % [hand, grip_v])
+			# Fix Pass 29 (Item 3): letting go is FELT too -
+			# a soft pulse, lighter than the grab's, so the
+			# hand knows the wheel is no longer its own (the
+			# research's haptic-substitution point: release
+			# confirmation is half of what a rim tells you).
+			_pulse_hand(hand, 0.18, 0.04)
+			line_active = false
+			line_frozen = false
 			# other hand takes over if it is still gripping the wheel
 			var other: String = "R" if hand == "L" else "L"
 			if bool(gripping[other]) and _hand_pos(other).distance_to(hub_w) < WHEEL_GRAB_RADIUS \
@@ -4569,16 +4771,69 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 				grab_hand = other
 				grab_prev_ang = _hand_wheel_angle(other)
 		else:
-			# Soft lock: the latched hand steers at ANY radius -
-			# the angle is read about the hub, so an arm that
-			# extends through a big turn never drops the wheel.
-			var ang: float = _hand_wheel_angle(hand)
-			var d: float = wrapf(ang - grab_prev_ang, -PI, PI)
-			wheel_angle = clampf(wheel_angle + d, -PI, PI)
-			grab_prev_ang = ang
+			var other29: String = "R" if hand == "L" else "L"
+			if bool(rim_attach[other29]):
+				# Fix Pass 29 (Item 3): TWO-HAND LINE steering.
+				# With a passenger on the rim, the steering
+				# delta is the change in the clock angle of
+				# the LINE between the two hands about the hub
+				# axis - translating both hands together does
+				# not steer; either hand orbiting does. The
+				# reference re-bases at the join and after
+				# every hub cross, so neither can jump the
+				# wheel; while either hand is within
+				# LINE_HUB_FREEZE_M of the hub axis the line
+				# is degenerate and the reference FREEZES -
+				# input holds, and the exit re-bases.
+				var hd29: Vector2 = _hand_plane_coords(hand)
+				var hp29: Vector2 = _hand_plane_coords(other29)
+				var lv29: Vector2 = hp29 - hd29
+				if hd29.length() < LINE_HUB_FREEZE_M or hp29.length() < LINE_HUB_FREEZE_M:
+					line_frozen = true
+				elif line_frozen or not line_active:
+					line_prev_ang = atan2(lv29.y, lv29.x)
+					if line_frozen:
+						line_frozen = false
+					else:
+						# the JOIN frame: a small tick on the
+						# joining hand - the second hand's
+						# arrival is an event, and it is felt.
+						line_active = true
+						_pulse_hand(other29, 0.2, 0.04)
+				else:
+					var lang29: float = atan2(lv29.y, lv29.x)
+					var ld29: float = wrapf(lang29 - line_prev_ang, -PI, PI)
+					wheel_angle = clampf(wheel_angle + ld29, -PI, PI)
+					# The reference advances WITH the line
+					# even while the wheel sits clamped -
+					# Item 2b's absorption, line edition.
+					line_prev_ang = lang29
+			else:
+				if line_active:
+					# The passenger left: fall back to this
+					# hand's around-hub delta, re-based at
+					# THIS frame (the jump is zero by
+					# construction), and tick the hand that
+					# left - a departure is an event too.
+					line_active = false
+					line_frozen = false
+					grab_prev_ang = _hand_wheel_angle(hand)
+					_pulse_hand(other29, 0.2, 0.04)
+				# Soft lock: the latched hand steers at ANY radius -
+				# the angle is read about the hub, so an arm that
+				# extends through a big turn never drops the wheel.
+				var ang: float = _hand_wheel_angle(hand)
+				var d: float = wrapf(ang - grab_prev_ang, -PI, PI)
+				wheel_angle = clampf(wheel_angle + d, -PI, PI)
+				# Fix Pass 29 (Item 2b): the reference advances
+				# WITH the hand even while the wheel sits pinned
+				# at the ±PI clamp - the clamped excess is
+				# absorbed into the reference, so return travel
+				# bites on the first degree back. No dead unwind.
+				grab_prev_ang = ang
 	elif held and grab_hand == "" \
 			and _seg_point_dist(prev, pos, hub_w) < WHEEL_GRAB_RADIUS \
-			and win17 == "wheel": # FP17 (Item 1): arbitration - see the candidate block above (FP20: the lever-hand term is gone with the lever; arbitration carries the exclusion)
+			and (win17 == "wheel" or transfer29): # FP17 (Item 1): arbitration - see the candidate block above (FP20: the lever-hand term is gone with the lever; arbitration carries the exclusion). FP29 (Item 2a): transfer29 is the second door - a dash-owning hand ARRIVING (zones left behind) takes the wheel without arbitration, because arbitration only runs for unowned hands.
 		# Fix Pass 16 (Item 3): the latch takes only a FREE wheel.
 		# FP15's branch let a second gripping hand STEAL the
 		# wheel (re-basing grab_prev_ang to its own angle), so
@@ -4586,13 +4841,34 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 		# neither ever read as holding - half the both-hands
 		# defect, in the latch itself. A gripping hand on an
 		# OWNED wheel is the passenger instead (rim attach).
+		if transfer29:
+			# The dash latch ends as part of the transfer -
+			# witnessed like any latch end (a seat lever
+			# writes its REL record), the SIDE hold clock
+			# resets, and nothing is left stuck "fired".
+			var lat29: int = int(dash_ctl_fired[hand])
+			if lat29 >= 0 and lat29 < dash_ctl_kinds.size() \
+					and dash_ctl_kinds[lat29].begins_with("seat"):
+				_grab_event("%s %s REL g%.2f" % [hand, dash_ctl_kinds[lat29].to_upper(), grip_v])
+			dash_ctl_fired[hand] = -1
+			side_hold_t[hand] = 0.0
+			_grab_event("%s DASH->WHEEL g%.2f" % [hand, grip_v])
 		grab_hand = hand
 		grab_prev_ang = _hand_wheel_angle(hand)
 		grab_wheel_count += 1
 		_grab_event("%s WHEEL LAT g%.2f" % [hand, grip_v])
 		_pulse_hand(hand, 0.35, 0.06)
-	if grab_hand == "" and mode == MODE_DRIVE:
-		wheel_angle = move_toward(wheel_angle, 0.0, 1.6 * _delta)
+	# Fix Pass 29 (Item 1): the ungripped bleed that stood
+	# here (wheel_angle -> centre at 1.6 rad/s per poll,
+	# twice a frame) is DELETED. The documented behaviour
+	# for a virtual wheel is HOLD-STATE on release - no
+	# shipped VR wheel game found auto-centres at a fixed
+	# rate with the hand off, and a real car's self-centring
+	# is caster torque (speed/load-dependent, ~zero at a
+	# standstill), not a spring. An ungripped wheel in XR
+	# now holds its angle exactly; the angle returns to the
+	# driver, not to centre. (The desktop path keeps its
+	# own centring - gated to it in _poll_inputs.)
 	_update_rim_attach(hand, held, pos)
 	# --- the CANDIDATE cue (Item 1's witness) ---
 	# The nearest control this hand could take right now. A new
@@ -4708,6 +4984,28 @@ func _update_rim_attach(hand: String, held: bool, pos: Vector3) -> void:
 		rim_attach[hand] = true
 		rim_local[hand] = wheel_spin.global_transform.affine_inverse() * pos
 		_grab_event("%s RIM ATT g%.2f" % [hand, float(diag_grip[hand])])
+		# Fix Pass 29 (Item 3, attach-time basing): the line
+		# reference is born HERE, at the join itself - not at
+		# the driver's next poll. Basing at the poll swallowed
+		# whatever line motion happened between the attach and
+		# that poll (the render proof's staged driver move,
+		# compressed into one poll, vanished whole: delta 0.0
+		# measured). With the base taken from the hands' real
+		# positions at the attach instant, the driver's first
+		# poll already reads a true delta - the join jump is
+		# still zero by construction, because basing moves no
+		# wheel. The join tick fires here too (the joining
+		# hand feels its arrival). Degenerate at birth (a hand
+		# inside the hub freeze): the reference stays unborn
+		# and the driver poll's freeze branch re-bases on exit.
+		var hd29b: Vector2 = _hand_plane_coords(other)
+		var hp29b: Vector2 = _hand_plane_coords(hand)
+		if hd29b.length() >= LINE_HUB_FREEZE_M and hp29b.length() >= LINE_HUB_FREEZE_M:
+			var lv29b: Vector2 = hp29b - hd29b
+			line_prev_ang = atan2(lv29b.y, lv29b.x)
+			line_active = true
+			line_frozen = false
+			_pulse_hand(hand, 0.2, 0.04)
 	elif not want and bool(rim_attach[hand]):
 		rim_attach[hand] = false
 
