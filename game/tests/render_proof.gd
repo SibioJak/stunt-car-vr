@@ -1105,6 +1105,44 @@ func _run() -> void:
 	# is DELETED with the loop.
 
 
+	# Capture 23 (Fix Pass 27): THE LINE, from the driver's
+	# seat 8 m before the seam, the chequer stripe 10-11 m
+	# ahead across the start/finish line. Two claims: the
+	# PAINT is in the road band (white cells bright, black
+	# cells dark, sampled in the same window), and the SKY
+	# carries no banner green - the FP26-and-earlier span
+	# (unshaded 0.15/0.60/0.20) slabbed across exactly this
+	# band when it existed. State hygiene as the FP23 series:
+	# start_race, warp, pin through the settle.
+	main.start_race()
+	for i: int in 4:
+		await physics_frame
+	main.debug_warp_to_s(main.track_len - 8.0)
+	for i: int in 30:
+		main.debug_pin_speed(0.0)
+		await physics_frame
+	await snap(main.fallback_cam, "finish_line_view.png")
+	var img23: Image = Image.load_from_file(ProjectSettings.globalize_path("res://tests/finish_line_view.png"))
+	var white23: int = 0
+	var black23: int = 0
+	var green23: int = 0
+	if img23 != null:
+		for y23: int in range(int(img23.get_height() * 0.45), int(img23.get_height() * 0.72), 2):
+			for x23: int in range(int(img23.get_width() * 0.25), int(img23.get_width() * 0.75), 2):
+				var pc23: Color = img23.get_pixel(x23, y23)
+				if pc23.r > 0.75 and pc23.g > 0.75 and pc23.b > 0.75:
+					white23 += 1
+				if pc23.r < 0.12 and pc23.g < 0.12 and pc23.b < 0.12:
+					black23 += 1
+		for y23b: int in range(int(img23.get_height() * 0.03), int(img23.get_height() * 0.28), 2):
+			for x23b: int in range(0, img23.get_width(), 2):
+				var pc23b: Color = img23.get_pixel(x23b, y23b)
+				if pc23b.g > 0.42 and pc23b.r < 0.38 and pc23b.b < 0.38 and pc23b.g > pc23b.r + 0.15:
+					green23 += 1
+	check(white23 >= 8 and black23 >= 4, "FP27: the chequer line is in the road band (white %d, black %d sampled px)" % [white23, black23])
+	check(green23 == 0, "FP27: no banner green in the sky band - the span is gone (%d px)" % green23)
+
+
 	# Capture 24 (Item 4): the dip-valley sightline - the far
 	# read the fog cut and wider edge strips serve. Driver's
 	# view from the valley floor, the road running on across
