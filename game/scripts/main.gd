@@ -2068,14 +2068,25 @@ func _build_track_meshes(d: Dictionary) -> void:
 			var bot := Vector3(p0.x, DESERT_FLOOR_Y, p0.z)
 			_add_box_verts(stilt_pos, stilt_nrm, stilt_col, (top + bot) * 0.5,
 				Vector3(0.55, top.y - bot.y, 0.55), Color(0.42, 0.42, 0.46))
+	# Fix Pass 27: the lines are painted on the road (see
+	# _add_line_stripe) - start at s 2.0 on both tracks, plus
+	# the finish at the ribbon's end on the open track. On the
+	# closed circuit start IS the finish (same s, one stripe).
+	var line_pos := PackedVector3Array()
+	var line_nrm := PackedVector3Array()
+	var line_col := PackedColorArray()
+	_add_line_stripe(line_pos, line_nrm, line_col, 2.0)
+	if not bool(d["closed"]):
+		_add_line_stripe(line_pos, line_nrm, line_col, track_len - 2.0)
 	var troot: Node3D = d["root"]
 	_add_mesh(surf_pos, surf_nrm, surf_col, "TrackSurface", false, troot)
 	_add_mesh(skirt_pos, skirt_nrm, skirt_col, "TrackSkirt", false, troot)
 	_add_mesh(edge_pos, edge_nrm, edge_col, "TrackEdges", true, troot)
 	_add_mesh(stilt_pos, stilt_nrm, stilt_col, "Stilts", false, troot)
-	_build_gantry(2.0, Color(0.15, 0.6, 0.2), "START", troot)
+	_add_mesh(line_pos, line_nrm, line_col, "TrackLine", true, troot)
+	_build_gantry(2.0, "START", troot)
 	if not bool(d["closed"]):
-		_build_gantry(track_len - 2.0, Color(0.7, 0.15, 0.15), "FINISH", troot)
+		_build_gantry(track_len - 2.0, "FINISH", troot)
 
 
 func _add_quad(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorArray,
@@ -2151,7 +2162,22 @@ func _add_mesh(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorAr
 	(parent if parent != null else self).add_child(mi)
 
 
-func _build_gantry(s: float, col: Color, _label: String, parent: Node = null) -> void:
+func _build_gantry(s: float, _label: String, parent: Node = null) -> void:
+	# Fix Pass 27: the overhead BANNER is deleted (owner, run
+	# 22: the green span "pops into view sometimes as you're
+	# swinging" - at the doubled hang station it slabbed
+	# across the sky dead ahead of the dangling driver). The
+	# line itself is now a road-surface stripe (_add_line_
+	# stripe, same s - the lap logic never read the banner).
+	# The POSTS stay, on geometry: they stand at +/-(HALF_
+	# WIDTH + 0.4) at the line's own s - beside the dangling
+	# car, ~81 deg off the forward axis, tops at 4.6 m, below
+	# the crane pivot and in the family of trackside furniture
+	# (the crane post stands taller and stays by design). They
+	# flank the line; nothing spans over it. Stage 57 asserts
+	# both halves: no Gantry child is a span, and the posts'
+	# azimuth from the dangle eye stays in the far periphery
+	# across the sway cone.
 	var fr: Dictionary = _frame_at(s)
 	var p: Vector3 = fr["pos"]
 	var sd: Vector3 = fr["side"]
@@ -2161,8 +2187,43 @@ func _build_gantry(s: float, col: Color, _label: String, parent: Node = null) ->
 	(parent if parent != null else self).add_child(g)
 	_box(g, Vector3(0.35, 4.6, 0.35), p - sd * (HALF_WIDTH + 0.4) + up * 2.3, _mat(Color(0.2, 0.2, 0.22)))
 	_box(g, Vector3(0.35, 4.6, 0.35), p + sd * (HALF_WIDTH + 0.4) + up * 2.3, _mat(Color(0.2, 0.2, 0.22)))
-	var banner := _box(g, Vector3((HALF_WIDTH + 0.4) * 2.0, 0.7, 0.3), p + up * 4.6, _mat_unshaded(col))
-	banner.global_transform = Transform3D(Basis(fr["side"], fr["up"], -fr["tan"]), banner.global_position)
+
+
+# Fix Pass 27: the start/finish line as ROAD PAINT - a
+# chequered stripe across the full width at the line's s,
+# 1.0 m deep (2 rows of 0.5 m), 12 cells of 1.0 m across,
+# lifted the same +0.02 the edge strips ride at so it sits
+# flush on the surface without z-fighting. Built with
+# _add_quad_m in the road mesh family, so it inherits the
+# FP18 winding-correct rendering. Chequer over plain: at
+# racing pace a chequer band strobes black/white across the
+# whole width - unmistakable for a line, where a plain band
+# could read as another surface treatment.
+func _add_line_stripe(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorArray, s_line: float) -> void:
+	var f0: Dictionary = _frame_at(s_line)
+	var f1: Dictionary = _frame_at(s_line + 0.5)
+	var f2: Dictionary = _frame_at(s_line + 1.0)
+	var frames: Array = [f0, f1, f2]
+	var cw: Color = Color(0.92, 0.92, 0.92)
+	var cb: Color = Color(0.04, 0.04, 0.05)
+	for row: int in range(2):
+		var fa: Dictionary = frames[row]
+		var fb: Dictionary = frames[row + 1]
+		var pa: Vector3 = fa["pos"]
+		var pb: Vector3 = fb["pos"]
+		var sa: Vector3 = fa["side"]
+		var sb: Vector3 = fb["side"]
+		var ua: Vector3 = fa["up"]
+		var ub: Vector3 = fb["up"]
+		var nrm: Vector3 = (ua + ub).normalized()
+		for cell: int in range(12):
+			var lat0: float = -HALF_WIDTH + float(cell) * 1.0
+			var lat1: float = lat0 + 1.0
+			var col: Color = cw if (row + cell) % 2 == 0 else cb
+			_add_quad_m(pp, nn, cc,
+				pa + sa * lat0 + ua * 0.02, pa + sa * lat1 + ua * 0.02,
+				pb + sb * lat1 + ub * 0.02, pb + sb * lat0 + ub * 0.02,
+				nrm, col)
 
 
 ## Frame (pos/side/up/tan/bank/curv/gap) at path distance s (float).
