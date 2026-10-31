@@ -61,7 +61,12 @@ VR (Quest):
   steering source in its own right — the fallback in WHEEL steer
   mode, the primary in STICK mode (persisted; hold the right A
   button while hanging to flip it, N on desktop; the DIAG WHEEL
-  line's SRC field names the live source over the mode)
+  line's SRC field names the live source over the mode). Since
+  Fix Pass 30 the wheel is live for the WHOLE hang — grab and
+  steer from the first second of the lift and dial the landing
+  lock during the crane ride, not only at the dangle; an amber
+  centre stripe on the rim, read against the fixed white tick
+  at top centre, shows the lock (stripe over tick = straight)
 - Throttle: right trigger · Brake: left trigger · Boost: right A
   button (while driving) — since Fix Pass 24 the boost is a
   tank (120 units = 4 s, 60 dealt at the start) that racing
@@ -4092,6 +4097,124 @@ this pass: any change to how the car itself drives —
 same tires, same gain curve, same economy. If the
 car feels different, it is because the wheel finally
 stays where you put it.
+
+## Fix Pass 30 — The Wheel Is Live for the Whole Hang + The Centre Gauge
+
+Base: FP29 final (3a3a912). The owner's field report,
+2026-10-31, minutes after the FP29 verdict ("steering
+is much better"): "the steering wheel still doesn't
+work during the first phase of being craned. It
+activates well into the process." Convicted in code:
+the FP13-era gate — the wheel live in DRIVE, in AIR,
+and in the hang ONLY at the dangle — with the same
+dangle term in the FP17 arbitration candidate and the
+FP29 stick poll. During attach and carry the per-hand
+update returned early and cleared the grab. It is the
+drop gate's sibling (FP22 repealed that one under the
+FULL MORON CLAUSE): a physical control never freezes;
+context decides what an action DOES. It survived FP29
+only because that brief was drive-phase semantics.
+
+### What changed
+
+- **The whole hang (Item 1).** All three gates now
+  take MODE_HANG unconditionally. Grab, steer,
+  two-hand line and stick behave in attach and carry
+  exactly as they do at the dangle. The car's heading
+  during attach/carry stays crane-driven — wheel
+  input there is cockpit state only and touches
+  neither the carrier, the sway, nor the release
+  mechanics. And since neither the release nor the
+  landing ever reset wheel_angle, the lock dialled
+  during the ride up is the lock the landing inherits:
+  pre-setting the landing lock on the way up is now a
+  thing the driver can do, from the first second of
+  the lift.
+- **The centre gauge (Item 2).** Interim
+  instrumentation, the owner's words: "The steering
+  wheel needs a centering line until we get the tires
+  looking a little better." A rally-style band wrapped
+  on the rim at its 12 o'clock — 48 mm of arc, proud
+  of the rim tube on every face, in the hub's own
+  unshaded amber — lives INSIDE the spin node, so it
+  rotates with the wheel exactly and its clock
+  position IS the lock readout, in the dangle too. A
+  small near-white tick fixed to the tilt node stands
+  at top centre just off the rim's driver-side face:
+  stripe-vs-tick offset reads as an angle — a gauge
+  pair, not just a stripe. No physics, no input
+  change. (Observed in the proof captures: at full
+  lock the stripe sits at 6 o'clock, below the
+  fallback camera's frame — the inverted spokes carry
+  that read; a glance down finds it in the headset.)
+- **Audit hardening (in-pass conviction).** The
+  first FP30 smoke run passed every check but carried
+  90 engine errors the baseline did not: the dash
+  audit grows every car mesh's AABB by −0.01, and the
+  new tick — 14 mm wide — grows to a negative AABB,
+  which has_point rejects with an error (and a
+  meaningless test: nothing can sit 1 cm inside a
+  14 mm mesh on that axis). The audit now skips
+  degenerate shrinks; every pre-FP30 mesh takes the
+  identical path and the audit's verdicts are
+  unchanged.
+
+### Verification
+
+- Smoke: **ALL 624 CHECKS PASSED** (FP29 baseline
+  re-run this session: 595). API guard: **ALL 71
+  CHECKS PASSED**. New stage 60 (28 checks) stages
+  the whole claim through production paths: grab +
+  steer in ATTACH (+0.50 rad), a rim passenger and
+  the line in attach (+0.30 rad, join jump 0.000°),
+  the grab surviving attach→carry with steering in
+  CARRY (+0.30 rad), the dialled 1.10 rad crossing
+  the release bit-exact and the landing at 1.1000,
+  the stick at rate in attach, and the gauge's
+  parentage + 1:1 tracking (stripe at wheel_angle −
+  PI/2, r 0.205 m, tick pinned, at four locks). Stage
+  34's FP13-era expectation ("the wheel does not grab
+  during transport") is REPLACED and flagged in
+  place: the probe now asserts grab + steer in
+  transport. Census diff vs the baseline, check line
+  by check line: the only differences are that
+  flagged replacement, stage 60's additions, and
+  stage 46's printed telemetry ring count 223 → 225
+  (the amended probe's WHEEL LAT/REL events entering
+  the ring; the assertion unchanged — the knock-on
+  class FP29 documented for its own stage-32
+  amendment). Every other baseline line identical.
+- Render proof: **162 of 163 checks passed; the one
+  failure is the pre-existing sandbox hub-reach
+  artifact ("wheel hub 0.31 m below the eye"),
+  identical in the FP29 baseline proof this session
+  (151 of 152, same single failure).** Captures
+  28–30 are the gauge's portraits — the dangle at
+  centre, quarter lock and full lock from the eye
+  anchor — with the stripe's displacement off the
+  tick asserted equal to the staged lock (measured
+  +0.00 / +0.79 / −3.14 rad).
+- UNVERIFIED (XR layer, by design): whether dialling
+  the lock during the ride feels right; the stripe
+  and tick's legibility at cockpit distance in the
+  headset (the sandbox's captures are llvmpipe
+  structure evidence, not colour truth); whether the
+  gauge earns its keep until the tires read better.
+
+### What you're judging
+
+From the first second of the lift, the wheel is
+yours: grab it on the pad, steer it on the ride up,
+and set the landing lock while the crane is still
+slewing — the drop lands on the angle you dialled,
+not the one you had time for at the dangle. And the
+amber stripe against the white tick is your centre
+reference while the tires are still hard to read:
+stripe over tick is a straight wheel, wherever the
+stripe sits is where your lock is. Not in this pass:
+any change to the crane, the car, or the drive — if
+the ride feels different, it is because your hands
+are allowed on the wheel for all of it now.
 
 ## Quest export — status
 
