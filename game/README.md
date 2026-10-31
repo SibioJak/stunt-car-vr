@@ -3700,6 +3700,154 @@ stack — structure and geometry only, not colour truth.
 A finish line you cross, not one that falls across your
 sky. Nothing else in this pass.
 
+## Fix Pass 28 — The Feature Lab
+
+Base: FP27 final (fa48206). The owner's method call,
+2026-10-30 19:26 CDT, after the sector plan for Track 01
+died ("scrs tracks are probably no good for our
+physics"): PROTOTYPE-FIRST. Candidate features are built
+as test pieces on a lab course, driven and judged one at
+a time; Track 01 gets assembled only from what proves
+out. This pass builds the lab. It does not build
+Track 01.
+
+### What changed
+
+- **A third track: `lab`** — an open 2,684 m course in
+  the roster (circuit → ribbon → lab → circuit, on the
+  dash TRK button and V), staged in empty country well
+  clear of the other two tracks. A 90 m head flat carries
+  the Drop Start; eight pieces follow in sequence, each
+  approached from its own flat, unbanked entry, each
+  wearing a roadside board — PIECE 1 … PIECE 8 — so a
+  verdict names a piece, not a vibe. The lab wears the
+  born-in section rhythm: transverse section stripes
+  every 15 m across the full width, plus the FP27 dashed
+  edges and chequer start paint. Drop Start at the head
+  and crane recovery throughout are the FP26 furniture
+  at the doubled height, unchanged (the staged recovery
+  dangle floats the car 2.05 m over the road, origin
+  height — wheels at the doubled 1.70 m clearance).
+- **The circuit and the ribbon are not touched.** Their
+  build code paths are byte-identical; the smoke census
+  below is the proof.
+- **The FP24 audit learned to itemise**: flight records
+  (start s, seconds, payout) are now kept alongside the
+  totals, so the audit reports payable air PER PIECE
+  (stage 58's table). Stage 54's totals and prints are
+  unchanged.
+- **One old stage amended, flagged**: stage 11a's
+  held-grip sweep fired the TRK button once and expected
+  the circuit; with a third track in the cycle that fire
+  now lands on the lab. The sweep now proves the lab is
+  the cycle's middle stop, releases the grip (the FP9
+  latch clears only on release), and fires again to land
+  on the circuit — the stage's original evidence line is
+  unchanged, and it now covers the lab's roster seat too.
+
+### The eight pieces (stage 58 drives each one; audit = one continuous lab lap)
+
+| # | Piece | Span (m) | Entry | Geometry | Measured behaviour (staged) | Payable air / lap |
+|---|-------|----------|-------|----------|------------------------------|-------------------|
+| 1 | Drumbeat rows | 90–564 | 24 m/s pinned | Three hump rows: sharp-small (7°), the ribbon row (11°, the FP21 control), sharp-tall (13°) | Rows fly 5 / 6 / 4 times, totalling 2.71 / 5.02 / 4.51 s; primaries run 0.64–1.10 s. **The 0.1–0.4 s band is populated by the rebound second flights (0.18–0.33 s), not the primaries** — on this car the drumbeat lives in the rebound | 13.52 s (135 units) |
+| 2 | The flair, formalised | 624–873 | pursuit | Two banked sweepers whose banks unwind across the exit (R60/+26° mild; R45/+34°, the run-18 spec) | The unwind lifts the falling-side wheels only — corner air [FL 0, FR 12, RL 0, RR 13] mild, [0, 4, 0, 7] run-18 — never the whole car | 0.00 s — two-wheel air is not flight; the flair pays nothing |
+| 3 | Crest launches | 928–1248 | 30 m/s pinned | Three launch ramps, +8° / +14° / +20°, slope-matched landings | Flights 1.54 / 2.28 / 2.99 s; launch pitch +7.2° / +12.9° / +18.8°; **peak pitch equals launch pitch in every flight** — the flight model only ever drives the nose down (to ≈ launch − 28°), so this car cannot pitch over, however violent the crest. Tumble country is a model question, not a track question | 8.07 s (81 units) |
+| 4 | The chasm | 1383–1451 | 30 m/s pinned | 28 m gap (s 1384–1412), +10° launch lip (the ribbon gap's proven shape, stretched), −3.4° landing side | Crossed CLEAN at the pinned 30: 0.97 s gap flight in both the piece drive and the audit lap. Feasibility is not marginal at the stated entry | 0.97 s (10 units) |
+| 5 | Off-camber S | 1511–1717 | 24 m/s (see note) | Two R≈70 corners, bank ∓10° ADVERSE | The adverse bank spends g·sin10° ≈ 1.7 of the 11.0 grip budget: at-limit entry is ≈25.5 m/s by the arithmetic. Staged at a capped pursuit 24 (demand 9.9): survives, \|lat\| ≤ 1.05, real slip (peak 0.26). The staged speed law is curvature-only and cannot know the bank is adverse; pin fixtures can't stage it at all (a pin zeroes the slip velocity every frame) — the limit is the owner's to find | 0.00 s (no air — attention only, as designed) |
+| 6 | Compression → rebound | 1772–1844 | 28 m/s pinned | −10° dip into a +14° crest, FP14-tuned | Dip flight 1.06 s → rebound 0.26 s; crest flight 1.44 s; the dip compresses the car to −0.195 m heave. The crest's own rebound second flight (0.84 s, 0.57× — the film band) fired in this pass's probe and is phase-sensitive in staging (stage 51's documented behaviour): present some runs, absent others | 3.64 s (36 units) |
+| 7 | Edge slalom | 1899–2139 | 24 m/s | Flat; marker blocks ON the edge line (lat ±5.85) every 30 m | Parked on either edge line the car stays supported at lat ±6.38 and rolls toward the void (0.46 / −0.16). (First form probed with markers at ±4.7: a car centred on one never straddles anything — outside wheels 0.5 m inside the edge, fully supported. The markers moved to the edge line.) | 0.00 s |
+| 8 | The taxed straight | 2174–2624 | 40 m/s pinned | 225 m of ±3° swells, then 225 m of ±6° at a sharpened crest rate | The gentle half only heaves — zero flight at 40. The sharp half hops: 5 flights, 4.18 s in the piece drive. No cruising even on the spend straight (Law 1) | 4.54 s (45 units) |
+
+Lab lap totals (audit): 32.37 s payable air, 324 units
+of income against the 60-unit start stake —
+the lab is rich by design; it is a tasting menu, not a
+race. The unattributed remainder is 1.62 s (crest 3's
+rebound second flight starts ~97 m past piece 3's
+recorded end, in the long settle — see below). Economy
+constants are unchanged (capacity 120, stake 60, 10/s).
+
+### In-pass redesigns (probed first forms that failed, and what replaced them)
+
+- **Piece 1's bracket**: the first form bracketed
+  amplitude at sinusoidal gentleness — the gentle row
+  never unloaded at all (v²κ ≈ 8.9 < g) and no primary
+  anywhere landed in the 0.1–0.4 s band. The bracket now
+  varies sharpness (walk rate), and the band finding
+  above is the measured result.
+- **Piece 5's radius**: R≈55 at ∓10° adverse demanded
+  12.2 > 11.0 at the staged entry — the staged driver
+  slid off and hung. R≈70 brings the demand to 9.9 at 24
+  with the limit entry at ≈25.5.
+- **Piece 8's second half**: sinusoidal ±6° at the
+  gentle rate measured ZERO air at 40 (v²κ ≈ 7.5 — heave
+  only). The crest rate doubled (κ ≈ 0.0095); it hops.
+- **Piece 4's entry, twice over**: the settle after
+  piece 3 first returned the −20° landing pitch at the
+  default rate — still −3.2° sixteen metres before the
+  lip, the lab's one un-flat entry; the return is now
+  explicit (0.020). Then the audit lap convicted the
+  settle's LENGTH: crest 3's flight lands ~52 m past
+  piece 3's recorded end and its rebound carries ~45 m
+  more, so on the 55 m settle the lap was still
+  mid-rebound when the lip arrived, separated at the
+  lip's base with a flat pitch, and dropped into the
+  chasm. The settle is 125 m: touchdown, rebound, and a
+  settled ground run all complete before the lip. The
+  pieces must not overlap when driven continuously.
+- **The audit's chasm window**: stage 54's fast+boost
+  idiom is speed-managed — it reads the lip's κ in its
+  46 m lookahead, caps itself at 24 and brakes toward
+  it, arriving near 17 m/s and dropping in. The window
+  now drives the piece's stated entry (pinned 30), as
+  the piece drive proves. The ribbon's 24 m gap never
+  noticed the idiom's cap; a 28 m chasm does.
+
+### Verification
+
+- Smoke: **ALL 559 CHECKS PASSED** (was 515; +44 =
+  stage 58's 43 and stage 11a's new middle-stop line).
+  API guard: **ALL 70 CHECKS PASSED**. Zero script
+  errors.
+- Census: every circuit/ribbon evidence line is
+  identical to the FP27 baseline except two run-variance
+  lines (stage 9's wall-clock frame timing; stage 46's
+  telemetry event count 218 → 220, both passing — the
+  phase-sensitive rebound variance documented since
+  FP21) and the additions above. No circuit or ribbon
+  physics, geometry, or behaviour changed.
+- Render proof: 151 of 152 checks passed, incl.
+  capture 27 (lab_drumbeat_view.png — the PIECE 1
+  approach: board on the right, section stripe in the
+  foreground, the first row ahead). The one failure is
+  the pre-existing sandbox wheel-hub reach artifact,
+  present identically in the FP27 baseline proof on
+  pristine FP26 code — not an FP28 regression.
+  Captures render through the sandbox's Compatibility /
+  llvmpipe pipeline: structure and geometry evidence,
+  NOT colour truth. The board amber and stripe grey are
+  the device's to judge.
+
+### What you're judging
+
+The lab, one piece at a time (TRK button or V cycles to
+it). Eight pieces, each from the same clean entry:
+which does the car love? Piece 1: three drumbeat rows —
+which gentleness sings, and does the rebound-band
+finding hold in your hands? Piece 2: the flair at two
+severities. Piece 3: three crest launches — and the
+standing question behind them (the staged car cannot
+pitch over; if you still feel it SHOULD at the violent
+one, that's the flight-model conversation, now with
+numbers). Piece 4: the chasm at 30. Piece 5: the
+off-camber S — its limit sits at ~25.5, find it. Piece
+6: the dip-and-crest pair. Piece 7: threading the edge
+markers. Piece 8: the taxed straight at boost pace.
+Strike the dead, keep the proven — Track 01 is assembled
+from the survivors only. Not in this pass: Track 01
+itself, the desert setting's dressing (the lab is
+deliberately bare country), any physics or economy
+change.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
