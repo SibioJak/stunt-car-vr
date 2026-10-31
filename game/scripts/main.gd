@@ -1032,6 +1032,11 @@ var car_body: Node3D
 var nose_mi: MeshInstance3D
 var wheel_node: Node3D # tilt node (stood-up wheel plane)
 var wheel_spin: Node3D # spin node inside it (rotates about the wheel axis)
+# Fix Pass 30 (Item 2): the centre gauge pair - the stripe
+# rides the spin node (its clock position IS the lock), the
+# tick is fixed to the tilt node at top centre.
+var wheel_centre_stripe: MeshInstance3D
+var wheel_centre_tick: MeshInstance3D
 var lean_needle: MeshInstance3D
 # Fix Pass 15 (Item 2): the crane rig's nodes (built once,
 # posed per hang by _place_crane, hidden outside MODE_HANG).
@@ -2983,6 +2988,28 @@ func _build_cockpit() -> void:
 	hub.mesh = hubm
 	hub.material_override = _mat_unshaded(Color(1.0, 0.75, 0.15))
 	wheel_spin.add_child(hub)
+	# Fix Pass 30 (Item 2): THE CENTRE GAUGE - interim
+	# instrumentation, the owner's words: "The steering wheel
+	# needs a centering line until we get the tires looking a
+	# little better." A rally-style band wrapped on the rim at
+	# its 12 o'clock (the top of the rim is spin-local -Z: its
+	# wheel-plane angle is -PI/2 at wheel_angle 0), INSIDE the
+	# spin node, so it rotates with the wheel exactly and its
+	# clock position IS the lock readout - in the dangle too,
+	# where FP30 makes the wheel live for dialling the landing
+	# lock. The band: 48 mm of arc, sized proud of the rim
+	# tube (40 mm) on every face so it reads as a wrap, in the
+	# hub's own unshaded amber - the wheel's existing accent,
+	# no new palette. Its partner is a FIXED tick on the tilt
+	# node (never spins) standing just off the rim's top on
+	# the driver's side, near-white: stripe-vs-tick offset
+	# reads as an angle, a gauge pair, not just a stripe.
+	wheel_centre_stripe = _box(wheel_spin, Vector3(0.048, 0.046, 0.044),
+		Vector3(0.0, 0.0, -0.205), _mat_unshaded(Color(1.0, 0.75, 0.15)))
+	wheel_centre_stripe.name = "CentreStripe"
+	wheel_centre_tick = _box(wheel_node, Vector3(0.014, 0.032, 0.030),
+		Vector3(0.0, 0.042, -0.205), _mat_unshaded(Color(0.95, 0.95, 0.97)))
+	wheel_centre_tick.name = "CentreTick"
 	# Fix Pass 13 (Item 1): the three prep switches that lived
 	# on the dash top are DELETED with the prep sequence - the
 	# dash top is bare now. The dash controls that remain are
@@ -3913,7 +3940,8 @@ func _poll_stick_steer(delta: float) -> void:
 	# the stick centres (a rate, not a position: there is no
 	# spring back, because there is no spring). It substitutes
 	# for the wheel exactly where the wheel is live (drive,
-	# air, the dangle - the pre-dialled lock included) and
+	# air, the whole hang - the pre-dialled lock included;
+	# Fix Pass 30: the hang term is MODE_HANG itself) and
 	# only while NO hand grips the wheel: a grab seizes
 	# authority mid-frame (this poll runs after the grabs in
 	# _poll_inputs) and releasing hands it back with the
@@ -3926,7 +3954,7 @@ func _poll_stick_steer(delta: float) -> void:
 	# that answers while your hands are off the wheel, in
 	# STICK mode it is simply how you steer.
 	var wheel_live29: bool = mode == MODE_DRIVE or mode == MODE_AIR \
-		or (mode == MODE_HANG and hang_phase == "dangle")
+		or mode == MODE_HANG
 	if not wheel_live29 or grab_hand != "":
 		return
 	var sx29: float = _stick_vec("R", hand_ctrl["R"]).x
@@ -4624,7 +4652,7 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 		if int(cd17[0]) >= 0:
 			d_dash17 = float(cd17[1])
 		var wl17: bool = mode == MODE_DRIVE or mode == MODE_AIR \
-			or (mode == MODE_HANG and hang_phase == "dangle")
+			or mode == MODE_HANG
 		if wl17 and grab_hand == "":
 			d_wheel17 = _seg_point_dist(prev, pos, car.global_transform * _wheel_hub_local())
 			if d_wheel17 >= WHEEL_GRAB_RADIUS:
@@ -4737,10 +4765,18 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	# Fix Pass 13 (Item 3): the wheel is also live in the
 	# DANGLE - the driver dials in the landing lock while the
 	# car hangs, and _do_release/_land never reset wheel_angle,
-	# so the lock carries into the drive. Transport does not
-	# arm it: the gate is the dangle phase, not MODE_HANG alone.
+	# so the lock carries into the drive.
+	# Fix Pass 30 (Item 1): the wheel is live for the WHOLE
+	# HANG - attach and carry included. The FP13 phase term
+	# was the drop gate's sibling (FP22 repealed that one
+	# under the FULL MORON CLAUSE): a physical control never
+	# freezes; context decides what an action DOES. Here the
+	# wheel's turns during attach/carry are cockpit state
+	# only - the carrier owns the car's heading until the
+	# release - and the lock dialled on the ride up is
+	# precisely the one the landing inherits.
 	var wheel_live: bool = mode == MODE_DRIVE or mode == MODE_AIR \
-		or (mode == MODE_HANG and hang_phase == "dangle")
+		or mode == MODE_HANG
 	if not wheel_live:
 		if grab_hand == hand:
 			grab_hand = ""
@@ -7784,7 +7820,16 @@ func debug_dash_ctl_audit() -> Dictionary:
 					if own.has(other):
 						continue
 					var la: Vector3 = other.global_transform.affine_inverse() * wp
-					if other.get_aabb().grow(-0.01).has_point(la): # >1 cm inside on every axis - a base seated in its mount is not buried
+					var oa: AABB = other.get_aabb().grow(-0.01)
+					# Fix Pass 30: a mesh thinner than the 2 cm
+					# shrink on some axis (Item 2's centre tick
+					# is 14 mm wide) grows to a NEGATIVE AABB,
+					# and has_point on one is an engine error -
+					# and meaningless anyway: nothing can sit
+					# 1 cm inside a 14 mm mesh on that axis.
+					# Skip degenerate shrinks; every pre-FP30
+					# mesh takes the identical path as before.
+					if oa.size.x > 0.0 and oa.size.y > 0.0 and oa.size.z > 0.0 and oa.has_point(la): # >1 cm inside on every axis - a base seated in its mount is not buried
 						violations.append("%s mesh point buried in %s" % [
 							dash_ctl_kinds[i], other.name])
 						break
