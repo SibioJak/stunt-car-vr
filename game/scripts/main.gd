@@ -753,6 +753,7 @@ var test_flask_accel: Vector3 = Vector3.ZERO
 # debug_audit_begin / _pay_for_landing / _enter_air). All
 # inert unless a test arms it - the shipped game never does.
 var audit_on: bool = false
+var audit_flights: Array = [] # Fix Pass 28: per-flight records [start_s, air_s, gross_units] - the piece-resolution view of the same bookings the sectors aggregate
 var audit_sectors: Array[float] = []
 var audit_income: float = 0.0
 var audit_air_s: float = 0.0
@@ -1278,6 +1279,7 @@ func _ready() -> void:
 	_build_environment()
 	track_data["ribbon"] = _build_ribbon()
 	track_data["circuit"] = _build_circuit()
+	track_data["lab"] = _build_lab() # Fix Pass 28: the feature lab
 	_build_car()
 	_build_crane()
 	_build_rig()
@@ -1785,6 +1787,282 @@ func _build_circuit() -> Dictionary:
 
 
 
+func _build_lab() -> Dictionary:
+	# Fix Pass 28: THE FEATURE LAB. The owner's method call
+	# (2026-10-30): "prototype-first - candidate features as
+	# test pieces, assemble the track from what proves out."
+	# A dedicated open course stringing EIGHT candidate
+	# pieces in sequence, each approached from a clean flat
+	# entry so every piece is judged from the same state,
+	# each carrying a roadside number board (PIECE 1..8) so
+	# verdicts map to pieces. Every piece is sized from THIS
+	# car's measured envelope - top speed 48 m/s, lateral
+	# grip limit 11.0 m/s^2, the staged ~1.2 s / ~36 m flight
+	# at 30 m/s - never from SCR's shapes, which encode a
+	# different car (owner: "scrs tracks are probably no
+	# good for our physics"). The circuit and the test
+	# ribbon are untouched; their censuses must not move.
+	# Piece spans land in features["pieces"] as
+	# [name, s0, s1, entry_speed] - stage 58 drives and
+	# audits against them, and the README's per-piece table
+	# is printed from the same numbers.
+	var root := Node3D.new()
+	root.name = "TrackLab"
+	add_child(root)
+	b_pts = []
+	b_tan = []
+	b_bank = []
+	b_curv = []
+	b_gap = []
+	_gen_pos = Vector3(800.0, 30.0, 600.0)
+	_gen_yaw = 0.0
+	_gen_phi = 0.0
+	_gen_bank = 0.0
+	_gen_append(false, 0.0)
+	var pieces: Array = []
+	# HEAD: the Drop Start flat (the drop station is s 2 on
+	# every track; 90 m of flat runup and settle).
+	_walk(90, 0.0, 0.0, 0.0, false)
+	# --- PIECE 1: DRUMBEAT ROWS x3 gentlenesses -----------
+	# Flat-based hump rows (the FP8 template: climb in at
+	# +A, over the top to -A, flatten) at three shapes
+	# bracketing the FP21 finding. The middle row IS the
+	# ribbon's spec (A=11, top rate 0.021, kv ~0.020 - the
+	# control: it flies ~1 s hops at cruise, measured). The
+	# band the piece hunts (0.1-0.4 s) lives at SHARP SMALL
+	# humps - a short, strong top curvature unloads briefly
+	# where a spread one arcs long - so the gentle leg is
+	# small and sharp (A=7 over a 9 m top, kv ~0.027) and
+	# the strong leg is tall and sharper still (A=13, kv
+	# ~0.045). (First form, probed and replaced in-pass: an
+	# amplitude-only bracket - the gentle leg's kv ~0.016
+	# never unloaded at 24 (v^2 kv ~8.9 < g) and the spread
+	# rows all flew ~1 s regardless of amplitude.) Four
+	# humps per row, a 25 m settle between rows.
+	var p1_s0: float = float(b_pts.size() - 1)
+	var p1_rows: Array = []
+	var row_specs: Array = [
+		[7.0, 10, 0.020, 9, 0.027, 10],
+		[11.0, 13, 0.016, 19, 0.021, 13],
+		[13.0, 11, 0.024, 10, 0.045, 11]]
+	for ri: int in row_specs.size():
+		var rs: Array = row_specs[ri]
+		var row_s0: float = float(b_pts.size() - 1)
+		for hump: int in 4:
+			_walk(int(rs[1]), 0.0, deg_to_rad(float(rs[0])), 0.0, false, float(rs[2]))
+			_walk(int(rs[3]), 0.0, deg_to_rad(-float(rs[0])), 0.0, false, float(rs[4]))
+			_walk(int(rs[5]), 0.0, 0.0, 0.0, false, float(rs[2]))
+		p1_rows.append([row_s0, float(b_pts.size() - 1)])
+		if ri < row_specs.size() - 1:
+			_walk(25, 0.0, 0.0, 0.0, false)
+	pieces.append(["P1 DRUMBEAT ROWS", p1_s0, float(b_pts.size() - 1), 24.0])
+	_walk(60, 0.0, 0.0, 0.0, false)
+	# --- PIECE 2: THE FLAIR, FORMALISED x2 severities -----
+	# The run-18 discovery as FP21 convicted it: at a banked
+	# sweeper's exit the bank unwinds, the falling side's
+	# surface drops away under its wheels (patch curvature
+	# the centreline cannot see), and that side catches air
+	# while the held side stays loaded. Two left sweepers
+	# with the house shaped unwind (3 at 0.03, then 0.075):
+	# (a) MILD - R~60, bank 26 (circuit A's bank on a
+	# tighter radius); (b) RUN-18 - R~45, bank 34 (the
+	# ribbon corner's bank). The falling side is the RIGHT.
+	var p2_s0: float = float(b_pts.size() - 1)
+	_walk(94, deg_to_rad(90.0) / 94.0, 0.0, deg_to_rad(26.0), false)
+	_walk(3, 0.0, 0.0, 0.0, false, 0.006, 0.03)
+	_walk(17, 0.0, 0.0, 0.0, false, 0.006, 0.075)
+	var p2_mild: Array = [p2_s0, float(b_pts.size() - 1)]
+	_walk(45, 0.0, 0.0, 0.0, false)
+	var p2b_s0: float = float(b_pts.size() - 1)
+	_walk(70, deg_to_rad(90.0) / 70.0, 0.0, deg_to_rad(34.0), false)
+	_walk(3, 0.0, 0.0, 0.0, false, 0.006, 0.03)
+	_walk(17, 0.0, 0.0, 0.0, false, 0.006, 0.075)
+	var p2_run18: Array = [p2b_s0, float(b_pts.size() - 1)]
+	pieces.append(["P2 THE FLAIR", p2_s0, float(b_pts.size() - 1), 24.0])
+	_walk(55, 0.0, 0.0, 0.0, false)
+	# --- PIECE 3: CREST LAUNCHES x3 steepnesses -----------
+	# The tumble country, measured: three crests launching
+	# at +8 / +14 / +20 deg, each top swept sharp (phi rate
+	# 0.055) so the launch angle is the angle, each landing
+	# slope-matched on its own descent. Entry pinned 30.
+	# Stage 58 records flight time and the body's pitch
+	# story per crest - where the car starts wanting to go
+	# over is data for the flight-model question.
+	var p3_s0: float = float(b_pts.size() - 1)
+	var p3_crests: Array = []
+	for li: int in 3:
+		var lang: float = [8.0, 14.0, 20.0][li]
+		var crest_s0: float = float(b_pts.size() - 1)
+		_walk(40, 0.0, deg_to_rad(lang), 0.0, false, 0.030)
+		_walk(40, 0.0, deg_to_rad(-lang), 0.0, false, 0.055)
+		p3_crests.append([crest_s0, float(b_pts.size() - 1)])
+		if li < 2:
+			_walk(40, 0.0, 0.0, 0.0, false, 0.020)
+	pieces.append(["P3 CREST LAUNCHES", p3_s0, float(b_pts.size() - 1), 30.0])
+	# The settle must be FLAT before the chasm's lip: at
+	# the default pitch rate the -20 deg landing tail is
+	# still descending 16 m out from the lip (measured
+	# -3.2 deg there, -8.7 at 32 m), so piece 4 would be
+	# entered off a slope like no other piece. An explicit
+	# 0.020 return completes the pitch in ~18 steps and
+	# leaves true flat ahead of the lip (FP28 in-pass
+	# fix; nothing downstream moves).
+	# The settle is LONG (125 m) for a measured reason:
+	# crest 3's flight at the pinned 30 lands ~52 m past
+	# the piece's recorded end, and its rebound second
+	# flight carries ~45 m further - on the first form's
+	# 55 m settle the continuous audit lap touched down
+	# at s 1301 and was still mid-rebound when the lip
+	# arrived at 1303, separated at the lip's base with a
+	# flat pitch, and dropped into the chasm (stage 58's
+	# audit, in-pass). The pieces must not overlap when
+	# driven continuously: touchdown, rebound, and a
+	# settled ground run all complete before the lip.
+	_walk(125, 0.0, 0.0, 0.0, false, 0.020)
+	# --- PIECE 4: THE MEASURED CHASM ----------------------
+	# One slope-matched gap at the staged flight envelope:
+	# the ribbon gap's proven shape (lip +10 shaped, gap
+	# phi +2, landing -3.4) stretched to 28 m of air. At the
+	# 30 m/s entry the ballistic clears ~35-42 m before the
+	# landing straight falls to meet it (the feasibility
+	# arithmetic is in the README; stage 58 proves the
+	# crossing at the pinned entry before it ships).
+	_walk(2, 0.0, deg_to_rad(10.0), 0.0, false, 0.012, 0.10)
+	_walk(8, 0.0, deg_to_rad(10.0), 0.0, false, 0.034, 0.10)
+	var p4_s0: float = float(b_pts.size() - 1)
+	var lab_gap_s0: float = float(b_pts.size())
+	_walk(28, 0.0, deg_to_rad(2.0), 0.0, true, 0.020)
+	var lab_gap_s1: float = float(b_pts.size())
+	_walk(40, 0.0, deg_to_rad(-3.4), 0.0, false, 0.020)
+	pieces.append(["P4 THE CHASM", p4_s0, float(b_pts.size() - 1), 30.0])
+	_walk(60, 0.0, 0.0, 0.0, false)
+	# --- PIECE 5: OFF-CAMBER S ----------------------------
+	# Law 1's proof: no air at all, attention only. Two
+	# R~70 corners (70 deg each) at ADVERSE bank - the
+	# surface leans OUT of the turn, adding ~1.7 m/s^2 to
+	# the lateral demand at 24 m/s (v^2/R = 8.2 + 1.7 =
+	# 9.9 against the 11.0 limit): at the limit's edge,
+	# sliding, survivable at the pursuit pace. (First form
+	# probed and replaced in-pass: R55 summed to 12.2 -
+	# over the limit - and the speed-managed pursuit,
+	# which caps by curvature alone and cannot know the
+	# bank is adverse, slid off the outside into a hang.)
+	# Right then left, an 18 m link between, bank unwound
+	# on the exits.
+	var p5_s0: float = float(b_pts.size() - 1)
+	_walk(85, -deg_to_rad(70.0) / 85.0, 0.0, deg_to_rad(10.0), false, 0.006, 0.020)
+	_walk(18, 0.0, 0.0, 0.0, false, 0.006, 0.060)
+	_walk(85, deg_to_rad(70.0) / 85.0, 0.0, deg_to_rad(-10.0), false, 0.006, 0.020)
+	_walk(18, 0.0, 0.0, 0.0, false, 0.006, 0.060)
+	pieces.append(["P5 OFF-CAMBER S", p5_s0, float(b_pts.size() - 1), 24.0])
+	_walk(55, 0.0, 0.0, 0.0, false)
+	# --- PIECE 6: COMPRESSION -> REBOUND ------------------
+	# A dip-and-crest pair tuned to FP14's rebound: fall
+	# -14 into a 10 m valley (both transitions concave -
+	# the springs load), climb +14 out, and crest off to
+	# -8 sharp (0.045) so the stored energy and the crest
+	# unload arrive together: land, compress, second
+	# flight by design. Entry pinned 28.
+	var p6_s0: float = float(b_pts.size() - 1)
+	_walk(25, 0.0, deg_to_rad(-14.0), 0.0, false, 0.030)
+	_walk(10, 0.0, 0.0, 0.0, false, 0.030)
+	_walk(25, 0.0, deg_to_rad(14.0), 0.0, false, 0.030)
+	_walk(12, 0.0, deg_to_rad(-8.0), 0.0, false, 0.045)
+	pieces.append(["P6 COMPRESSION-REBOUND", p6_s0, float(b_pts.size() - 1), 28.0])
+	_walk(30, 0.0, 0.0, 0.0, false, 0.020)
+	_walk(25, 0.0, 0.0, 0.0, false)
+	# --- PIECE 7: EDGE SLALOM -----------------------------
+	# 240 m of flat with marker blocks alternating ON the
+	# edge line (lat +/-5.85) every 30 m: thread a marker
+	# closely and the outside wheels ride into the
+	# straddle zone (support fades past the edge, fully
+	# gone 1.17 m past it) - the straddle physics as
+	# line-choice gameplay. (First form probed in-pass:
+	# markers at +/-4.7 never engaged the straddle at all
+	# - a car centred on one keeps its outside wheels
+	# 0.5 m inside the edge, fully supported.) The
+	# markers themselves are furniture (see _build_lab_
+	# furniture); the road is plain flat.
+	var p7_s0: float = float(b_pts.size() - 1)
+	_walk(240, 0.0, 0.0, 0.0, false)
+	pieces.append(["P7 EDGE SLALOM", p7_s0, float(b_pts.size() - 1), 24.0])
+	_walk(35, 0.0, 0.0, 0.0, false)
+	# --- PIECE 8: THE TAXED STRAIGHT ----------------------
+	# Law 1 on the spend straight: 225 m of swells at
+	# +/-3 deg, then 225 m at +/-6 deg, 90 m wavelength.
+	# Boost country (audit window pins 40) that still
+	# pitches and heaves under the driver - no cruising.
+	# The second half's phi rate is doubled (0.0095): a
+	# sinusoidal +/-6 at 0.0047 measured ZERO air at 40 in
+	# the in-pass probe (v^2 kv ~7.5 - heave only); the
+	# sharpened crests (kv ~0.0095, v^2 kv ~15) hop.
+	var p8_s0: float = float(b_pts.size() - 1)
+	for k8: int in 5:
+		_walk(45, 0.0, deg_to_rad(3.0 if k8 % 2 == 0 else -3.0), 0.0, false, 0.0024)
+	for k8b: int in 5:
+		_walk(45, 0.0, deg_to_rad(-6.0 if k8b % 2 == 0 else 6.0), 0.0, false, 0.0095)
+	pieces.append(["P8 TAXED STRAIGHT", p8_s0, float(b_pts.size() - 1), 40.0])
+	_walk(60, 0.0, 0.0, 0.0, false)
+	var feats: Dictionary = {
+		"gap_s0": lab_gap_s0, "gap_s1": lab_gap_s1,
+		"gap2_s0": lab_gap_s0, "gap2_s1": lab_gap_s1,
+		"ext_s0": -1.0, "sweeper_s0": -1.0, "sweeper_s1": -1.0,
+		"stairs_s0": -1.0, "stairs_s1": -1.0,
+		"pieces": pieces,
+		"subs": {"p1_rows": p1_rows, "p2_mild": p2_mild,
+			"p2_run18": p2_run18, "p3_crests": p3_crests}}
+	var d: Dictionary = _finalize_track(false, feats)
+	d["root"] = root
+	d["sections"] = true
+	_activate_track(d)
+	_build_track_meshes(d)
+	_build_lab_furniture(root, pieces)
+	return d
+
+
+func _build_lab_furniture(root: Node3D, pieces: Array) -> void:
+	# Fix Pass 28: the lab's furniture - one number board
+	# per piece at its entry (the verdict map), and piece
+	# 7's slalom markers. Runs with the lab ACTIVE (the
+	# builder's order), so _frame_at reads the lab's spine.
+	# Boards stand on the RIGHT at +(HALF_WIDTH + 1.7): a
+	# post and a billboarded Label3D in the state label's
+	# amber - billboarded so the number reads from the
+	# driver's seat at any approach angle, on any heading
+	# the course has turned to by then.
+	for pi: int in pieces.size():
+		var s_b: float = float(pieces[pi][1]) - 2.0
+		var frb: Dictionary = _frame_at(s_b)
+		var base: Vector3 = Vector3(frb["pos"]) + Vector3(frb["side"]) * (HALF_WIDTH + 1.7)
+		var up: Vector3 = frb["up"]
+		var bnode := Node3D.new()
+		bnode.name = "PieceBoard%d" % (pi + 1)
+		root.add_child(bnode)
+		_box(bnode, Vector3(0.22, 3.2, 0.22), base + up * 1.6, _mat(Color(0.2, 0.2, 0.22)))
+		var lab := Label3D.new()
+		lab.name = "PieceLabel"
+		lab.text = "PIECE %d" % (pi + 1)
+		lab.font_size = 96
+		lab.pixel_size = 0.0075
+		lab.modulate = Color(1.0, 0.85, 0.2)
+		lab.outline_size = 12
+		lab.outline_modulate = Color(0.05, 0.05, 0.06)
+		lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		lab.position = base + up * 3.7
+		bnode.add_child(lab)
+	# Piece 7's markers: bright blocks ON the surface at
+	# the edge line (lat +/-5.85), alternating every 30 m
+	# from 15 m in - threading one puts the outside
+	# wheels on the straddle fade.
+	var p7: Array = pieces[6]
+	for mk: int in 8:
+		var s_m: float = float(p7[1]) + 15.0 + float(mk) * 30.0
+		var frm: Dictionary = _frame_at(s_m)
+		var lat_m: float = 5.85 if mk % 2 == 0 else -5.85
+		var pos_m: Vector3 = Vector3(frm["pos"]) + Vector3(frm["side"]) * lat_m + Vector3(frm["up"]) * 0.31
+		_box(root, Vector3(0.55, 0.6, 0.55), pos_m, _mat_unshaded(Color(1.0, 0.72, 0.10)), "SlalomMarker%d" % mk)
+
+
 func _project_wide_s(pos: Vector3) -> float:
 	# Whole-track nearest sample (coarse then refined) - used
 	# when the crane needs a main-track fall origin with no
@@ -1959,6 +2237,14 @@ func _set_track(tname: String) -> void:
 	_update_panel()
 
 
+func _cycle_track() -> void:
+	# Fix Pass 28: the purple button / V key cycles the full
+	# roster - circuit -> ribbon -> lab -> circuit (FP10's
+	# two-way toggle, extended for the feature lab).
+	var order: Array[String] = ["circuit", "ribbon", "lab"]
+	_set_track(order[(order.find(active_track) + 1) % order.size()])
+
+
 func _build_track_meshes(d: Dictionary) -> void:
 	# Meshes for one track, parented to its root (only the
 	# active track's root is visible). Reads _frame_at, so the
@@ -2078,6 +2364,18 @@ func _build_track_meshes(d: Dictionary) -> void:
 	_add_line_stripe(line_pos, line_nrm, line_col, 2.0)
 	if not bool(d["closed"]):
 		_add_line_stripe(line_pos, line_nrm, line_col, track_len - 2.0)
+	# Fix Pass 28: the lab wears the BORN-IN SECTION rhythm
+	# (the new track's presentation, prototyped here): a
+	# transverse stripe every 15 m - the sections the owner
+	# asked for in run 16 ("lines/sections on the road... to
+	# visually sell speed and distance"), designed in from
+	# the first mesh instead of retrofitted. At racing pace
+	# (24-36 m/s) 15 m spacing reads ~2 stripes per second.
+	if bool(d.get("sections", false)):
+		var sec_s: float = 17.0
+		while sec_s < track_len - 4.0:
+			_add_section_stripe(line_pos, line_nrm, line_col, sec_s)
+			sec_s += 15.0
 	var troot: Node3D = d["root"]
 	_add_mesh(surf_pos, surf_nrm, surf_col, "TrackSurface", false, troot)
 	_add_mesh(skirt_pos, skirt_nrm, skirt_col, "TrackSkirt", false, troot)
@@ -2224,6 +2522,27 @@ func _add_line_stripe(pp: PackedVector3Array, nn: PackedVector3Array, cc: Packed
 				pa + sa * lat0 + ua * 0.02, pa + sa * lat1 + ua * 0.02,
 				pb + sb * lat1 + ub * 0.02, pb + sb * lat0 + ub * 0.02,
 				nrm, col)
+
+
+# Fix Pass 28: one section stripe for the lab's born-in
+# rhythm - a 0.4 m transverse band across the full width,
+# pale grey against the asphalt, riding the same +0.02
+# lift as the line paint, in the road mesh family (FP18
+# winding via _add_quad_m). Subtle by design: the rhythm
+# is the message, not the stripe.
+func _add_section_stripe(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorArray, s_sec: float) -> void:
+	var fa: Dictionary = _frame_at(s_sec)
+	var fb: Dictionary = _frame_at(s_sec + 0.4)
+	var pa: Vector3 = fa["pos"]
+	var pb: Vector3 = fb["pos"]
+	var sa: Vector3 = fa["side"]
+	var sb: Vector3 = fb["side"]
+	var ua: Vector3 = fa["up"]
+	var ub: Vector3 = fb["up"]
+	_add_quad_m(pp, nn, cc,
+		pa - sa * HALF_WIDTH + ua * 0.02, pa + sa * HALF_WIDTH + ua * 0.02,
+		pb + sb * HALF_WIDTH + ub * 0.02, pb - sb * HALF_WIDTH + ub * 0.02,
+		(ua + ub).normalized(), Color(0.52, 0.52, 0.56))
 
 
 ## Frame (pos/side/up/tan/bank/curv/gap) at path distance s (float).
@@ -3028,7 +3347,7 @@ func _panel_text() -> String:
 	var lines: Array[String] = []
 	lines.append("STUNT CAR VR - TEST 1 [%s]" % mode_txt)
 	lines.append("SPD %d  BOOST %d  DENT %d  TRK %s" % [int(round(speed * 3.6)), int(round(boost_meter)), dent_level,
-		"CIRCUIT" if active_track == "circuit" else "RIBBON"])
+		"CIRCUIT" if active_track == "circuit" else ("LAB" if active_track == "lab" else "RIBBON")])
 	if track_closed:
 		lines.append("STATE %s  LAP %d/%d  TD %s" % [_state_name(), mini(lap_count + 1, RACE_LAPS), RACE_LAPS, last_touchdown])
 	else:
@@ -3611,7 +3930,7 @@ func _input(event: InputEvent) -> void:
 		KEY_T:
 			_toggle_lean()
 		KEY_V:
-			_set_track("ribbon" if active_track == "circuit" else "circuit")
+			_cycle_track()
 		KEY_J:
 			_toggle_jitter()
 		KEY_G:
@@ -4459,7 +4778,7 @@ func _activate_dash_ctl(kind: String) -> void:
 	elif kind == "lean":
 		_toggle_lean()
 	elif kind == "track":
-		_set_track("ribbon" if active_track == "circuit" else "circuit")
+		_cycle_track()
 	elif kind == "view":
 		_toggle_view_gain()
 	elif kind == "side":
@@ -5431,6 +5750,9 @@ func _pay_for_landing() -> void:
 			var ai: int = clampi(int(audit_flight_s / AUDIT_SECTOR_M), 0, audit_sectors.size() - 1)
 			audit_sectors[ai] += air_time
 			audit_flight_open = false
+			# Fix Pass 28: the same booking at flight
+			# resolution, for the lab's per-piece report.
+			audit_flights.append([audit_flight_s, air_time, air_time * mult * BOOST_AIR_RATE])
 	var pay: float = minf(air_time * mult * BOOST_AIR_RATE, BOOST_CAPACITY - boost_meter)
 	if pay <= 0.0:
 		return
@@ -6996,6 +7318,7 @@ func debug_audit_begin() -> void:
 	# proven gap-window drivers at the gaps). Test-mode
 	# only - the shipped game never arms this.
 	audit_sectors.clear()
+	audit_flights.clear()
 	var n: int = int(ceil(track_len / AUDIT_SECTOR_M))
 	for i: int in n:
 		audit_sectors.append(0.0)
@@ -7022,7 +7345,7 @@ func debug_audit_end() -> Dictionary:
 			run = 0
 	return {"sectors": audit_sectors.duplicate(), "air_s": audit_air_s,
 		"income": audit_income, "longest_starved_m": float(best) * AUDIT_SECTOR_M,
-		"track_len": track_len}
+		"track_len": track_len, "flights": audit_flights.duplicate()}
 
 
 func debug_body_width_m() -> float:
