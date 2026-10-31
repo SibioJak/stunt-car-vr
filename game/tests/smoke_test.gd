@@ -1382,6 +1382,22 @@ func _run() -> void:
 	main.test_hand_pos["R"] = (trk_seg_a[0] + trk_seg_a[1]) * 0.5
 	for ih3: int in 2:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	# Fix Pass 28: the roster grew a third track (the lab),
+	# so the cycle from the ribbon now lands on the lab
+	# first. Firing the same control twice takes a fresh
+	# squeeze - the FP9 latch clears only on grip release -
+	# so the sweep releases, re-grips on the (moved) track
+	# button, and fires again, landing on the circuit as
+	# this stage's evidence expects.
+	check(main.active_track == "lab",
+		"stage11a: the cycle's middle stop is the lab (track %s)" % main.active_track)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	var trk_seg_a2: Array[Vector3] = main._dash_ctl_segment(trk_ctl_a)
+	main.test_hand_pos["R"] = (trk_seg_a2[0] + trk_seg_a2[1]) * 0.5
+	main.test_grip["R"] = 1.0
+	for ih3a2: int in 2:
+		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
 	check(main.active_track == "circuit",
 		"stage11a: held-grip sweep fires the next control on entry (track %s)" % main.active_track)
 	# The track switch restarted the race on the circuit -
@@ -5631,6 +5647,472 @@ func _run() -> void:
 	print("stage57: post tops from the dangle eye across the sway cone - worst azimuth %.1f deg, worst elevation %.1f deg" % [worst_az57, worst_el57])
 	check(worst_az57 > 50.0 and worst_el57 < 30.0,
 		"stage57: the posts stay in the far periphery at every sway sample (az %.1f deg, el %.1f deg)" % [worst_az57, worst_el57])
+	main._set_track("circuit")
+
+	# ---------- stage 58: Fix Pass 28 - THE FEATURE LAB ----
+	# Prototype-first (owner's call, 2026-10-30): eight
+	# candidate pieces strung on a dedicated third track,
+	# each entered from a clean flat pinned state, each
+	# with a roadside PIECE n board. The circuit and the
+	# ribbon are untouched - stages 1-57 above are their
+	# census, unchanged. Every threshold below was MEASURED
+	# on this build in an in-pass probe before it was
+	# asserted; the probe's first-form failures (a gentle
+	# hump bracket that never unloaded, an off-camber
+	# radius the staged driver could not hold, a swell
+	# rate that only heaved) were redesigned in the
+	# builder, whose comments carry the mechanisms.
+	main._set_track("lab")
+	main.test_brake = 0.0 # the speed-managed autopilot stages leave brake behind (see stage 25's note)
+	var lab58: Dictionary = main.track_data["lab"]
+	var feats58: Dictionary = lab58["features"]
+	var pieces58: Array = feats58["pieces"]
+	var subs58: Dictionary = feats58["subs"]
+	check(not bool(lab58["closed"]) and pieces58.size() == 8,
+		"stage58: the lab is an open track carrying eight pieces (len %.0f m)" % float(lab58["len"]))
+	check(absf(main.gap_s0 - float(pieces58[3][1])) <= 1.5 and absf(main.gap_s1 - main.gap_s0 - 28.0) <= 1.5,
+		"stage58: the lab's one gap is piece 4's chasm (%.0f..%.0f)" % [main.gap_s0, main.gap_s1])
+	# The roster cycles circuit -> ribbon -> lab -> circuit.
+	main._cycle_track()
+	check(main.active_track == "circuit",
+		"stage58: the cycle wraps lab -> circuit (track %s)" % main.active_track)
+	main._set_track("lab")
+	# Roadside boards: one per piece, text exact.
+	var lab_root58: Node3D = lab58["root"]
+	var boards_ok58: bool = true
+	for bi58: int in 8:
+		var b58: Node = lab_root58.get_node_or_null("PieceBoard%d" % (bi58 + 1))
+		if b58 == null:
+			boards_ok58 = false
+			continue
+		var txt58: String = ""
+		for ch58: Node in b58.get_children():
+			if ch58 is Label3D:
+				txt58 = (ch58 as Label3D).text
+		if txt58 != "PIECE %d" % (bi58 + 1):
+			boards_ok58 = false
+	check(boards_ok58,
+		"stage58: eight roadside boards read PIECE 1..8 at the piece entries")
+	# The born-in section rhythm: the lab's paint mesh
+	# carries the ~15 m transverse stripes (hundreds of
+	# extra vertices over a stripe-only paint mesh).
+	var line_verts58: int = 0
+	for ch58b: Node in lab_root58.get_children():
+		if ch58b.name == "TrackLine" and ch58b is MeshInstance3D:
+			var arr58: Array = (ch58b as MeshInstance3D).mesh.surface_get_arrays(0)
+			line_verts58 = (arr58[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+	check(line_verts58 > 900,
+		"stage58: the lab wears the 15 m section rhythm (%d paint vertices)" % line_verts58)
+	# Clean entries: every piece sampled 5 m before its
+	# span is flat and unbanked - piece 4 is sampled 16 m
+	# before, ahead of its launch lip.
+	var entries_ok58: bool = true
+	for pi58: int in 8:
+		var back58: float = 16.0 if pi58 == 3 else 5.0
+		var fr58: Dictionary = main._frame_at(float(pieces58[pi58][1]) - back58)
+		var slope58: float = rad_to_deg(asin(clampf((fr58["tan"] as Vector3).y, -1.0, 1.0)))
+		if absf(slope58) > 0.5 or absf(rad_to_deg(float(fr58["bank"]))) > 0.5:
+			entries_ok58 = false
+	check(entries_ok58,
+		"stage58: every piece is entered from a flat, unbanked pinned state")
+	# Drop Start at the lab's head, FP26 furniture. The
+	# pendulum is PINNED for both release tests in this
+	# stage (stage 56's idiom): where a release lands
+	# depends on the inherited sway state - a backward-
+	# swung dangle drops the car behind s 0, off the lab's
+	# start entirely (measured in-pass) - and the claim
+	# here is only that the lab's Drop Start and recovery
+	# FUNCTION. The sway-graded drop is stages 34/42's
+	# subject, on the circuit.
+	main.debug_set_hang_dangle()
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	check(main.mode == main.MODE_HANG and main.drop_target_s == 2.0,
+		"stage58: Drop Start hangs at the lab's head (target s %.1f)" % main.drop_target_s)
+	# The hang needs frames to POSE the car at the dangle
+	# before a release means anything: released in the
+	# same instant as the dangle-set, the car still sits
+	# at the pad pose (ground level, off the road's edge)
+	# and the "drop" falls beside the road (measured
+	# in-pass, bisect-verified).
+	await frames(3)
+	main._do_release()
+	var drop_ok58: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 240)
+	check(drop_ok58,
+		"stage58: the lab's Drop Start releases into a drive")
+	# Crane recovery on the lab, at the doubled height: a
+	# staged fall mid-lab ends in a hang whose car floats
+	# ~2 m over the road (wheel clearance 1.70 + origin
+	# height), not the old ~1.2.
+	main.debug_warp_to_s(float(pieces58[5][1]) + 10.0)
+	main.debug_force_fall_at(float(pieces58[5][1]) + 30.0)
+	var hang_ok58: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 400)
+	check(hang_ok58,
+		"stage58: a mid-lab fall is recovered by the crane (mode=%d)" % main.mode)
+	main.debug_set_hang_dangle()
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	await frames(30)
+	var hang_h58: float = main.car.global_position.y - float(main._frame_at(main.drop_target_s)["pos"].y)
+	check(hang_h58 > 1.6,
+		"stage58: the lab's recovery dangle floats at the FP26 doubled height (%.2f m over the road)" % hang_h58)
+	main._do_release()
+	var rec_ok58: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 240)
+	check(rec_ok58,
+		"stage58: the lab's recovery releases back into a drive")
+	# ---- the piece-drive recorder (probe-faithful) ----
+	var rec58: Dictionary = {"eps": [], "in_air": false, "t": 0.0, "s": 0.0,
+		"gap": false, "reb": false, "launch": 0.0, "minp": 0.0, "maxp": 0.0,
+		"hung": false, "slip": 0.0, "lat": 0.0, "heave": 0.0}
+	var rec58_step: Callable = func() -> void:
+		var pd58: float = rad_to_deg(asin(clampf((-main.car.global_transform.basis.z).y, -1.0, 1.0)))
+		rec58["slip"] = maxf(float(rec58["slip"]), main.slip_state)
+		rec58["lat"] = maxf(float(rec58["lat"]), absf(main.car_lat))
+		rec58["heave"] = minf(float(rec58["heave"]), main.heave_off)
+		if main.mode == main.MODE_HANG:
+			rec58["hung"] = true
+		if main.mode == main.MODE_AIR and not bool(rec58["in_air"]):
+			rec58["in_air"] = true
+			rec58["t"] = 0.0
+			rec58["s"] = main.car_s
+			rec58["gap"] = main.air_from_gap
+			rec58["reb"] = main.air_from_rebound
+			rec58["launch"] = pd58
+			rec58["minp"] = pd58
+			rec58["maxp"] = pd58
+		elif main.mode == main.MODE_AIR:
+			rec58["t"] = float(rec58["t"]) + 1.0 / 90.0
+			rec58["minp"] = minf(float(rec58["minp"]), pd58)
+			rec58["maxp"] = maxf(float(rec58["maxp"]), pd58)
+		elif bool(rec58["in_air"]):
+			rec58["in_air"] = false
+			(rec58["eps"] as Array).append([rec58["s"], rec58["t"], rec58["gap"], rec58["reb"], rec58["launch"], rec58["minp"], rec58["maxp"], main.contact_grade])
+	var rec58_reset: Callable = func() -> void:
+		rec58["eps"] = []
+		rec58["in_air"] = false
+		rec58["hung"] = false
+		rec58["slip"] = 0.0
+		rec58["lat"] = 0.0
+		rec58["heave"] = 0.0
+	var g58: int = 0
+	# ---- PIECE 1: drumbeat rows (pin 24) ----
+	rec58_reset.call()
+	main.debug_warp_to_s(30.0)
+	g58 = 0
+	while main.car_s < float(pieces58[0][2]) + 15.0 and g58 < 6000:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(24.0)
+		await physics_frame
+		rec58_step.call()
+		g58 += 1
+	main.test_throttle = 0.0
+	var rows58: Array = subs58["p1_rows"]
+	var row_n58: Array = [0, 0, 0]
+	var row_band58: Array = [0, 0, 0]
+	var row_tot58: Array = [0.0, 0.0, 0.0]
+	for e58: Array in rec58["eps"]:
+		for ri58: int in 3:
+			if float(e58[0]) >= float(rows58[ri58][0]) and float(e58[0]) < float(rows58[ri58][1]):
+				row_n58[ri58] = int(row_n58[ri58]) + 1
+				row_tot58[ri58] = float(row_tot58[ri58]) + float(e58[1])
+				if float(e58[1]) >= 0.1 and float(e58[1]) <= 0.4:
+					row_band58[ri58] = int(row_band58[ri58]) + 1
+	print("stage58 P1: rows fly %s, band %s, totals %s s" % [str(row_n58), str(row_band58), str(row_tot58)])
+	check(not bool(rec58["hung"]) and int(row_n58[0]) >= 4 and int(row_n58[1]) >= 4 and int(row_n58[2]) >= 3,
+		"stage58: piece 1 - all three drumbeat rows fly at the pinned 24 (counts %s)" % str(row_n58))
+	check(int(row_band58[0]) + int(row_band58[1]) >= 2,
+		"stage58: piece 1 - the 0.1-0.4 s drumbeat band is populated (%s) - by the rebound second flights, not the primaries" % str(row_band58))
+	check(float(row_tot58[0]) >= 2.0 and float(row_tot58[1]) >= 3.5 and float(row_tot58[2]) >= 3.0,
+		"stage58: piece 1 - air totals grow with the bracket (row totals %s s)" % str(row_tot58))
+	# ---- PIECE 2: the flair, two severities (pursuit) ----
+	var p2_names58: Array = ["p2_mild", "p2_run18"]
+	var p2_floors58: Array = [4, 3]
+	for p2i58: int in 2:
+		var win58: Array = subs58[p2_names58[p2i58]]
+		main.debug_warp_to_s(float(win58[0]) - 40.0)
+		var waf58: Array = main.wheel_air_frames.duplicate()
+		g58 = 0
+		var full_air58: bool = false
+		while main.car_s < float(win58[1]) + 10.0 and g58 < 3600:
+			autopilot()
+			await physics_frame
+			if main.mode == main.MODE_HANG:
+				full_air58 = true # reuse: any hang fails below via hung check
+			if main.mode == main.MODE_AIR:
+				full_air58 = true
+			g58 += 1
+		main.test_throttle = 0.0
+		var d58: Array = [0, 0, 0, 0]
+		for wi58: int in 4:
+			d58[wi58] = int(main.wheel_air_frames[wi58]) - int(waf58[wi58])
+		print("stage58 P2 %s: corner air deltas %s (full air %s)" % [p2_names58[p2i58], str(d58), str(full_air58)])
+		check(not full_air58 and int(d58[1]) >= int(p2_floors58[p2i58]) and int(d58[3]) >= int(p2_floors58[p2i58]) and int(d58[0]) <= 1 and int(d58[2]) <= 1,
+			"stage58: piece 2 (%s) - the bank unwind lifts the falling (right) wheels only, never the whole car %s" % [p2_names58[p2i58], str(d58)])
+	# ---- PIECE 3: crest launches (pin 30 per crest) ----
+	var crest_wins58: Array = [[1.25, 1.9], [1.95, 2.65], [2.95, 3.7]]
+	var crest_nom58: Array = [8.0, 14.0, 20.0]
+	var crests58: Array = subs58["p3_crests"]
+	for ci58: int in 3:
+		rec58_reset.call()
+		main.debug_warp_to_s(float(crests58[ci58][0]) - 40.0)
+		g58 = 0
+		while main.car_s < float(crests58[ci58][1]) + 45.0 and g58 < 3600:
+			autopilot_steer(0.0)
+			main.debug_pin_speed(30.0)
+			await physics_frame
+			rec58_step.call()
+			g58 += 1
+		main.test_throttle = 0.0
+		var best58: Array = []
+		for e58b: Array in rec58["eps"]:
+			if float(e58b[1]) >= 0.5 and (best58.is_empty() or float(e58b[1]) > float(best58[1])):
+				best58 = e58b
+		check(not best58.is_empty() and not bool(rec58["hung"]),
+			"stage58: piece 3 crest %d flies at the pinned 30" % ci58)
+		if not best58.is_empty():
+			print("stage58 P3 crest %d: flight %.2f s, launch %+.1f deg, pitch range %+.1f..%+.1f" % [ci58, float(best58[1]), float(best58[4]), float(best58[5]), float(best58[6])])
+			check(float(best58[1]) >= float(crest_wins58[ci58][0]) and float(best58[1]) <= float(crest_wins58[ci58][1]),
+				"stage58: piece 3 crest %d - flight time in its measured window (%.2f s)" % [ci58, float(best58[1])])
+			check(absf(float(best58[4]) - float(crest_nom58[ci58])) <= 2.5,
+				"stage58: piece 3 crest %d - launch pitch matches the ramp (%.1f deg vs %.0f nominal)" % [ci58, float(best58[4]), float(crest_nom58[ci58])])
+			check(float(best58[6]) <= float(best58[4]) + 1.0 and float(best58[4]) - float(best58[5]) <= 30.5,
+				"stage58: piece 3 crest %d - the nose NEVER pitches past launch (peak %.1f vs launch %.1f): the current model cannot tumble, measured" % [ci58, float(best58[6]), float(best58[4])])
+	# ---- PIECE 4: the chasm (pin 30) ----
+	rec58_reset.call()
+	main.debug_warp_to_s(main.gap_s0 - 80.0)
+	g58 = 0
+	while main.car_s < main.gap_s1 + 30.0 and g58 < 2400:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(30.0)
+		await physics_frame
+		rec58_step.call()
+		g58 += 1
+	main.test_throttle = 0.0
+	var gap_ep58: Array = []
+	for e58c: Array in rec58["eps"]:
+		if bool(e58c[2]):
+			gap_ep58 = e58c
+	check(not gap_ep58.is_empty() and not bool(rec58["hung"]) and main.mode == main.MODE_DRIVE and main.car_s > main.gap_s1 + 10.0,
+		"stage58: piece 4 - the chasm is crossed at the pinned 30 and the drive continues")
+	if not gap_ep58.is_empty():
+		print("stage58 P4: gap flight %.2f s, grade %s" % [float(gap_ep58[1]), str(gap_ep58[7])])
+		check(float(gap_ep58[1]) >= 0.8 and float(gap_ep58[1]) <= 1.15,
+			"stage58: piece 4 - the gap flight is %.2f s (the 28 m span at 30 m/s)" % float(gap_ep58[1]))
+	# ---- PIECE 5: off-camber S (capped pursuit 24) ----
+	# The staged speed law is curvature-only - it cannot
+	# know the bank is adverse - so the piece is staged at
+	# the capped 24 (demand 9.9 of 11); the true limit
+	# entry, ~25.5 by the arithmetic, is the owner's to
+	# find (README). Pin fixtures are NOT used here: a pin
+	# zeroes the slip velocity every frame by construction.
+	rec58_reset.call()
+	main.debug_warp_to_s(float(pieces58[4][1]) - 40.0)
+	g58 = 0
+	while main.car_s < float(pieces58[4][2]) + 10.0 and g58 < 3600:
+		_autopilot_drive(0.0, true, 24.0)
+		await physics_frame
+		rec58_step.call()
+		g58 += 1
+	main.test_throttle = 0.0
+	print("stage58 P5: max slip %.2f, max |lat| %.2f" % [float(rec58["slip"]), float(rec58["lat"])])
+	check(not bool(rec58["hung"]) and float(rec58["lat"]) <= 3.5,
+		"stage58: piece 5 - the off-camber S is survived at the capped 24 (|lat| <= %.2f)" % float(rec58["lat"]))
+	check(float(rec58["slip"]) >= 0.04,
+		"stage58: piece 5 - the adverse bank is felt: real slip on the staged run (peak %.2f)" % float(rec58["slip"]))
+	# ---- PIECE 6: compression -> rebound (pin 28) ----
+	rec58_reset.call()
+	main.debug_warp_to_s(float(pieces58[5][1]) - 40.0)
+	g58 = 0
+	while main.car_s < float(pieces58[5][2]) + 25.0 and g58 < 2400:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(28.0)
+		await physics_frame
+		rec58_step.call()
+		g58 += 1
+	main.test_throttle = 0.0
+	var reb_n58: int = 0
+	var big_fly58: bool = false
+	for e58d: Array in rec58["eps"]:
+		if bool(e58d[3]):
+			reb_n58 += 1
+		if float(e58d[1]) >= 1.2:
+			big_fly58 = true
+	print("stage58 P6: episodes %s, min heave %.3f" % [str(rec58["eps"]), float(rec58["heave"])])
+	# The rebound count is NOT asserted at 2: the crest's
+	# second flight is phase-sensitive at this energy
+	# (stage 51's documented behaviour on the ribbon row -
+	# it fired in this pass's probe, not in this run; the
+	# dip's rebound fired in both). The robust claims are
+	# the two long primaries and at least one rebound.
+	check(not bool(rec58["hung"]) and big_fly58 and reb_n58 >= 1,
+		"stage58: piece 6 - the pair flies long and the rebound fires (%d rebound flights)" % reb_n58)
+	check(float(rec58["heave"]) <= -0.15,
+		"stage58: piece 6 - the dip compresses the car measurably (min heave %.3f m)" % float(rec58["heave"]))
+	# ---- PIECE 7: edge slalom (straddle holds on the piece)
+	# Stage 13's measurement (park on the edge line, read
+	# the support roll) under a PINNED approach: stage 13's
+	# throttle-0.25 protocol converges only while its speed
+	# lasts, and in this harness the car scrubs 14 -> 8 m/s
+	# under the lane law and stops ~2 m short of the line
+	# (measured in-pass, on the circuit's straight too).
+	# The pin holds the 14 m/s the protocol assumes; the
+	# claim measured is the piece's own - support and roll
+	# at its edge line. Stage 13 remains the throttle
+	# witness on the circuit.
+	main.debug_warp_to_s(float(pieces58[6][1]) + 5.0)
+	for ic58: int in 150:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(14.0)
+		await physics_frame
+	for sgn58: float in [1.0, -1.0]:
+		var roll_sum58: float = 0.0
+		var roll_n58: int = 0
+		var drove58: bool = true
+		for ih58: int in 420:
+			autopilot_steer(sgn58 * (main.HALF_WIDTH + 0.35))
+			main.debug_pin_speed(14.0)
+			await physics_frame
+			if main.mode != main.MODE_DRIVE:
+				drove58 = false
+			if ih58 >= 340:
+				roll_sum58 += main.car.global_transform.basis.y.dot(main._heading_right())
+				roll_n58 += 1
+		var roll58: float = roll_sum58 / maxf(float(roll_n58), 1.0)
+		print("stage58 P7 hold %+.0f: car_lat %.2f, roll %.3f" % [sgn58, main.car_lat, roll58])
+		check(drove58 and absf(main.car_lat) >= 5.6 and roll58 * sgn58 > 0.15,
+			"stage58: piece 7 - holding the %s edge line straddles: supported, and the car rolls toward the void (roll %.3f)" % ["right" if sgn58 > 0.0 else "left", roll58])
+		for is58: int in 200:
+			autopilot_steer(0.0)
+			main.debug_pin_speed(14.0)
+			await physics_frame
+	main.test_throttle = 0.0
+	# ---- PIECE 8: taxed straight (pin 40) ----
+	rec58_reset.call()
+	main.debug_warp_to_s(float(pieces58[7][1]) - 40.0)
+	g58 = 0
+	while main.car_s < float(pieces58[7][2]) + 10.0 and g58 < 2400:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(40.0)
+		await physics_frame
+		rec58_step.call()
+		g58 += 1
+	main.test_throttle = 0.0
+	var p8_mid58: float = (float(pieces58[7][1]) + float(pieces58[7][2])) * 0.5
+	var a1_fly58: int = 0
+	var a2_fly58: int = 0
+	var a2_tot58: float = 0.0
+	for e58e: Array in rec58["eps"]:
+		if float(e58e[0]) < p8_mid58:
+			if float(e58e[1]) >= 0.15:
+				a1_fly58 += 1
+		else:
+			a2_tot58 += float(e58e[1])
+			if float(e58e[1]) >= 0.15:
+				a2_fly58 += 1
+	print("stage58 P8: gentle half flights %d, sharp half flights %d totalling %.2f s" % [a1_fly58, a2_fly58, a2_tot58])
+	check(not bool(rec58["hung"]) and a1_fly58 == 0,
+		"stage58: piece 8 - the gentle (+/-3 deg) swells only heave at 40: no flight")
+	check(a2_fly58 >= 2 and a2_tot58 >= 2.5,
+		"stage58: piece 8 - the sharpened (+/-6 deg) swells hop at 40 (%d flights, %.2f s): the straight is taxed" % [a2_fly58, a2_tot58])
+	# ---- the per-piece air audit (FP24 machinery) ----
+	# Stage 54's protocol family: pinned 24 default, the
+	# piece entries' own pins inside their spans, capped
+	# pursuit through the two corner pieces, and the
+	# chasm crossed at its stated entry (pinned 30 - see
+	# the window's own comment for why stage 54's
+	# fast+boost idiom does not survive contact with a
+	# 28 m gap).
+	main.debug_audit_begin()
+	main.debug_warp_to_s(10.0)
+	var hung58: bool = false
+	g58 = 0
+	while main.car_s < main.track_len - 6.0 and g58 < 40000:
+		if main.mode == main.MODE_HANG:
+			hung58 = true
+			break
+		if main.car_s > main.gap_s0 - 70.0 and main.car_s < main.gap_s1 + 10.0:
+			# The chasm window drives the piece's STATED
+			# entry - pinned 30, as the piece drive proves -
+			# not stage 54's fast+boost idiom: that driver
+			# is speed-managed, reads the lip's kv in its
+			# 46 m lookahead, caps itself at 24 and BRAKES
+			# toward it, arriving at the lip near 17 m/s
+			# and dropping in (measured in-pass). The
+			# ribbon's 24 m gap never noticed; the lab's
+			# 28 m chasm does.
+			autopilot_steer(0.0)
+			main.debug_pin_speed(30.0)
+			main.test_boost = false
+		elif main.car_s >= float(pieces58[1][1]) and main.car_s < float(pieces58[1][2]) or main.car_s >= float(pieces58[4][1]) and main.car_s < float(pieces58[4][2]):
+			_autopilot_drive(0.0, true, 24.0)
+			main.test_boost = false
+		elif main.car_s >= float(pieces58[2][1]) and main.car_s < float(pieces58[2][2]):
+			autopilot_steer(0.0)
+			main.debug_pin_speed(30.0)
+			main.test_boost = false
+		elif main.car_s >= float(pieces58[5][1]) and main.car_s < float(pieces58[5][2]):
+			autopilot_steer(0.0)
+			main.debug_pin_speed(28.0)
+			main.test_boost = false
+		elif main.car_s >= float(pieces58[7][1]) and main.car_s < float(pieces58[7][2]):
+			autopilot_steer(0.0)
+			main.debug_pin_speed(40.0)
+			main.test_boost = false
+		else:
+			autopilot_steer(0.0)
+			main.debug_pin_speed(24.0)
+			main.test_boost = false
+		await physics_frame
+		g58 += 1
+	main.test_throttle = 0.0
+	main.test_boost = false
+	var aud58: Dictionary = main.debug_audit_end()
+	var aud_flights58: Array = aud58["flights"]
+	var piece_air58: Array = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	var piece_inc58: Array = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	# Attribution: a flight belongs to the first piece
+	# whose span - extended 45 m into its settle flat,
+	# where its own rebound landings fall - contains the
+	# flight's start. Windows stay disjoint (the smallest
+	# inter-piece flat is 55 m, piece 7's 35 m tail is the
+	# one overlap, and a flight starting there is piece
+	# 7's rebound, not piece 8's gentle-half hop - the
+	# gentle half has none).
+	for fl58: Array in aud_flights58:
+		for pai58: int in 8:
+			if float(fl58[0]) >= float(pieces58[pai58][1]) and float(fl58[0]) < float(pieces58[pai58][2]) + 45.0:
+				piece_air58[pai58] = float(piece_air58[pai58]) + float(fl58[1])
+				piece_inc58[pai58] = float(piece_inc58[pai58]) + float(fl58[2])
+				break
+	var attributed58: float = 0.0
+	for pai58b: int in 8:
+		attributed58 += float(piece_air58[pai58b])
+		print("stage58 audit: PIECE %d %s - payable air %.2f s, income %.0f units" % [pai58b + 1, str(pieces58[pai58b][0]), float(piece_air58[pai58b]), float(piece_inc58[pai58b])])
+	print("stage58 audit: lab totals - payable air %.2f s, income %.0f units, unattributed %.2f s" % [float(aud58["air_s"]), float(aud58["income"]), float(aud58["air_s"]) - attributed58])
+	check(not hung58 and main.car_s >= main.track_len - 6.0,
+		"stage58 audit: the lab lap completes end to end (s %.0f of %.0f)" % [main.car_s, main.track_len])
+	check(float(aud58["air_s"]) >= 15.0,
+		"stage58 audit: the lab is rich - %.2f s of payable air in one lap" % float(aud58["air_s"]))
+	# Piece 4's floor is the GAP FLIGHT alone (0.97 s in
+	# both the piece drive and this lap): its rebound
+	# second flight is phase-sensitive like piece 6's -
+	# it fired in the in-pass bisect, not in this lap -
+	# so it is not part of the promise.
+	check(float(piece_air58[0]) >= 8.0 and float(piece_air58[2]) >= 5.0 and float(piece_air58[3]) >= 0.85 and float(piece_air58[5]) >= 2.5 and float(piece_air58[7]) >= 2.5,
+		"stage58 audit: the air lives where the pieces promise it (P1 %.2f, P3 %.2f, P4 %.2f, P6 %.2f, P8 %.2f s)" % [float(piece_air58[0]), float(piece_air58[2]), float(piece_air58[3]), float(piece_air58[5]), float(piece_air58[7])])
+	check(float(piece_air58[1]) < 0.5,
+		"stage58 audit: the flair pays (almost) nothing - two-wheel air is not flight (%.2f s)" % float(piece_air58[1]))
+	# The unattributed remainder is real and named: crest
+	# 3's rebound second flight starts ~97 m past piece
+	# 3's recorded end, in the long settle the builder
+	# grew so the lap could survive it - outside even
+	# the +45 m attribution tail.
+	check(attributed58 >= float(aud58["air_s"]) - 3.5,
+		"stage58 audit: per-piece sums account for the lap (unattributed %.2f s)" % [float(aud58["air_s"]) - attributed58])
 	main._set_track("circuit")
 
 	print("---")

@@ -1339,6 +1339,22 @@ func _run() -> void:
 		"capture 26: a quarter lock displays GAINED on the front tires (%.1f deg; the honest angle is %.1f)" % [fw26, -rad_to_deg(0.25 * main.MAX_LOCK_RAD)])
 	await snap(main.fallback_cam, "steer_connection_view.png")
 
+	# Capture 27 (Fix Pass 28): the feature lab's portrait -
+	# the approach to PIECE 1: the roadside board ahead on
+	# the right, the first drumbeat row beyond it, the 15 m
+	# section stripes crossing the road. A portrait only:
+	# under the sandbox's llvmpipe renderer this is
+	# structure evidence, not colour truth - the board's
+	# amber and the stripes' grey are the device's to judge.
+	main._set_track("lab")
+	main.debug_warp_to_s(64.0)
+	for i27: int in 30:
+		await physics_frame
+	check(main.mode == main.MODE_DRIVE and main.active_track == "lab",
+		"capture 27: driving the lab's head flat toward piece 1 (mode=%d)" % main.mode)
+	await snap(main.fallback_cam, "lab_drumbeat_view.png")
+	main._set_track("circuit")
+
 	print("---")
 	if failures == 0:
 		print("RENDER PROOF: ALL %d CHECKS PASSED" % checks)
