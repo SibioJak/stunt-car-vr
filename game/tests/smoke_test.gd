@@ -3221,8 +3221,10 @@ func _run() -> void:
 	# ---------- stage 34: Fix Pass 13 (Item 6) - the pickup, FP15 the crane ----
 	# (a) Drop Start is a pickup: the car starts ON THE PAD
 	# beside the start line, the crane attaches, lifts and
-	# slews it to the station; the wheel stays gated during
-	# the journey and (since Fix Pass 22) the DROP BUTTON
+	# slews it to the station; the wheel is live for the
+	# whole journey (Fix Pass 30 - it was gated to the
+	# dangle until the owner's field report repealed the
+	# gate) and (since Fix Pass 22) the DROP BUTTON
 	# DROPS the car from the journey - the press below fires
 	# in ATTACH, the stage restarts, and the pendulum state
 	# crosses the fresh hang's carry->dangle transition
@@ -3254,6 +3256,17 @@ func _run() -> void:
 	# the SPENT outcome. The wheel's transport gate was
 	# never the owner's complaint and stands, probed FIRST
 	# (the press ends the hang it would be probed in).
+	# REPLACED EXPECTATION, FLAGGED (FP30): the wheel's
+	# transport gate is REPEALED - the owner's field report
+	# ("the steering wheel still doesn't work during the
+	# first phase of being craned. It activates well into
+	# the process.") is the FP13 gate's verdict, the same
+	# interactivity law FP22 applied to the button: the
+	# wheel is live for the WHOLE hang. The probe below
+	# asserts the new law - grab AND steer in attach - then
+	# lets go before the press (the press ends the hang
+	# either way) and spends the probe's lock, so the rest
+	# of this stage runs on the state it always ran on.
 	main.test_hand_set = true
 	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
 	main.test_grip["L"] = 0.0
@@ -3262,9 +3275,15 @@ func _run() -> void:
 	main.test_grip["R"] = 1.0
 	main.test_hand_pos["R"] = main.car.global_transform * (hub34 + 0.21 * Vector3.RIGHT)
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(main.grab_hand == "",
-		"stage34: the wheel does not grab during transport")
+	check(main.grab_hand == "R",
+		"stage34: the wheel GRABS during transport (FP30 - the gate is repealed)")
+	main.test_hand_pos["R"] = main.car.global_transform * (hub34 + 0.21 * (Vector3.RIGHT * cos(0.5) + pv34 * sin(0.5)))
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - 0.5) < 0.05,
+		"stage34: the grabbed wheel STEERS during transport (%.2f rad)" % main.wheel_angle)
 	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.wheel_angle = 0.0
 	var mark34: int = main.grab_events.size()
 	grip_press_ctl("drop", "R")
 	var ev34: String = ""
@@ -6378,6 +6397,173 @@ func _run() -> void:
 	main.test_hand_set = false
 	main.wheel_angle = 0.0
 	check(main.steer_mode == 0, "stage59: the suite leaves WHEEL steer mode behind it")
+
+	# ---------- stage 60: Fix Pass 30 - THE WHEEL IS LIVE FOR THE WHOLE HANG + THE CENTRE GAUGE ----
+	# Item 1: the FP13 phase gate (dangle only) is repealed -
+	# staged through production paths like stage 59: posed
+	# hands through _poll_grab, the real hang ridden frame by
+	# frame from attach through carry to the dangle. The
+	# claims: a hand grabs AND steers in ATTACH; a rim
+	# passenger rides and the line steers in attach too; the
+	# grab survives the attach->carry transition and steering
+	# continues in CARRY; the angle dialled on the ride up
+	# crosses _do_release and the landing unchanged and is
+	# still there in the drive's first frames; the stick
+	# substitutes in attach as it does everywhere the wheel
+	# is live. Item 2: the centre gauge - the stripe's
+	# parentage (inside the spin node) and its clock angle
+	# tracking wheel_angle 1:1 against the fixed tick.
+	main._set_track("ribbon")
+	main.start_race()
+	main.dip_timer = 1000.0
+	check(main.mode == main.MODE_HANG and main.hang_phase == "attach",
+		"stage60: a fresh hang opens in ATTACH (phase %s)" % main.hang_phase)
+	var hub60: Vector3 = main._wheel_hub_local()
+	var pv60: Vector3 = main._wheel_plane_v()
+	var rim60 = func(r: float, phi: float) -> Vector3:
+		return main.car.global_transform * (hub60 + r * (Vector3.RIGHT * cos(phi) + pv60 * sin(phi)))
+	var far60 = func() -> Vector3:
+		return main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_hand_set = true
+	main.test_grip["L"] = 0.0
+	main.test_grip["R"] = 0.0
+	main.test_stick["R"] = Vector2.ZERO
+	main.test_hand_pos["L"] = far60.call()
+	main.test_hand_pos["R"] = far60.call()
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	# (i) ATTACH: the wheel grabs and steers.
+	main.test_hand_pos["R"] = rim60.call(0.25, 0.0)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.grab_hand == "R", "stage60: the wheel grabs in ATTACH")
+	var wa60: float = main.wheel_angle
+	main.test_hand_pos["R"] = rim60.call(0.25, 0.5)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(wrapf(main.wheel_angle - wa60 - 0.5, -PI, PI)) < 0.05,
+		"stage60: the grabbed wheel steers in ATTACH (%+.2f rad)" % (main.wheel_angle - wa60))
+	# (ii) ATTACH: the passenger rides; the line steers.
+	main.test_hand_pos["L"] = rim60.call(0.25, 0.5 + PI)
+	main.test_grip["L"] = 1.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(bool(main.rim_attach["L"]), "stage60: the second hand rides the rim in ATTACH")
+	wa60 = main.wheel_angle
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - wa60) < 0.01,
+		"stage60: the attach-phase join re-bases - wheel jump %.3f deg" % rad_to_deg(absf(main.wheel_angle - wa60)))
+	main.test_hand_pos["R"] = rim60.call(0.25, 0.8)
+	main.test_hand_pos["L"] = rim60.call(0.25, 0.8 + PI)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(wrapf(main.wheel_angle - wa60 - 0.3, -PI, PI)) < 0.03,
+		"stage60: the LINE steers in ATTACH - both hands +0.3 rad, wheel %+.2f rad" % (main.wheel_angle - wa60))
+	main.test_grip["L"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(main.grab_hand == "R" and not bool(main.rim_attach["L"]),
+		"stage60: the passenger leaves clean in ATTACH, the driver keeps the wheel")
+	# (iii) the ride: attach -> carry -> dangle, the driving
+	# hand glued to its rim point each frame; the grab must
+	# survive the transition and steering must answer in
+	# CARRY.
+	var f60: int = 0
+	var saw_carry60: bool = false
+	var carry_ok60: bool = false
+	while f60 < 6000:
+		main.test_hand_pos["R"] = rim60.call(0.25, 1.1 if carry_ok60 else 0.8)
+		await physics_frame
+		f60 += 1
+		if main.hang_phase == "carry" and not saw_carry60:
+			saw_carry60 = true
+			carry_ok60 = main.grab_hand == "R"
+			main.test_hand_pos["R"] = rim60.call(0.25, 0.8)
+			main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+			var wac60: float = main.wheel_angle
+			main.test_hand_pos["R"] = rim60.call(0.25, 1.1)
+			main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+			check(absf(wrapf(main.wheel_angle - wac60 - 0.3, -PI, PI)) < 0.05,
+				"stage60: the wheel steers in CARRY (%+.2f rad)" % (main.wheel_angle - wac60))
+		if main.hang_phase == "dangle":
+			break
+	check(saw_carry60 and carry_ok60,
+		"stage60: the grab survives the attach->carry transition (still driving in CARRY)")
+	check(main.hang_phase == "dangle",
+		"stage60: the ride arrives at the dangle (%d frames)" % f60)
+	# (iv) the dialled lock crosses the release and the
+	# landing unchanged.
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_pos["L"] = far60.call()
+	main.test_hand_pos["R"] = far60.call()
+	check(main.grab_hand == "", "stage60: hands off for the drop")
+	var wa_pre60: float = main.wheel_angle
+	check(absf(wa_pre60) > 0.5,
+		"stage60: a real lock was dialled on the ride up (%.2f rad)" % wa_pre60)
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	main._do_release()
+	check(main.mode == main.MODE_AIR and main.wheel_angle == wa_pre60,
+		"stage60: the release does not touch the dialled angle (bit-exact %.4f rad)" % main.wheel_angle)
+	var drv60: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv60 and absf(main.wheel_angle - wa_pre60) < 0.02,
+		"stage60: the landing inherits the dialled lock (%.4f rad)" % main.wheel_angle)
+	await frames(2)
+	# The first-frames tolerance carries the HARNESS's own
+	# law, named: headless, xr_ok is false, so the DESKTOP
+	# block's return-to-centre (2.2 rad/s, DRIVE only) acts
+	# during real frames - two frames at 90 fps can centre
+	# the wheel by at most ~0.05 rad. That block is gated
+	# OFF in XR (FP29 Item 1); in the headset the angle
+	# holds exactly, which stage 59 (v) proves through the
+	# grab path. What this check asserts is the landing's
+	# substance: the drive OPENS on the lock the driver
+	# dialled, not on a centred wheel.
+	check(absf(main.wheel_angle - wa_pre60) < 0.06,
+		"stage60: the lock is present in the drive's first frames (%.4f rad)" % main.wheel_angle)
+	# (v) a fresh hang: the stick substitutes in ATTACH.
+	main.start_race()
+	check(main.mode == main.MODE_HANG and main.hang_phase == "attach",
+		"stage60: the stick probe's hang opens in ATTACH")
+	var was60: float = main.wheel_angle
+	main.test_stick["R"] = Vector2(1.0, 0.0)
+	main._poll_stick_steer(0.5)
+	check(absf(main.wheel_angle - was60 - 1.3) < 0.05,
+		"stage60: the stick steers in ATTACH at the wheel's rate (%+.2f rad)" % (main.wheel_angle - was60))
+	main.test_stick["R"] = Vector2.ZERO
+	# (vi) Item 2: the centre gauge - parentage, and the
+	# stripe's clock angle tracking wheel_angle 1:1 about
+	# the fixed tick (both read in wheel-plane coords: the
+	# top of the rim is -PI/2, the stripe's angle must sit
+	# at wheel_angle - PI/2 for every staged lock).
+	check(main.wheel_centre_stripe != null and main.wheel_centre_tick != null,
+		"stage60: the centre gauge pair exists")
+	check(main.wheel_centre_stripe.get_parent() == main.wheel_spin,
+		"stage60: the stripe lives INSIDE the spin node")
+	check(main.wheel_centre_tick.get_parent() == main.wheel_node,
+		"stage60: the tick is fixed to the tilt node (never spins)")
+	# Read in WHEEL-NODE space, composed from LOCAL
+	# transforms (spin.transform * the stripe's position;
+	# the tick's own position): synchronous and exact,
+	# where a headless global-transform read lags the
+	# refresh that posed it. In this space the wheel-plane
+	# coords are (x, z) - the tilt node's +Z is
+	# _wheel_plane_v in car space by construction.
+	for wa60g: float in [0.0, PI * 0.5, PI, -PI * 0.5]:
+		main.wheel_angle = wa60g
+		main._refresh_car_visuals()
+		var sp60: Vector3 = main.wheel_spin.transform * main.wheel_centre_stripe.position
+		var sang60: float = atan2(sp60.z, sp60.x)
+		check(absf(wrapf(sang60 - (wa60g - PI * 0.5), -PI, PI)) < 0.03 and absf(sp60.length() - 0.205) < 0.005,
+			"stage60: at lock %+.2f the stripe sits at %+.2f rad on the rim circle (1:1, r %.3f m)" % [wa60g, sang60, sp60.length()])
+		var tp60: Vector3 = main.wheel_centre_tick.position
+		var tang60: float = atan2(tp60.z, tp60.x)
+		check(absf(wrapf(tang60 + PI * 0.5, -PI, PI)) < 0.03,
+			"stage60: at lock %+.2f the tick stays at top centre (%+.2f rad)" % [wa60g, tang60])
+	main.wheel_angle = 0.0
+	main._refresh_car_visuals()
+	main.test_hand_set = false
+	main._set_track("circuit")
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")

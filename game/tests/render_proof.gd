@@ -61,6 +61,11 @@ extends SceneTree
 ## Capture 26 = the steering connection's portrait: the Drop
 ## Start dangle with a quarter lock dialled in, shot from the
 ## anchor - the gained display the driver dials by.
+## Fix Pass 30 (Item 2) adds: captures 28-30 = the CENTRE
+## GAUGE's portraits - the dangle at centre, quarter lock
+## and full lock, shot from the anchor like capture 26: the
+## amber stripe's displacement against the fixed tick is
+## asserted equal to the staged lock at each stop.
 
 var failures: int = 0
 var checks: int = 0
@@ -1379,6 +1384,49 @@ func _run() -> void:
 	check(main.mode == main.MODE_DRIVE and main.active_track == "lab",
 		"capture 27: driving the lab's head flat toward piece 1 (mode=%d)" % main.mode)
 	await snap(main.fallback_cam, "lab_drumbeat_view.png")
+	main._set_track("circuit")
+
+	# Captures 28-30 (Fix Pass 30, Item 2): the CENTRE
+	# GAUGE's portraits - the Drop Start dangle (where FP30
+	# Item 1 makes the wheel live for dialling the landing
+	# lock, and the stripe is how the lock is read) at
+	# centre, quarter lock and full lock, from the eye
+	# anchor. At each stop the stripe's displacement from
+	# the fixed tick - both read in wheel-plane coords - is
+	# asserted equal to the staged lock: the gauge pair
+	# reads as an angle, not just a stripe. Structural only
+	# under llvmpipe: the amber's legibility at cockpit
+	# distance is the device's to judge.
+	main._set_track("ribbon")
+	main.start_race()
+	var n28: int = 0
+	while main.hang_phase != "dangle" and n28 < 4000:
+		await physics_frame
+		n28 += 1
+	check(main.hang_phase == "dangle", "capture 28: dangling for the centre-gauge portraits")
+	check(main.wheel_centre_stripe != null and main.wheel_centre_stripe.get_parent() == main.wheel_spin \
+		and main.wheel_centre_tick != null and main.wheel_centre_tick.get_parent() == main.wheel_node,
+		"capture 28: the gauge pair is parented as built (stripe in the spin node, tick on the tilt node)")
+	var locks28: Array = [
+		[0.0, "wheel_centre_view.png", "centre"],
+		[PI * 0.25, "wheel_quarter_view.png", "quarter lock"],
+		[PI, "wheel_full_lock_view.png", "full lock"]]
+	for li28: int in locks28.size():
+		var wa28: float = float(locks28[li28][0])
+		main.wheel_angle = wa28
+		main._refresh_car_visuals()
+		await physics_frame
+		# Read in wheel-node space from LOCAL transforms
+		# (exact the moment the refresh poses them; in this
+		# space the wheel-plane coords are (x, z)).
+		var sp28: Vector3 = main.wheel_spin.transform * main.wheel_centre_stripe.position
+		var tp28: Vector3 = main.wheel_centre_tick.position
+		var disp28: float = wrapf(atan2(sp28.z, sp28.x) - atan2(tp28.z, tp28.x), -PI, PI)
+		check(absf(wrapf(disp28 - wa28, -PI, PI)) < 0.03,
+			"capture %d: at %s the stripe stands %+.2f rad off the tick - the lock, read as an angle" % [28 + li28, String(locks28[li28][2]), disp28])
+		await snap(main.fallback_cam, String(locks28[li28][1]))
+	main.wheel_angle = 0.0
+	main._refresh_car_visuals()
 	main._set_track("circuit")
 
 	print("---")
