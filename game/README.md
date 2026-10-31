@@ -3613,6 +3613,93 @@ economy number (120/60/30/10 stand), any drive feel (the
 census above is number-identical), and the first real
 track — that is the next pass, per your call.
 
+## Fix Pass 27 — Ditch the Green Beam
+
+Base: FP26 final (844efb3). Ordered by the owner live in
+run 22, Fri 2026-10-30 19:21 CDT, with a screenshot from
+the dangle: "we need to ditch the green finish line beam,
+it pops into view sometimes as you're swinging." At the
+FP26 doubled station the sway gives the driver a sky full
+of nothing, and then the gantry's unshaded green span
+slabs across it. The span is the defect; the line was
+never the problem.
+
+### What changed
+
+- **The banner is deleted** — both gantries, both tracks
+  (`_build_gantry` no longer builds a span; its colour
+  parameter went with it). Nothing about the lap changed:
+  the line's s never moved, and no timing or crossing
+  logic ever read the mesh.
+- **The line is road paint now**: a chequered stripe
+  across the full 12 m width at the line's s, 1.0 m deep
+  (2 rows × 12 cells of 1.0 × 0.5 m), riding the edge
+  strips' +0.02 lift, built with `_add_quad_m` in the road
+  mesh family so it inherits the FP18 winding-correct
+  rendering (`TrackLine`, unshaded like the edges).
+  Chequer over plain, on the record: at racing pace the
+  band strobes black/white across the whole width —
+  unmistakable for a line, where a plain band could read
+  as another surface treatment. The circuit wears one
+  stripe at s 2 (start IS the finish); the open ribbon
+  wears two, s 2 and len − 2.
+- **The posts stay** — on geometry, not nostalgia. They
+  stand at ±(HALF_WIDTH + 0.4) at the line's own s: beside
+  the dangling car, never overhead. Stage 57 measures it
+  from the Drop Start dangle eye across seven staged sway
+  samples: worst post-top azimuth **54.1°** off the
+  forward axis, worst elevation **22.6°** (against the
+  car's own up, so the sway tilt inflates it). The banner
+  sat dead ahead spanning the width; a post 54° off-axis
+  is trackside furniture in the crane post's family. The
+  render proof's new capture 23 (`finish_line_view.png`,
+  driver's seat 8 m before the seam) shows the result:
+  chequer band across the road, a post flanking each
+  edge, clean sky.
+
+### Amendments (flagged, never silent)
+
+- **Stage 57 (new)**: no Gantry child is a span on either
+  track (every member post-sized); the TrackLine mesh
+  carries near-white AND near-black chequer vertices at
+  the line's s on both tracks (nearest stripe vertex
+  0.020 m from the line centre); the post sightline
+  geometry above. Its elevation bound is 30°, moved from
+  a 20° first form on the stage's own first run, which
+  measured 22.6° — the mechanism (car-space elevation
+  under sway tilt, at 54° azimuth) is recorded in the
+  stage's comment. The azimuth bound (50°) never moved.
+- No prior stage's expectations were amended; no prior
+  stage asserted the banner's presence anywhere (the
+  smoke's "gantry rule" is the drop-station rule, a
+  different thing, untouched).
+- Render proof gains capture 23 and two checks: chequer
+  presence in the road band (sampled white 362 / black
+  385 px against bounds of 8 / 4) and banner-green
+  absence in the sky band (0 px).
+
+### Verification
+
+Smoke **515/515** (510 at FP26 + stage 57's 5), API
+guard **70/70**. Drive census frame-identical, proven by
+diff against a baseline smoke run on the pristine FP26
+tree in the same session (510/510 there): every baseline
+PASS line appears identically in the FP27 run, and with
+wall-clock annotations normalised the only differing
+evidence print in the entire run is stage 57's own new
+line. Render proof **148/149**; the one failure is the
+wheel-hub reach band (0.31 m), A/B-proven a sandbox
+seat-trim artifact — the pristine FP26 tree, run as a
+control in the same session, fails the identical check
+at the identical value (144/145). All proof captures
+rendered through the sandbox's Compatibility/llvmpipe
+stack — structure and geometry only, not colour truth.
+
+### What you're judging (run 23)
+
+A finish line you cross, not one that falls across your
+sky. Nothing else in this pass.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
