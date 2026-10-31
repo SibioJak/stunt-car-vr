@@ -635,15 +635,41 @@ func _run() -> void:
 	var la0: float = rep_ang2b.call(l_rep_0)
 	check(absf(wrapf(la0 - 0.6, -PI, PI)) < 0.05,
 		"both-hands: the passenger rep sits at its grab point (%.2f rad)" % la0)
+	# Fix Pass 29 (Item 3) - AMENDED EXPECTATIONS, flagged:
+	# this block was written under the FP16 law, where the
+	# DRIVER's around-hub delta steered even with a passenger
+	# aboard (driver moves 0.5 rad -> wheel 0.5 rad). FP29's
+	# LINE steering replaces it: the delta is the rotation of
+	# the chord between the two hands. Moving ONE hand 0.5 rad
+	# about the hub with the other fixed rotates the chord by
+	# only ~0.25 rad (chord geometry - both hands on the same
+	# rim circle), so the wheel's expected turn is the chord
+	# delta computed independently here from the hand
+	# positions, and the passenger's ride equals the WHEEL's
+	# turn, whatever it is. (The FP29 build also bases the
+	# line reference at the ATTACH, in _update_rim_attach -
+	# basing it at the driver's next poll swallowed this whole
+	# staged move: delta 0.0 measured during FP29 staging.)
+	var chord_ang2b = func(a: Vector3, b: Vector3) -> float:
+		var pa: Vector3 = main.car.to_local(a) - hub_l2b
+		var pb: Vector3 = main.car.to_local(b) - hub_l2b
+		var lv: Vector2 = Vector2(pb.x, pb.dot(pv2b)) - Vector2(pa.x, pa.dot(pv2b))
+		return atan2(lv.y, lv.x)
+	var r_pos0_2b: Vector3 = main.test_hand_pos["R"]
+	var l_pos0_2b: Vector3 = main.test_hand_pos["L"]
+	var chord0_2b: float = chord_ang2b.call(r_pos0_2b, l_pos0_2b)
 	var wa2b: float = main.wheel_angle
 	main.test_hand_pos["R"] = rim_pt2b.call(0.25, -0.1)
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(absf(wrapf(main.wheel_angle - wa2b - 0.5, -PI, PI)) < 0.05,
-		"both-hands: the driver turns the wheel 0.5 rad")
+	var r_pos1_2b: Vector3 = main.test_hand_pos["R"]
+	var chord1_2b: float = chord_ang2b.call(r_pos1_2b, l_pos0_2b)
+	var exp_turn2b: float = wrapf(chord1_2b - chord0_2b, -PI, PI)
+	check(absf(wrapf(main.wheel_angle - wa2b - exp_turn2b, -PI, PI)) < 0.05 and absf(exp_turn2b) > 0.15,
+		"both-hands: the driver turns the wheel by the LINE delta (%.2f rad, FP29 line law)" % exp_turn2b)
 	await physics_frame
 	var l_rep_1: Vector3 = main.ctrl_rep["L"].global_position
 	var la1: float = rep_ang2b.call(l_rep_1)
-	check(absf(wrapf(la1 - la0 - 0.5, -PI, PI)) < 0.05,
+	check(absf(wrapf(la1 - la0 - (main.wheel_angle - wa2b), -PI, PI)) < 0.05,
 		"both-hands: the passenger rep RIDES the rim (%.2f -> %.2f rad)" % [la0, la1])
 	var hub_w2b: Vector3 = main.car.global_transform * hub_l2b
 	check(absf(l_rep_1.distance_to(hub_w2b) - l_rep_0.distance_to(hub_w2b)) < 0.01,

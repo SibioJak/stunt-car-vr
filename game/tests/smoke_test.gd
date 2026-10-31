@@ -102,6 +102,7 @@ func check_api_surface() -> void:
 		["XRServer", "find_interface"], # main.gd: XRServer.find_interface("OpenXR")
 		["XRInterface", "is_initialized"], # main.gd: xr_interface.is_initialized()
 		["XRController3D", "get_input"], # main.gd: ctrl.get_input(action)
+		["XRController3D", "get_vector2"], # Fix Pass 29 (Item 4): main.gd _stick_vec: ctrl.get_vector2("primary")
 		["XRServer", "get_tracker"], # main.gd: XRServer.get_tracker(&"head")
 		["XRPositionalTracker", "get_pose"], # main.gd: pose_tracker.get_pose(&"default")
 		["XRNode3D", "get_has_tracking_data"], # XRNode3D surface the controllers/camera rig conceptually relies on
@@ -3096,12 +3097,34 @@ func _run() -> void:
 		"stage32: a short Y stab in the hang does not restart (race_time %.1f)" % main.race_time)
 	check(main.hang_btn_log.size() == 1 and main.hang_btn_log[0].ends_with(":LY"),
 		"stage32: the Y stab is named in the hang input log (%s)" % str(main.hang_btn_log))
+	# AMENDED (FP29, Item 5, FLAGGED): FP13-FP28 staged "X
+	# in the hang is inert (the crane call is DRIVE-only)".
+	# FP29 gives X the drop in the hang - the owner's call
+	# ("just wanna hit Y or X and be done with it") - while
+	# the crane call stays DRIVE-only: the modes never
+	# overlap, so X keeps both jobs. The press below must
+	# now FIRE: the note still logs, the RELEASE record is
+	# written, and the car leaves the chains. The stage
+	# then re-dangles so the boost-arming checks below run
+	# in the hang they were written against.
+	var mark32x: int = main.grab_events.size()
 	(main.test_btn["L"] as Dictionary)["ax_button"] = true
 	main._poll_xr_buttons(0.016)
 	(main.test_btn["L"] as Dictionary)["ax_button"] = false
 	main._poll_xr_buttons(0.016)
-	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
-		"stage32: X in the hang is inert (the crane call is DRIVE-only)")
+	var ev32x: String = ""
+	for ei32x: int in range(mark32x, main.grab_events.size()):
+		ev32x += main.grab_events[ei32x] + " "
+	check(main.mode == main.MODE_AIR and ev32x.contains("LX DROP FIRE") and ev32x.contains("RELEASE"),
+		"stage32: X in the hang DROPS (FP29) - its own event line and the heading record (%s)" % ev32x.strip_edges())
+	check(main.hang_btn_log.size() == 2 and main.hang_btn_log[1].ends_with(":LX"),
+		"stage32: the X press is still named in the hang input log (%s)" % str(main.hang_btn_log))
+	var drv32x: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv32x, "stage32: the X drop lands into DRIVE")
+	main.start_race()
+	var dang32x: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+	check(dang32x, "stage32: dangling again after the X drop")
+	main.dip_timer = 1000.0
 	(main.test_btn["R"] as Dictionary)["ax_button"] = true
 	main._poll_xr_buttons(0.016)
 	check(not main.in_boost and main.boost_arm_blocked,
@@ -4731,7 +4754,8 @@ func _run() -> void:
 	# button pressed with the wheel FREE. (b) holds the wheel
 	# and moves INTO the button's zone mid-squeeze - no press.
 	# (b2) enters both volumes in one fresh squeeze - nearest
-	# wins. (e) takes a dash latch to the wheel (unchanged).
+	# wins. (e) takes a dash latch to the wheel (AMENDED by
+	# FP29, Item 2a: the transfer now succeeds - see there).
 	# (d) stages the button's own telemetry: SPENT in attach,
 	# FIRE + the RELEASE record at the dangle, on disk.
 	main.test_hand_set = true
@@ -4873,12 +4897,30 @@ func _run() -> void:
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	var eva47e: String = ev47.call(mark47e)
-	check(main.grab_hand == "" and not eva47e.contains("L WHEEL LAT"),
-		"stage47: (e) a dash-latched hand cannot take the wheel mid-squeeze")
+	# AMENDED (FP29, Item 2a, FLAGGED): FP17 staged the
+	# opposite law in the two checks that stood here - "a
+	# dash-latched hand cannot take the wheel mid-squeeze"
+	# (ownership ended only on grip release, so the wheel
+	# stayed unlatched and no WHEEL LAT was recorded). The
+	# owner's ruling repealed it for the wheel: pressing a
+	# button and then needing the wheel was a two-step -
+	# release, re-squeeze - at the worst moment. The
+	# seat-latched hand that has left the dash zones and
+	# arrived at the rim now takes the wheel IN THE SAME
+	# POLL; the transfer ends the seat latch cleanly (its
+	# SEATUP REL is written by the transfer, below), and
+	# the wheel steers on the next poll.
+	check(main.grab_hand == "L" and eva47e.contains("L WHEEL LAT"),
+		"stage47: (e) FP29 - a dash-latched hand arriving at the wheel takes it in one step")
+	check(int(main.dash_ctl_fired["L"]) == -1 and eva47e.contains("SEATUP REL"),
+		"stage47: (e) the transfer ends the seat latch cleanly (SEATUP REL, written by the transfer)")
+	var wa47e: float = main.wheel_angle
+	main.test_hand_pos["L"] = rim_pt47.call(0.25, phi_low47 + 0.3)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(absf(wrapf(main.wheel_angle - wa47e - 0.3, -PI, PI)) < 0.06,
+		"stage47: (e) the transferred hand steers on the next poll (wheel %+.2f rad)" % (main.wheel_angle - wa47e))
 	main.test_grip["L"] = 0.0
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
-	check(ev47.call(mark47e).contains("SEATUP REL"),
-		"stage47: (e) the seat lever's release is logged (SEATUP REL - Item 2)")
 	# (d) the button's telemetry: FIRE + the RELEASE
 	# heading record - in ATTACH since Fix Pass 22 (the
 	# gate is deleted; FP20's SPENT-in-attach expectation
@@ -6114,6 +6156,228 @@ func _run() -> void:
 	check(attributed58 >= float(aud58["air_s"]) - 3.5,
 		"stage58 audit: per-piece sums account for the lap (unattributed %.2f s)" % [float(aud58["air_s"]) - attributed58])
 	main._set_track("circuit")
+
+	# ---------- stage 59: Fix Pass 29 - THE WHEEL, REBUILT ----
+	# The steering semantics pass, staged through the same
+	# production paths the headset runs: posed hands through
+	# _poll_grab, posed buttons through _poll_xr_buttons,
+	# posed stick axes through _poll_stick_steer. The claims,
+	# in the brief's order: the mode toggle input + its
+	# persistence; X drops from the hang; STICK mode steers
+	# from rest and a grab seizes/returns; an ungripped
+	# wheel HOLDS its angle; the regrip is one step; the
+	# clamp absorbs overshoot; two hands steer by their
+	# line, joining/leaving/crossing without a jump; the
+	# WHEEL-mode stick fallback answers while ungripped and
+	# yields to a grab with no jump.
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await frames(4)
+	main.dip_timer = 1000.0
+	var hub59: Vector3 = main._wheel_hub_local()
+	var pv59: Vector3 = main._wheel_plane_v()
+	var rim59 = func(r: float, phi: float) -> Vector3:
+		return main.car.global_transform * (hub59 + r * (Vector3.RIGHT * cos(phi) + pv59 * sin(phi)))
+	var far59 = func() -> Vector3:
+		return main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_hand_set = true
+	main.test_grip["L"] = 0.0
+	main.test_grip["R"] = 0.0
+	main.test_hand_pos["L"] = far59.call()
+	main.test_hand_pos["R"] = far59.call()
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.steer_mode == 0, "stage59: the suite boots in WHEEL steer mode")
+	# (i) the toggle input: hold R A in the hang.
+	(main.test_btn["R"] as Dictionary)["ax_button"] = true
+	for ia59: int in 100:
+		main._poll_xr_buttons(1.0 / 90.0)
+	check(main.steer_mode == 1 and main.contact_label.text.begins_with("STEER MODE:"),
+		"stage59: holding R A in the hang flips STEERING MODE to STICK, announced (%s)" % main.contact_label.text)
+	(main.test_btn["R"] as Dictionary)["ax_button"] = false
+	main._poll_xr_buttons(0.016)
+	main.steer_mode = 0 # the persistence probe: the file must restore what the toggle saved
+	main._load_settings()
+	check(main.steer_mode == 1, "stage59: the mode persists across a save/load cycle")
+	# (ii) X drops from the hang (the item's own proof;
+	# stage 32 carries the amended gate expectation too).
+	var mark59: int = main.grab_events.size()
+	(main.test_btn["L"] as Dictionary)["ax_button"] = true
+	main._poll_xr_buttons(0.016)
+	(main.test_btn["L"] as Dictionary)["ax_button"] = false
+	main._poll_xr_buttons(0.016)
+	var ev59: String = ""
+	for ei59: int in range(mark59, main.grab_events.size()):
+		ev59 += main.grab_events[ei59] + " "
+	check(main.mode == main.MODE_AIR and ev59.contains("LX DROP FIRE"),
+		"stage59: X in the hang fires the drop (events: %s)" % ev59.strip_edges())
+	check(main.hang_btn_log.size() > 0 and main.hang_btn_log[main.hang_btn_log.size() - 1].ends_with(":LX"),
+		"stage59: the X press is named in the hang input log")
+	var drv59: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv59, "stage59: the X drop lands into DRIVE")
+	# (iii) STICK mode: the stick steers from rest; a wheel
+	# grab seizes; releasing returns authority to the stick.
+	var wa59: float = main.wheel_angle
+	main.test_stick["R"] = Vector2(1.0, 0.0)
+	main._poll_stick_steer(0.5)
+	check(absf(main.wheel_angle - wa59 - 1.3) < 0.05,
+		"stage59: STICK mode - full stick for 0.5 s turns the wheel at 2.6 rad/s (%+.2f rad)" % (main.wheel_angle - wa59))
+	check(main._steer_source() == "STICK", "stage59: DIAG source reads STICK in stick mode")
+	main.test_hand_pos["R"] = rim59.call(0.25, 0.0)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.grab_hand == "R" and main._steer_source() == "WHEEL",
+		"stage59: a wheel grab in STICK mode seizes steering")
+	wa59 = main.wheel_angle
+	main._poll_stick_steer(0.5)
+	check(absf(main.wheel_angle - wa59) < 0.001,
+		"stage59: the stick is silent while the wheel is held")
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_stick["R"] = Vector2.ZERO
+	check(main.grab_hand == "" and main._steer_source() == "STICK",
+		"stage59: releasing the wheel returns authority to the stick, angle held")
+	# (iv) back to WHEEL mode for the wheel's own proofs.
+	main._toggle_steer_mode()
+	check(main.steer_mode == 0, "stage59: toggled back to WHEEL mode")
+	# (v) HOLD: dial a lock at speed, let go, and the angle
+	# is EXACTLY where the hand left it 2.0 s later.
+	main.debug_pin_speed(20.0)
+	main.test_hand_pos["R"] = rim59.call(0.25, 0.0)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	wa59 = main.wheel_angle
+	main.test_hand_pos["R"] = rim59.call(0.25, 0.6)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(wrapf(main.wheel_angle - wa59 - 0.6, -PI, PI)) < 0.05,
+		"stage59: the lock dials in (%+.2f rad)" % (main.wheel_angle - wa59))
+	wa59 = main.wheel_angle
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_pos["L"] = far59.call()
+	main.test_hand_pos["R"] = far59.call()
+	for ih59: int in 120:
+		main._poll_grab("L", main.hand_ctrl["L"], 1.0 / 60.0)
+		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 60.0)
+	check(absf(main.wheel_angle - wa59) < 0.001,
+		"stage59: HOLD - 2.0 s ungripped in DRIVE, the wheel_angle is untouched (%.4f rad)" % main.wheel_angle)
+	check(main._steer_source() == "-", "stage59: no source steers at rest in WHEEL mode")
+	# (vi) ONE-STEP REGRIP: a dash latch (LEAN) taken to the
+	# wheel in the same squeeze - the transfer fires, the
+	# latch ends clean, the next poll steers.
+	var lean59: int = main.dash_ctl_kinds.find("lean")
+	var lseg59: Array[Vector3] = main._dash_ctl_segment(lean59)
+	main.test_hand_pos["L"] = (lseg59[0] + lseg59[1]) * 0.5
+	main.test_grip["L"] = 1.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(int(main.dash_ctl_fired["L"]) == lean59, "stage59: the LEAN latch is L's (dash owner)")
+	main.test_hand_pos["L"] = rim59.call(0.25, PI / 2.0)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(main.grab_hand == "L" and int(main.dash_ctl_fired["L"]) == -1,
+		"stage59: ONE STEP - the dash-latched hand arriving at the wheel takes it, latch ended")
+	wa59 = main.wheel_angle
+	main.test_hand_pos["L"] = rim59.call(0.25, PI / 2.0 + 0.3)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(absf(wrapf(main.wheel_angle - wa59 - 0.3, -PI, PI)) < 0.06,
+		"stage59: the transferred hand steers on the next poll (%+.2f rad)" % (main.wheel_angle - wa59))
+	main.test_grip["L"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	# (vii) CLAMP ABSORPTION: past the lock by 30 deg, back
+	# 10 - the wheel answers on the first degree back.
+	main.wheel_angle = PI - 0.2
+	main.test_hand_pos["R"] = rim59.call(0.25, 0.0)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_pos["R"] = rim59.call(0.25, 0.2)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - PI) < 0.01,
+		"stage59: the wheel pins at the lock (%.3f rad)" % main.wheel_angle)
+	main.test_hand_pos["R"] = rim59.call(0.25, 0.72)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - PI) < 0.01,
+		"stage59: 30 deg past the lock, the wheel stays pinned (overshoot absorbed)")
+	main.test_hand_pos["R"] = rim59.call(0.25, 0.55)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - (PI - 0.17)) < 0.02,
+		"stage59: return travel bites at once - 10 deg back moves the wheel 10 deg (%.3f rad)" % main.wheel_angle)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	# (viii) TWO-HAND LINE: join (no jump), rotate the line
+	# 30 deg (the wheel follows), leave (no jump), single
+	# hand resumes; then a hub cross (frozen, no spike).
+	main.wheel_angle = 0.0
+	main.test_hand_pos["R"] = rim59.call(0.25, 0.0)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_pos["L"] = rim59.call(0.25, PI)
+	main.test_grip["L"] = 1.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	check(bool(main.rim_attach["L"]), "stage59: the second hand rides the rim")
+	wa59 = main.wheel_angle
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - wa59) < 0.01,
+		"stage59: the join re-bases - wheel jump %.3f deg" % rad_to_deg(absf(main.wheel_angle - wa59)))
+	main.test_hand_pos["R"] = rim59.call(0.25, 0.52)
+	main.test_hand_pos["L"] = rim59.call(0.25, 0.52 + PI)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - wa59 - 0.52) < 0.03,
+		"stage59: the LINE steers - both hands +30 deg, wheel %+.1f deg" % rad_to_deg(main.wheel_angle - wa59))
+	main.test_grip["L"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	wa59 = main.wheel_angle
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - wa59) < 0.01,
+		"stage59: the leave re-bases - wheel jump %.3f deg" % rad_to_deg(absf(main.wheel_angle - wa59)))
+	main.test_hand_pos["R"] = rim59.call(0.25, 0.82)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - wa59 - 0.3) < 0.03,
+		"stage59: single-hand steering resumes after the leave (%+.2f rad)" % (main.wheel_angle - wa59))
+	main.test_hand_pos["L"] = rim59.call(0.25, 0.52 + PI)
+	main.test_grip["L"] = 1.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_pos["L"] = main.car.global_transform * (hub59 + Vector3(0.03, 0.0, 0.0))
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	wa59 = main.wheel_angle
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - wa59) < 0.01,
+		"stage59: a hand at the hub freezes the line - no steering from a degenerate line")
+	main.test_hand_pos["L"] = rim59.call(0.25, 0.52 + PI)
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(absf(main.wheel_angle - wa59) < 0.02,
+		"stage59: the hub-cross exit re-bases - spike %.3f deg" % rad_to_deg(absf(main.wheel_angle - wa59)))
+	main.test_grip["L"] = 0.0
+	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	# (ix) WHEEL-mode stick fallback: answers while
+	# ungripped at the same rate, holds at centre, and a
+	# grab seizes with no jump.
+	main.wheel_angle = 0.4
+	main.test_stick["R"] = Vector2(1.0, 0.0)
+	main._poll_stick_steer(0.5)
+	check(absf(main.wheel_angle - 1.7) < 0.05 and main._steer_source() == "STICK",
+		"stage59: WHEEL mode - the stick fallback steers while ungripped (%.2f rad)" % main.wheel_angle)
+	main.test_stick["R"] = Vector2.ZERO
+	main._poll_stick_steer(0.5)
+	check(absf(main.wheel_angle - 1.7) < 0.001 and main._steer_source() == "-",
+		"stage59: the stick centred, the angle holds")
+	main.test_hand_pos["R"] = rim59.call(0.25, 0.0)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	wa59 = main.wheel_angle
+	main.test_stick["R"] = Vector2(1.0, 0.0)
+	main._poll_stick_steer(0.5)
+	check(main.grab_hand == "R" and absf(main.wheel_angle - wa59) < 0.001,
+		"stage59: a grab seizes from the stick with no angle jump")
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_stick["R"] = Vector2.ZERO
+	main.test_hand_set = false
+	main.wheel_angle = 0.0
+	check(main.steer_mode == 0, "stage59: the suite leaves WHEEL steer mode behind it")
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
