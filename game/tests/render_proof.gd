@@ -400,9 +400,19 @@ func _run() -> void:
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call crane",
 			"restart", "track", "Recenter", "SPACE", "W/S", "V track",
 			"DIAG", "ANCHOR", "CAMH", "HLD", "Jitter", "JIT", "CONTACT",
-			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP BUTTON", "Panels", "TAB",
+			"SEAT+", "SEAT-", "PgUp/PgDn", "SEAT", "DROP BUTTON", "Panels", "TAB",
 			"amber view", "G view", "drop side", "M drop side", "GRAB"]:
 		check(ptxt.contains(kw), "panel lists command keyword: %s" % kw)
+	# AMENDED (FP34, FLAGGED): the sweep required "BOTH"
+	# through FP33 - it was witnessing the panel's
+	# "Recenter: L stick click / BOTH grips" line. FP34
+	# deletes the both-grips recenter, so the line now names
+	# the stick click alone, and the sweep asserts the new
+	# line present and the dead gesture absent.
+	check(ptxt.contains("Recenter: L stick click"),
+		"panel lists the recenter as the left stick click (FP34)")
+	check(not ptxt.contains("BOTH grips"),
+		"panel no longer lists the deleted both-grips recenter (FP34)")
 	check(main.wheel_node != null, "grab wheel exists")
 	# Fix Pass 13 (Item 1): the prep switches are deleted -
 	# the dash top is bare and exactly five dash controls

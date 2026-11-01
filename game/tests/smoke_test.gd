@@ -20,6 +20,14 @@ extends SceneTree
 ## Fix Pass 33: stage 62 = the build stamp (the BUILD_STAMP
 ## constant's FPnn · YYYY-MM-DD format, and the stamp labels
 ## on BOTH cameras carrying it verbatim).
+## Fix Pass 34: stage 63 = nothing moves the view but the
+## driver (the position-only restart anchor at +-20 deg of
+## head yaw, the explicit recenter bake as the control, the
+## deleted both-grips recenter squeezed in AIR and DRIVE,
+## the TRK press end to end); stage 22(c) is re-derived
+## from the retired yaw cone and stage 32's two gate checks
+## become behavioural squeeze controls - both flagged in
+## place.
 ## Fix Pass 6 stages: 2e = driver-body seat spring (sink depth,
 ## phase lag behind the car springs, ordering by impact, zero at
 ## rest); 2f = 8 m road width + the engine/skid audio state
@@ -2389,31 +2397,54 @@ func _run() -> void:
 	main.test_grip["R"] = 0.0
 	main.test_hand_set = false
 	main._apply_seat_trim(0.0)
-	# (c) The yaw cone through the production anchor math: the
-	# deviation helper on known forwards, then a posed head -
-	# 40 deg off, an AUTOMATIC apply must land translation only
-	# and owe the yaw; the explicit bake (what the cone watch and
-	# every recenter call) settles it. The stability-gate chain
-	# that decides WHEN these run is live-rig only (XRServer has
-	# no tracked head here) and stays on the unverified list.
+	# (c) The anchor law through the production anchor math.
+	# AMENDED (FP34, FLAGGED): FP11-FP33 staged the yaw CONE -
+	# an automatic apply at 40 deg off landed translation only
+	# and OWED the yaw (anchor_yaw_pending), the debt settling
+	# when the head entered the cone or a recenter baked. FP34
+	# retires the cone on the owner's field evidence (his TRK
+	# video: a ~15-20 deg head turn - INSIDE the cone - baked
+	# anyway): an automatic apply now lands translation only
+	# at ANY head angle and preserves the seat's yaw basis
+	# EXACTLY, with no debt state at all; the explicit bake is
+	# the only yaw path and is asserted as the control. The
+	# stability-gate chain that decides WHEN these run is
+	# live-rig only (XRServer has no tracked head here) and
+	# stays on the unverified list. Stage 63 stages the full
+	# restart/TRK/squeeze paths under the same law.
 	check(absf(main._yaw_dev_of(Vector3(0, 0, -1))) < 0.001
 		and absf(main._yaw_dev_of(Vector3(1, 0, 0)) - PI / 2.0) < 0.001
 		and absf(main._yaw_dev_of(Vector3(-1, 0, 0)) + PI / 2.0) < 0.001,
 		"stage22: yaw deviation helper reads 0 / +90 / -90 deg")
+	var props22: Dictionary = {}
+	for p22: Dictionary in main.get_property_list():
+		props22[String(p22["name"])] = true
+	check(not props22.has("anchor_yaw_pending"),
+		"stage22: the yaw-debt state is deleted with the cone (FP34)")
 	main.seat_offset.transform = Transform3D.IDENTITY
 	main.origin.rotation = Vector3(0.0, deg_to_rad(40.0), 0.0)
 	await frames(2)
 	var yawed22: bool = main._apply_seat_anchor(false)
-	check(not yawed22 and main.anchor_yaw_pending,
-		"stage22: automatic apply at 40 deg off lands translation only (yaw owed)")
+	check(not yawed22 and main.seat_offset.transform.basis.is_equal_approx(Basis.IDENTITY),
+		"stage22: automatic apply at 40 deg off lands translation only, seat yaw preserved exactly (FP34)")
 	var cam_car22: Transform3D = main._cam_in_car()
 	check((cam_car22.origin - main._eye_anchor()).length() < 0.01,
 		"stage22: translation landed the eye on the anchor (err %.3f m)" % (cam_car22.origin - main._eye_anchor()).length())
+	# 20 deg off: INSIDE FP11's cone - the old law baked here.
+	# The new law must preserve the yaw just the same.
+	main.origin.rotation = Vector3(0.0, deg_to_rad(20.0), 0.0)
+	await frames(2)
+	var yawed22b: bool = main._apply_seat_anchor(false)
+	check(not yawed22b and main.seat_offset.transform.basis.is_equal_approx(Basis.IDENTITY),
+		"stage22: automatic apply at 20 deg off (the old cone's bake zone) still preserves the seat yaw exactly (FP34)")
+	var cam_car22b: Transform3D = main._cam_in_car()
+	check((cam_car22b.origin - main._eye_anchor()).length() < 0.01,
+		"stage22: translation landed the eye on the anchor again (err %.3f m)" % (cam_car22b.origin - main._eye_anchor()).length())
 	main.origin.rotation = Vector3.ZERO
 	await frames(2)
 	var baked22: bool = main._apply_seat_anchor(true)
-	check(baked22 and not main.anchor_yaw_pending,
-		"stage22: explicit bake applies the yaw and clears the debt")
+	check(baked22,
+		"stage22: explicit bake still applies the yaw - the recenter's path, and only the recenter's (FP34 control)")
 	main.seat_offset.transform = Transform3D.IDENTITY
 	check(main._build_diag_block().contains("SEAT +0.00"),
 		"stage22: DIAG shows the seat trim")
@@ -3208,8 +3239,24 @@ func _run() -> void:
 	main.dip_timer = 1000.0
 	main.hang_btn_log.clear()
 	main.race_time = 42.0
-	check(not main._recenter_allowed(),
-		"stage32: the both-grips recenter is suppressed in the hang")
+	# AMENDED (FP34, FLAGGED): FP13-FP33 asserted the
+	# both-grips recenter's GATE here (suppressed in the
+	# hang). FP34 deletes the gesture and its gate whole, so
+	# the claim becomes behavioural: a both-grips squeeze in
+	# the hang - the exact FP13 mid-sway mystery - leaves the
+	# anchor state untouched. There is no gate left to ask.
+	var ap32h: bool = main.anchor_pending
+	var as32h: String = main.anchor_state
+	var ab32h: Basis = main.seat_offset.transform.basis
+	main.gripping["L"] = true
+	main.gripping["R"] = true
+	main._poll_xr_buttons(0.016)
+	main._poll_xr_buttons(0.016)
+	main.gripping["L"] = false
+	main.gripping["R"] = false
+	check(main.anchor_pending == ap32h and main.anchor_state == as32h
+		and main.seat_offset.transform.basis.is_equal_approx(ab32h),
+		"stage32: both grips squeezed in the hang fire NO recenter - anchor untouched (FP34)")
 	(main.test_btn["L"] as Dictionary)["by_button"] = true
 	main._poll_xr_buttons(0.016)
 	(main.test_btn["L"] as Dictionary)["by_button"] = false
@@ -3267,8 +3314,24 @@ func _run() -> void:
 	check(main.in_boost, "stage32: a fresh A press after landing boosts")
 	(main.test_btn["R"] as Dictionary)["ax_button"] = false
 	main._poll_xr_buttons(0.016)
-	check(main._recenter_allowed(),
-		"stage32: the recenter is allowed in DRIVE with no control held")
+	# AMENDED (FP34, FLAGGED): the FP13-FP33 claim "the
+	# recenter is allowed in DRIVE with no control held" is
+	# retired with the gate - under the new law NO squeeze
+	# in DRIVE may recenter either, control held or not:
+	# two-handed steering is not a recenter. Stage 63
+	# stages the same-frame case from a no-hands state.
+	var ap32d: bool = main.anchor_pending
+	var as32d: String = main.anchor_state
+	var ab32d: Basis = main.seat_offset.transform.basis
+	main.gripping["L"] = true
+	main.gripping["R"] = true
+	main._poll_xr_buttons(0.016)
+	main._poll_xr_buttons(0.016)
+	main.gripping["L"] = false
+	main.gripping["R"] = false
+	check(main.anchor_pending == ap32d and main.anchor_state == as32d
+		and main.seat_offset.transform.basis.is_equal_approx(ab32d),
+		"stage32: both grips squeezed in DRIVE fire NO recenter - anchor untouched (FP34)")
 	# long-press Y in a fresh hang restarts deliberately
 	main.start_race()
 	var dang32b: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
@@ -6808,6 +6871,130 @@ func _run() -> void:
 		"stage62: the stamp label rides the fallback camera")
 	check(main.stamp_label_fb != null and main.stamp_label_fb.text == stamp62,
 		"stage62: the fallback camera's stamp reads the constant verbatim")
+
+	# Stage 63 (Fix Pass 34): NOTHING MOVES THE VIEW BUT THE
+	# DRIVER. The owner's field video convicted the old law:
+	# TRK pressed with the head turned ~15-20 deg toward the
+	# dash yawed the view and it stayed yawed - the restart's
+	# automatic anchor arm baked inside FP11's 25 deg cone.
+	# His own seat report named the second defect: both grips
+	# squeezed IS two-handed steering, yet FP11 made it a
+	# recenter (explicit bake) behind a gate with a
+	# same-frame hole. The law now: a non-explicit arm lands
+	# POSITION ONLY, the seat's yaw basis preserved exactly;
+	# the both-grips recenter is deleted, gate and all; the
+	# left stick click is the only recenter and its bake
+	# survives below as the control. The stability gate that
+	# TIMES applications is live-rig only (no tracked head
+	# here), so - exactly like stage 22 - this stage drives
+	# the arm/apply calls the gate would make.
+	# (a) The restart arm is non-explicit, and its apply at
+	# +-20 deg of head yaw moves the seat yaw by 0.000 while
+	# the eye position re-seats.
+	main.start_race()
+	check(main.anchor_pending and not main.anchor_bake_yaw,
+		"stage63: start_race arms the anchor NON-explicitly (the position-only law)")
+	main.seat_offset.transform = Transform3D.IDENTITY
+	for dev63: float in [20.0, -20.0]:
+		main.origin.rotation = Vector3(0.0, deg_to_rad(dev63), 0.0)
+		await frames(2)
+		var byaw63: float = main.seat_offset.transform.basis.get_euler().y
+		var yawed63: bool = main._apply_seat_anchor(false)
+		var dyaw63: float = absf(wrapf(main.seat_offset.transform.basis.get_euler().y - byaw63, -PI, PI))
+		check(not yawed63 and dyaw63 < 0.0001,
+			"stage63: restart apply with the head yawed %+.0f deg - seat yaw delta %.4f rad, position only (FP34)" % [dev63, dyaw63])
+		var cam_car63: Transform3D = main._cam_in_car()
+		check((cam_car63.origin - main._eye_anchor()).length() < 0.01,
+			"stage63: the restart apply re-seats the eye position (err %.3f m)" % (cam_car63.origin - main._eye_anchor()).length())
+	main.origin.rotation = Vector3.ZERO
+	await frames(2)
+	# (b) The explicit recenter still bakes (the control).
+	# _recenter gates on xr_ok, which headless never sets;
+	# flip it for the synchronous call only (no frame runs
+	# under it) - the arm it makes is the production one the
+	# left stick click lands on a live rig.
+	main.seat_offset.transform = Transform3D.IDENTITY
+	main.origin.rotation = Vector3(0.0, deg_to_rad(20.0), 0.0)
+	await frames(2)
+	main.xr_ok = true
+	main._recenter()
+	main.xr_ok = false
+	check(main.anchor_pending and main.anchor_bake_yaw,
+		"stage63: the recenter arms EXPLICIT - the bake survives where it belongs")
+	var baked63: bool = main._apply_seat_anchor(main.anchor_bake_yaw)
+	main.anchor_bake_yaw = false
+	main.anchor_pending = false
+	check(baked63 and absf(main._head_yaw_dev()) < 0.01,
+		"stage63: the explicit application bakes the posed head onto the car's forward (dev %.3f rad)" % absf(main._head_yaw_dev()))
+	main.origin.rotation = Vector3.ZERO
+	await frames(2)
+	main.seat_offset.transform = Transform3D.IDENTITY
+	# (c) The both-grips squeeze fires NOTHING - in the air
+	# and on the ground, both hands landing in the same poll
+	# from a no-hands state (the gate's old same-frame hole).
+	check(not main.has_method("_recenter_allowed"),
+		"stage63: the recenter gate is deleted with the gesture (FP34)")
+	main.start_race()
+	var dang63: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+	check(dang63, "stage63: dangling for the squeeze controls")
+	main.dip_timer = 1000.0
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	main._do_release()
+	check(main.mode == main.MODE_AIR,
+		"stage63: airborne for the squeeze control")
+	var ap63a: bool = main.anchor_pending
+	var as63a: String = main.anchor_state
+	var ab63a: Basis = main.seat_offset.transform.basis
+	main.gripping["L"] = true
+	main.gripping["R"] = true
+	main._poll_xr_buttons(0.016)
+	main._poll_xr_buttons(0.016)
+	main.gripping["L"] = false
+	main.gripping["R"] = false
+	check(main.anchor_pending == ap63a and main.anchor_state == as63a
+		and main.seat_offset.transform.basis.is_equal_approx(ab63a),
+		"stage63: both grips landing together in AIR fire NO recenter - anchor untouched (FP34)")
+	var drv63: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(drv63, "stage63: the drop lands into DRIVE")
+	var ap63d: bool = main.anchor_pending
+	var as63d: String = main.anchor_state
+	var ab63d: Basis = main.seat_offset.transform.basis
+	main.gripping["L"] = true
+	main.gripping["R"] = true
+	main._poll_xr_buttons(0.016)
+	main._poll_xr_buttons(0.016)
+	main.gripping["L"] = false
+	main.gripping["R"] = false
+	check(main.anchor_pending == ap63d and main.anchor_state == as63d
+		and main.seat_offset.transform.basis.is_equal_approx(ab63d),
+		"stage63: both grips landing together in DRIVE fire NO recenter - anchor untouched (FP34)")
+	# (d) The TRK press itself, end to end through
+	# _poll_grab: the track cycles, and the restart it
+	# causes arms position-only.
+	main.start_race()
+	var dang63d: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+	check(dang63d, "stage63: dangling for the TRK press")
+	var trk63: int = main.dash_ctl_kinds.find("track")
+	var before63: String = main.active_track
+	var seg63: Array = main._dash_ctl_segment(trk63)
+	main.test_hand_set = true
+	main.test_hand_pos["R"] = ((seg63[0] as Vector3) + (seg63[1] as Vector3)) * 0.5
+	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
+	main.test_grip["R"] = 0.0
+	main.test_grip["L"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	check(main.active_track != before63,
+		"stage63: the TRK press cycles the track (%s -> %s)" % [before63, main.active_track])
+	check(main.anchor_pending and not main.anchor_bake_yaw,
+		"stage63: the TRK restart arms the anchor position-only (FP34)")
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
+	main.test_hand_set = false
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")
