@@ -405,7 +405,7 @@ const REBOUND_LOAD_FLOOR: float = 0.8 # rebound route needs the road fully suppo
 # last half second. Gentle returns and sagging chases
 # (the climb-top bleed never compresses deep) stay grounded.
 const REBOUND_FIRE_TRAVEL: float = 0.16 # mean compression (m) at/below which a committed return separates
-const REBOUND_DEEP_HIT: float = 0.22 # mean compression (m) that counts as stored energy
+const REBOUND_DEEP_HIT: float = 0.20 # mean compression (m) that counts as stored energy (FP32 re-derivation, flagged: FP14 set 0.22 against the instant-set law, where a vy 4.1 landing was SET to 0.285 and evidence was plentiful; the velocity-entry stroke peaks the same landing at 0.218 - measured on the stage-36 trace - so the line that means "a landing with real stored energy" moves to where that energy now lives. The throw's other terms - fire travel, velocity floor, load floor, chain rule - are untouched)
 const REBOUND_DEEP_HIT_WINDOW: float = 0.5 # seconds a deep hit stays evidence
 # Fix Pass 14 (Item 1) - THE REBOUND, energy-gated. The film
 # study's headline: every big jump in the original lands and
@@ -455,6 +455,38 @@ const REBOUND_RETURN_DEPTH: float = 0.24 # compression (m) past which the return
 const REBOUND_RETURN_K_MULT: float = 3.0 # spring-rate multiplier on the gated return
 const REBOUND_RETURN_DAMP_MULT: float = 0.5 # extension-damping multiplier on the gated return
 const REBOUND_GATE_EXPIRY_S: float = 1.2 # an unfired gate lapses (a later crest strike is not a landing return)
+# Fix Pass 32 (Item 1) - THE LANDING AS A MOTION. FP5 set the
+# touchdown compression INSTANTLY from impact speed (c = REST +
+# vy * 0.045: a state, not a stroke). The FP32 probe on the FP31
+# build measured the result: time-to-peak 0.011-0.033 s at every
+# severity, and vy 6.0 / 8.5 INDISTINGUISHABLE (both teleported
+# to the travel clamp) - the flat, rigid arrival Chris convicted
+# from his lab-lap video ("isn't sinking down"). The impact now
+# enters ONLY as compression velocity: the compression keeps
+# its arriving integrated state (droop after a long flight,
+# partial after a texture hop) and the spring drives the stroke
+# from there - developing over ~0.15-0.25 s, overshooting once,
+# settling in ~1 s (the film law). The factor is staged from
+# the spring's own energy: excursion ~= cv / sqrt(SUSP_K),
+# damped to ~x0.75 of that at zeta 0.44. The front bias keeps
+# FP5's per-axle sequencing (the nose arrives first, so the
+# front's stroke leads the rear's) - carried from the old
+# instant DEPTH factors to the velocity, where it now also
+# staggers the stroke in time.
+const LAND_CV_K: float = 0.85 # compression velocity per m/s of impact vy (measured up in two steps at real arrivals: 0.58 peaked the Drop Start's droop-arrival stroke at 0.216 - 4 mm under the rebound's deep-hit evidence - and fired the gated gap throw at 2.37 against its 2.6 proof line; 0.72 registered the deep hit (peak 0.245) but the return crossed the fire travel at cv sum -2.16, a 1.19 m/s throw the air window's vy < 0.5 bound snatched on the way up (hop 0.029 m) - escape needs ~1.33; 0.85 puts the crossing at ~-2.55 and the throw at ~1.40)
+const LAND_CV_FRONT: float = 1.15 # front-axle bias of the impact velocity
+const LAND_CV_REAR: float = 0.90 # rear-axle bias of the impact velocity
+# The velocity is not delivered in one frame either: at first
+# touch only the tire carcass is loaded - the full impact
+# velocity delivers over LAND_RAMP_S (the contact's own load
+# ramp, CONTACT_LOAD_RAMP_S, is the same idea for grip), with
+# LAND_RAMP_BITE arriving instantly. A one-frame velocity
+# step peaked the stroke at 0.100 s at every severity (the
+# FP32 probe, round 1) - a linear system's peak time answers
+# its input's shape, not its size; the ramp moves the peak
+# into the 0.15-0.25 s band the film law wants.
+const LAND_RAMP_S: float = 0.10 # seconds over which the impact velocity delivers
+const LAND_RAMP_BITE: float = 0.25 # fraction of the impact velocity that arrives at first touch
 # Fix Pass 31: the lean view-tilt amplification constants that
 # stood here (LEAN_VIEW_GAIN / LEAN_TILT_STEP_DEG) are deleted
 # with the lean experiment.
@@ -546,12 +578,24 @@ const ANCHOR_FALLBACK_FRAMES: int = 600
 const BODY_K: float = 100.0 # body spring rate (1/s^2) - softer than SUSP_K
 const BODY_DAMP: float = 5.2 # underdamped: sink, overshoot, settle late
 const BODY_MAX_SINK: float = 0.055 # depth cap, m (a few cm at a hard landing)
-const BODY_IMPULSE_K: float = 0.13 # sink velocity per m/s of touchdown impact
 const BODY_PITCH_K: float = 0.35 # body pitch per unit of sink travel
 const BODY_BRAKE_PITCH_K: float = 0.0016 # forward body pitch per m/s^2 of braking
 const BODY_ACCEL_SINK_K: float = 0.0022 # seat press per m/s^2 of longitudinal accel
 const BODY_CATCH_IMPULSE: float = 0.16 # line-catch thump into the seat, m/s
-const BODY_MIN_IMPULSE: float = 2.2 # impacts below this vy barely register
+# Fix Pass 32 (Item 1): the landing drive of this spring is a
+# FOLLOW, not an impulse. FP6's _body_impulse fired the sink
+# velocity at the touchdown instant - while the old springs
+# were also instant, so the phase law (stage 2e: driver peaks
+# AFTER the car) held; against FP32's motion-law stroke the
+# impulse would peak BEFORE the car's compression and the two
+# sinks would fight. The follow cannot precede what it
+# follows: for LAND_FOLLOW_S after a touchdown the spring's
+# rest point carries a fraction of the suspension's own sink
+# excursion, so the driver's sink is the car's sink, softer
+# and later, by construction. (BODY_IMPULSE_K / BODY_MIN_IMPULSE
+# and _body_impulse are deleted with the instant law.)
+const BODY_FOLLOW_K: float = 0.22 # body-sink follow per metre of suspension sink excursion
+const LAND_FOLLOW_S: float = 1.2 # seconds after a touchdown the follow stays live
 # Fix Pass 6 (Item 3) - engine + skid audio, the project's first
 # audio. Synthesized sources only (generated in code, no assets);
 # audio is an INFORMATION channel: the engine note tracks
@@ -591,6 +635,23 @@ const AUDIO_SONG_MAX_DB: float = -19.0 # the tire song at full band (under the s
 const AUDIO_SONG_FLOOR_DB: float = -34.0 # the song at the band's lower edge
 const AUDIO_RUMBLE_MAX_DB: float = -16.0 # off-road rumble with a full side off the ribbon
 const AUDIO_SCRAPE_MAX_DB: float = -17.0 # edge scrape at full straddle slide
+# Fix Pass 32 (Item 3) - THE CONTACT SOUND. The FP31 build had
+# NO landing voice at all: the probe measured the audio level
+# in the 150 ms after staged touchdowns as identical to the
+# in-flight bed at every severity (margin 0.0 dB) - Chris's
+# "I'm missing sound to sell it", literal. The thump is a
+# one-shot per AXLE (two players, front/rear): _land arms each
+# axle with its share of the impact, and the axle's voice
+# fires at the moment that axle actually loads - its
+# compression crossing rest still driving in - so a
+# nose-first landing's thump lands with the front, and a flat
+# landing fires both in one frame as a single thump. Severity
+# scales the level: a drumbeat hop's tick at the floor, a full
+# flight's thump at the ceiling, CROSSED-UP/HARD arrivals
+# (which carry the largest vy) at the top of the range.
+const AUDIO_THUMP_TICK_DB: float = -23.0 # a drumbeat hop's contact tick
+const AUDIO_THUMP_FULL_DB: float = -4.0 # a full flight's landing thump
+const THUMP_ARM_EXPIRY_S: float = 0.6 # an axle that never loads never speaks
 # Fix Pass 13 (Item 1) - touchdown connection grading. The
 # grade is read off the measured contact state (see _land):
 # lateral speed at contact and heading error vs the road
@@ -967,6 +1028,9 @@ var orient_have: bool = false
 # seat stack; body_node_fb mirrors it for the desktop fallback cam.
 var body_sink: float = 0.0
 var body_sink_v: float = 0.0
+var land_follow_t: float = 0.0 # Fix Pass 32 (Item 1): seconds of landing-follow left in the body spring
+var land_ramp_t: float = 9.0 # Fix Pass 32 (Item 1): seconds since the landing (the impact-velocity delivery clock)
+var land_cv_full: Array[float] = [0.0, 0.0] # Fix Pass 32 (Item 1): the landing's full per-axle compression velocities
 var body_bottom_cool: float = 0.0 # cooldown between bottoming thumps
 var body_node: Node3D
 var body_node_fb: Node3D
@@ -1024,6 +1088,10 @@ var rumble_haptic_now: float = 0.0 # controller rumble strength, 0..1 (final-str
 var song_player: AudioStreamPlayer
 var rumble_player: AudioStreamPlayer
 var scrape_player: AudioStreamPlayer
+var thump_f_player: AudioStreamPlayer # Fix Pass 32 (Item 3): front axle's contact voice (one-shot)
+var thump_r_player: AudioStreamPlayer # Fix Pass 32 (Item 3): rear axle's contact voice (one-shot)
+var thump_arm: Array[float] = [-1.0, -1.0] # Fix Pass 32 (Item 3): armed severity per axle (-1 = unarmed)
+var thump_age: float = 9.0 # Fix Pass 32 (Item 3): seconds since the arming landing
 var dust_emitters: Array[GPUParticles3D] = [] # per-wheel contact-patch dust (FL, FR, RL, RR)
 
 # --- nodes ---
@@ -5115,6 +5183,10 @@ func start_race() -> void:
 	race_started = true # Fix Pass 6: audio may start from here on
 	body_sink = 0.0
 	body_sink_v = 0.0
+	land_follow_t = 0.0 # Fix Pass 32
+	land_ramp_t = 9.0 # Fix Pass 32
+	thump_arm = [-1.0, -1.0] # Fix Pass 32
+	thump_age = 9.0
 	slip_state = 0.0
 	_reset_suspension()
 	_reset_dangle_feel()
@@ -5510,6 +5582,8 @@ func _process(_delta: float) -> void:
 			song_player.volume_db = -60.0 # Fix Pass 15 (Item 1): the watchdog covers every voice
 			rumble_player.volume_db = -60.0
 			scrape_player.volume_db = -60.0
+			thump_f_player.volume_db = -60.0 # Fix Pass 32: the contact voices too (their level is set fresh at every fire, so cutting it here costs nothing)
+			thump_r_player.volume_db = -60.0
 
 
 ## Fix Pass 11 (Item 5): the steering lock scale. At
@@ -5894,31 +5968,53 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	last_touchdown = "%s (vy %.1f, tilt %.0f)" % [quality, vy, misalign]
 	if quality == "HARD":
 		dent_level += 1 # Fix Pass 24 (Item 4): the dent stays; the smoke puff it used to light is deleted
-	# Fix Pass 5: the impact goes INTO the springs. Compression is set
-	# from impact speed (front biased - the nose arrives first, so it
-	# dives first), with compressing velocity so the spring dynamics
-	# continue honestly from the hit: deep smooth compression on a
-	# clean landing, clamped at full travel (bottoming out) on a hard
-	# one, then an underdamped rebound - which is where bounce-air
-	# comes from. The view dive reads this same state.
-	c_f = clampf(SUSP_REST + vy * 0.045 * 1.15, 0.0, SUSP_TRAVEL)
-	c_r = clampf(SUSP_REST + vy * 0.045 * 0.90, 0.0, SUSP_TRAVEL)
-	cv_f = vy * 0.35
-	cv_r = vy * 0.35
-	# Fix Pass 14 (Item 3): the impact sets the corners grouped
-	# by axle (a landing arrives as an axle event; the corners
-	# diverge from the next sampled frame onward).
-	susp_c[0] = c_f
-	susp_c[1] = c_f
-	susp_c[2] = c_r
-	susp_c[3] = c_r
+	# Fix Pass 5: the impact goes INTO the springs (the view
+	# dive reads this same state).
+	# Fix Pass 32 (Item 1): the impact now enters as VELOCITY
+	# ONLY - the instant compression set that stood here
+	# (c = REST + vy * 0.045, front-biased) is deleted. The
+	# compression keeps its arriving integrated state and the
+	# spring drives the stroke from there (see LAND_CV_K): the
+	# sink develops as a motion, hard hits travel deeper than
+	# soft ones (the instant law clamped both to the same
+	# state), and the underdamped return - where bounce-air
+	# comes from - is the stroke's own second half. The
+	# velocities are set grouped by axle (Fix Pass 14, Item 3:
+	# a landing arrives as an axle event; the corners diverge
+	# from the next sampled frame onward), the front biased
+	# ahead of the rear, so a nose-first arrival's front
+	# stroke also lands first in time.
+	land_cv_full[0] = vy * LAND_CV_K * LAND_CV_FRONT
+	land_cv_full[1] = vy * LAND_CV_K * LAND_CV_REAR
+	land_ramp_t = 0.0
+	cv_f = land_cv_full[0] * LAND_RAMP_BITE
+	cv_r = land_cv_full[1] * LAND_RAMP_BITE
 	susp_cv[0] = cv_f
 	susp_cv[1] = cv_f
 	susp_cv[2] = cv_r
 	susp_cv[3] = cv_r
-	# Fix Pass 6: the same impact arrives in the DRIVER a beat
-	# later - an impulse into the body spring, scaled by impact.
-	_body_impulse(vy)
+	# Placement continuity: heave and spring pitch re-derive
+	# from the ARRIVING compression at zero rise (the contact
+	# patch is the frame's own height here), exactly as the
+	# axle integrator derives them - so the car placed at the
+	# end of this function does not step, and the sink that
+	# follows is the stroke's own motion, not a teleport.
+	var attach_f32: float = -c_f + (WHEEL_RAD_F - WHEEL_RAD_REF)
+	var attach_r32: float = -c_r + (WHEEL_RAD_R - WHEEL_RAD_REF)
+	pitch_extra = atan2(attach_f32 - attach_r32, WHEELBASE)
+	heave_off = (attach_f32 + attach_r32) * 0.5 + SUSP_REST
+	# Fix Pass 32 (Item 1): the body spring follows THIS
+	# landing's sink for its settle window (see
+	# _update_body_spring) - replacing Fix Pass 6's instant
+	# _body_impulse, which raced the springs it now follows.
+	land_follow_t = LAND_FOLLOW_S
+	# Fix Pass 32 (Item 3): arm the contact thump per axle -
+	# each axle's voice fires when that axle actually loads
+	# (see _update_suspension), so a nose-first landing's
+	# thump lands with the front.
+	thump_arm[0] = clampf(vy * LAND_CV_FRONT / 9.0, 0.0, 1.0)
+	thump_arm[1] = clampf(vy * LAND_CV_REAR / 9.0, 0.0, 1.0)
+	thump_age = 0.0
 	# Fix Pass 9: the velocity vector lands with the car - the
 	# horizontal air velocity becomes vel2 under the (frozen)
 	# heading, keeping its lateral part, with the old minimum
@@ -6474,6 +6570,18 @@ func _susp_integrate_corners(tw: Array, delta: float) -> void:
 	# road - weight transfer made visible).
 	var gated: bool = rebound_gate_vy > 0.0 and mode == MODE_DRIVE
 	var damp: float = SUSP_DAMP * REBOUND_RETURN_DAMP_MULT if gated else SUSP_DAMP
+	# Fix Pass 32 (Item 1): the landing's impact velocity
+	# delivers over its ramp (see LAND_RAMP_S) - the bite
+	# arrived at _land; the rest feeds in as a constant
+	# compression acceleration until the delivery completes.
+	if land_ramp_t < LAND_RAMP_S:
+		land_ramp_t += delta
+		var add_f32: float = land_cv_full[0] * (1.0 - LAND_RAMP_BITE) / LAND_RAMP_S * delta
+		var add_r32: float = land_cv_full[1] * (1.0 - LAND_RAMP_BITE) / LAND_RAMP_S * delta
+		susp_cv[0] += add_f32
+		susp_cv[1] += add_f32
+		susp_cv[2] += add_r32
+		susp_cv[3] += add_r32
 	for wi: int in 4:
 		var k: float = SUSP_K * REBOUND_RETURN_K_MULT if (gated and susp_c[wi] > REBOUND_RETURN_DEPTH) else SUSP_K
 		susp_cv[wi] += ((float(tw[wi]) - susp_c[wi]) * k - damp * susp_cv[wi]) * delta
@@ -6643,6 +6751,28 @@ func _update_suspension(delta: float) -> void:
 		for wi3: int in 4:
 			susp_geom[wi3] = sup_rise[wi3] + (jit_f if wi3 < 2 else jit_r)
 		_susp_integrate_corners(tw, delta)
+		# Fix Pass 32 (Item 3): the armed contact thump fires
+		# per axle at the moment that axle takes the landing's
+		# weight - its mean compression crossing rest still
+		# driving in. A flat landing fires both axles in the
+		# same frame (one thump); a nose-first landing staggers
+		# them by the rear's arrival. The severity blends the
+		# armed impact share with the axle's actual compression
+		# rate at the crossing, so the voice reports the load
+		# the model really took. An axle that never loads
+		# inside the expiry stays silent.
+		if thump_arm[0] >= 0.0 or thump_arm[1] >= 0.0:
+			thump_age += delta
+			if thump_age > THUMP_ARM_EXPIRY_S:
+				thump_arm[0] = -1.0
+				thump_arm[1] = -1.0
+			else:
+				if thump_arm[0] >= 0.0 and c_f >= SUSP_REST and cv_f > 0.4:
+					_fire_thump(0, maxf(thump_arm[0], clampf(cv_f / 8.0, 0.0, 1.0)))
+					thump_arm[0] = -1.0
+				if thump_arm[1] >= 0.0 and c_r >= SUSP_REST and cv_r > 0.4:
+					_fire_thump(1, maxf(thump_arm[1], clampf(cv_r / 8.0, 0.0, 1.0)))
+					thump_arm[1] = -1.0
 		# Fix Pass 14 (Item 5): the load the tires actually
 		# carry this frame - the mean road load raised to
 		# GRIP_LOAD_EXP (a crest at full unload floors it).
@@ -7001,14 +7131,6 @@ func _update_view_spring() -> void:
 		fallback_cam.position = _eye_anchor() + Vector3(0.0, v_y, 0.0)
 
 
-func _body_impulse(impact_vy: float) -> void:
-	# Fix Pass 6: a touchdown lands in the driver a beat after it
-	# lands in the car - converted to a sink velocity here, scaled
-	# by impact past a floor (soft arrivals barely register).
-	var over: float = maxf(impact_vy - BODY_MIN_IMPULSE, 0.0)
-	body_sink_v += over * BODY_IMPULSE_K
-
-
 func _update_body_spring(delta: float) -> void:
 	# Fix Pass 6 (Item 1): the driver-body spring. A soft, laggy
 	# oscillator for the viewpoint's sink INTO the seat, integrated
@@ -7018,9 +7140,22 @@ func _update_body_spring(delta: float) -> void:
 	# Longitudinal load gives it a moving rest point: acceleration
 	# presses the body into the seat, braking unloads it forward
 	# (the pitch half of that lives in _update_view_spring).
+	# Fix Pass 32 (Item 1): Fix Pass 6's _body_impulse (a sink
+	# velocity injected at the touchdown instant) is deleted -
+	# against the motion-law stroke it would peak BEFORE the
+	# car's compression, the two sinks fighting. In its place
+	# the follow: while a landing settles, the rest point
+	# carries BODY_FOLLOW_K of the suspension's own sink
+	# excursion, so the driver's sink IS the car's sink through
+	# this spring's softer, later phase - it cannot precede
+	# what it follows (stage 2e's phase law, by construction).
 	var rest_off: float = 0.0
 	if mode == MODE_DRIVE:
 		rest_off = clampf(long_accel_f * BODY_ACCEL_SINK_K, -0.012, 0.016)
+		if land_follow_t > 0.0:
+			var exc32: float = maxf((c_f + c_r) * 0.5 - SUSP_REST, 0.0)
+			rest_off += clampf(exc32 * BODY_FOLLOW_K, 0.0, BODY_MAX_SINK)
+	land_follow_t = maxf(land_follow_t - delta, 0.0)
 	# Suspension bottoming thumps through the seat: an axle at full
 	# travel and still compressing kicks the body spring (cooldown
 	# so a sustained bottomed state kicks once, not per frame).
@@ -7082,6 +7217,21 @@ func _build_audio() -> void:
 	scrape_player.stream = _make_scrape_stream()
 	scrape_player.volume_db = -60.0
 	add_child(scrape_player)
+	# Fix Pass 32 (Item 3): the contact voices - one-shots, one
+	# per axle. NOT loop players: they are built silent, are
+	# never auto-started by _update_audio's loop roster, and
+	# sound only when _fire_thump plays them. The teardown
+	# latch stops them like every other voice.
+	thump_f_player = AudioStreamPlayer.new()
+	thump_f_player.name = "ThumpFrontAudio"
+	thump_f_player.stream = _make_thump_stream()
+	thump_f_player.volume_db = -60.0
+	add_child(thump_f_player)
+	thump_r_player = AudioStreamPlayer.new()
+	thump_r_player.name = "ThumpRearAudio"
+	thump_r_player.stream = _make_thump_stream()
+	thump_r_player.volume_db = -60.0
+	add_child(thump_r_player)
 
 
 func _make_engine_stream() -> AudioStreamWAV:
@@ -7263,13 +7413,78 @@ func _make_scrape_stream() -> AudioStreamWAV:
 	return stream
 
 
+func _make_thump_stream() -> AudioStreamWAV:
+	# Fix Pass 32 (Item 3): the landing thump - a 0.45 s
+	# one-shot (no loop): a low sine body (52 Hz, the bottom
+	# octave of the engine's stack) under a fast-decaying
+	# low-passed noise thock. All weight, no edge: nothing in
+	# the buffer lives above the rumble's band. Deterministic
+	# (seeded) like every generated stream in this file.
+	var rate: int = 22050
+	var frames: int = int(rate * 0.45)
+	var raw: Array[float] = []
+	raw.resize(frames)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 31337
+	var lp: float = 0.0
+	for i: int in frames:
+		var t: float = float(i) / float(rate)
+		var atk: float = clampf(t / 0.004, 0.0, 1.0)
+		var body: float = sin(TAU * 52.0 * t) * exp(-t / 0.110)
+		var wht: float = rng.randf_range(-1.0, 1.0)
+		lp = lerpf(lp, wht, 0.10)
+		var thock: float = lp * 3.0 * exp(-t / 0.050)
+		raw[i] = atk * (body * 0.9 + thock)
+	var data := PackedByteArray()
+	data.resize(frames * 2)
+	for j: int in frames:
+		var s16c: int = int(round(clampf(raw[j], -0.85, 0.85) * 32767.0))
+		if s16c < 0:
+			s16c += 65536
+		data[j * 2] = s16c & 0xFF
+		data[j * 2 + 1] = (s16c >> 8) & 0xFF
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = rate
+	stream.data = data
+	return stream
+
+
+func _fire_thump(axle: int, sev: float) -> void:
+	# Fix Pass 32 (Item 3): one axle's contact voice. Severity
+	# (0..1) maps across the tick->thump level range on a
+	# compressive curve, so small hops stay small and the top
+	# of the range is reserved for full-flight arrivals. The
+	# teardown discipline is the house discipline: latched,
+	# stalled or pre-race, the voice stays silent.
+	if audio_latched or audio_stalled or not race_started:
+		return
+	var pl: AudioStreamPlayer = thump_f_player if axle == 0 else thump_r_player
+	if pl == null:
+		return
+	pl.volume_db = lerpf(AUDIO_THUMP_TICK_DB, AUDIO_THUMP_FULL_DB,
+		pow(clampf(sev, 0.0, 1.0), 1.15))
+	if pl.playing:
+		pl.stop()
+	pl.play()
+
+
+func audio_thump_db(axle: int) -> float:
+	# Fix Pass 32 (Item 3) test accessor: an axle voice's
+	# current output level in dB (-60 while silent).
+	var pl: AudioStreamPlayer = thump_f_player if axle == 0 else thump_r_player
+	if pl == null or not pl.playing:
+		return -60.0
+	return pl.volume_db
+
+
 func _set_audio_latched(on: bool) -> void:
 	# The single door for the teardown latch (called from
 	# _notification and the smoke). Latching STOPS all players -
 	# not just gains down - so nothing can sound while latched.
 	audio_latched = on
 	if on:
-		for pl: AudioStreamPlayer in [engine_player, skid_player, song_player, rumble_player, scrape_player]:
+		for pl: AudioStreamPlayer in [engine_player, skid_player, song_player, rumble_player, scrape_player, thump_f_player, thump_r_player]:
 			if pl != null and pl.playing:
 				pl.stop()
 
@@ -7283,7 +7498,7 @@ func _update_audio(delta: float) -> void:
 		return
 	var running: bool = race_started and not audio_latched
 	if not running:
-		for pl2: AudioStreamPlayer in [engine_player, skid_player, song_player, rumble_player, scrape_player]:
+		for pl2: AudioStreamPlayer in [engine_player, skid_player, song_player, rumble_player, scrape_player, thump_f_player, thump_r_player]:
 			if pl2 != null and pl2.playing:
 				pl2.stop()
 		audio_song_now = 0.0 # Fix Pass 15 (Item 1): the smoothed drives die with the race
