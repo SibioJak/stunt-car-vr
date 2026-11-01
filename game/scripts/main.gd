@@ -278,13 +278,18 @@ const GRAV: float = 9.8
 # around this default from the cockpit seat levers (VTOL-style).
 const EYE_ANCHOR: Vector3 = Vector3(0.0, 1.26, 0.05)
 const WHEEL_HUB: Vector3 = Vector3(0.0, 0.97, -0.40)
-# Fix Pass 11 (Item 1): the Look Test patch-2 yaw cone, ported.
-# Automatic anchor applications bake the head's yaw into the seat
-# correction only when the head sits within this cone of the car's
-# forward; outside it they land translation only and the yaw waits
-# for the head to enter the cone on a stable pose. An explicit
-# recenter always bakes (see _apply_seat_anchor).
-const ANCHOR_YAW_CONE_DEG: float = 25.0
+# Fix Pass 11 (Item 1) built the Look Test patch-2 yaw cone
+# (25 deg): automatic anchor applications baked the head's yaw
+# when it sat inside the cone of the car's forward and owed it
+# (anchor_yaw_pending) when it sat outside. Fix Pass 34
+# RETIRES the cone whole: a non-explicit application NEVER
+# touches yaw - translation only, no debt, no deferred bake -
+# because the cone still baked a head merely turned toward
+# the dash (the owner's FP34 field video: TRK pressed at a
+# ~15-20 deg head turn, the view yawed and stayed yawed).
+# The explicit recenter is the only bake left (see
+# _apply_seat_anchor). The constant is deleted with the
+# machinery; nothing may reintroduce a partial bake.
 const SEAT_TRIM_MAX: float = 0.15
 const SEAT_TRIM_RATE: float = 0.30 # m/s while a seat lever is held
 # Fix Pass 3: the wheel is STOOD UP. Godot's TorusMesh ring lies in the
@@ -1147,12 +1152,14 @@ var anchor_stable_frames: int = 0
 var anchor_last_cam_pos: Vector3 = Vector3.ZERO
 var anchor_have_last: bool = false
 var anchor_reapply_watch: bool = false
-# Fix Pass 11 (Item 1): yaw-cone state (ported from the Look Test).
-# anchor_yaw_pending: an automatic application landed translation
-# only; the yaw half is owed and lands when the head enters the
-# cone. anchor_bake_yaw: the NEXT application is explicit (a
-# recenter) and bakes the facing it finds.
-var anchor_yaw_pending: bool = false
+# Fix Pass 11 (Item 1) yaw state, Fix Pass 34's split:
+# anchor_bake_yaw is the whole law now - the NEXT application
+# is explicit (a recenter) and bakes the facing it finds;
+# every other application lands translation only and leaves
+# the seat's yaw exactly as it was. FP11's anchor_yaw_pending
+# (the deferred yaw debt an automatic application owed until
+# the head entered the cone) is DELETED with the cone: an
+# automatic application owes nothing, ever.
 var anchor_bake_yaw: bool = false
 # Fix Pass 11 (Item 1): seat trim in metres, the driver's offset
 # from EYE_ANCHOR, clamped to +-SEAT_TRIM_MAX. Persisted in
@@ -1323,7 +1330,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP33 · 2026-11-01"
+const BUILD_STAMP: String = "FP34 · 2026-11-01"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -3507,7 +3514,7 @@ func _panel_text() -> String:
 	lines.append("Call crane: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
 	lines.append("Dash buttons (GRIP): red restart, purple track, amber view A/B, blue drop side")
-	lines.append("Recenter: L stick click / BOTH grips")
+	lines.append("Recenter: L stick click")
 	lines.append("restart race: L Y button")
 	lines.append("Panels: R B button (show/hide)")
 	lines.append("-- DESKTOP --")
@@ -3976,6 +3983,14 @@ func _poll_inputs(delta: float) -> void:
 # and the DRIVE crane call stands - the modes never
 # overlap, so neither job was displaced. Stage 32's
 # inert-in-the-hang expectation is amended with it.
+# Fix Pass 34 (Item 2) retires the third bullet whole: the
+# both-grips recenter is DELETED, gate and all - squeezing
+# both grips is how the driver holds the wheel two-handed,
+# so the gesture can never again mean "redefine forward"
+# (the gate also had a same-frame hole: two hands landing
+# on the wheel together could edge-fire it before the
+# wheel claimed the first). The stick-click route the
+# bullet was protecting is the only recenter left.
 # And every face-button edge during MODE_HANG is logged to
 # the DIAG board (BTN line) with its race time, so the next
 # mystery names itself.
@@ -4078,18 +4093,6 @@ func _seat_trim_held() -> String:
 	return ""
 
 
-func _recenter_allowed() -> bool:
-	# The both-grips recenter's gate (see the item header).
-	# The stick-click recenter never consults this.
-	if mode == MODE_HANG:
-		return false
-	# Fix Pass 20 (Item 1): the lever's latch in this gate is
-	# now any dash latch (the drop button among them).
-	if int(dash_ctl_fired["L"]) >= 0 or int(dash_ctl_fired["R"]) >= 0 or grab_hand != "":
-		return false
-	return _seat_trim_held() == ""
-
-
 func _poll_xr_buttons(delta: float) -> void:
 	var rc: XRController3D = hand_ctrl["R"]
 	var lc: XRController3D = hand_ctrl["L"]
@@ -4121,10 +4124,11 @@ func _poll_xr_buttons(delta: float) -> void:
 			_do_release()
 		if y_edge:
 			_hang_btn_note("LY")
-	# Fix Pass 11 (Item 1): squeeze BOTH grips = recenter.
-	# Fix Pass 13 (Item 4): gated by _recenter_allowed().
-	if _btn_edge("both_grips", bool(gripping["L"]) and bool(gripping["R"])) and _recenter_allowed():
-		_recenter()
+	# Fix Pass 34 (Item 2): the both-grips recenter (FP11's
+	# gesture, FP13's gate) is DELETED here - squeezing both
+	# grips is two-handed STEERING, and a gesture cannot mean
+	# "hold the wheel" and "redefine forward" at once. The
+	# left stick click below is the only recenter.
 	# Right A: boost (hang rules in the item header).
 	if mode == MODE_HANG and a_now:
 		boost_arm_blocked = true
@@ -4214,8 +4218,10 @@ func _recenter() -> void:
 	# Fix Pass 3: recenter re-arms the stability-gated application.
 	# Fix Pass 11 (Item 1): a recenter is EXPLICIT - the head's facing
 	# when it lands becomes the car's forward (standard recenter
-	# semantics), so it arms with the bake flag and the yaw cone
-	# below does not apply to it.
+	# semantics), so it arms with the bake flag. Fix Pass 34:
+	# the bake is the explicit path's ALONE (automatic
+	# applications never touch yaw at all), so there is no
+	# cone left for this to be exempt from.
 	if xr_ok:
 		_arm_anchor(true)
 
@@ -4280,15 +4286,10 @@ func _process_anchor_pending() -> void:
 		var yawed3: bool = _apply_seat_anchor(bake3)
 		anchor_state = "APPLIED-STABLE" if yawed3 else "APPLIED-NOYAW"
 		anchor_reapply_watch = false
-	elif anchor_yaw_pending and anchor_stable_frames >= ANCHOR_STABLE_FRAMES \
-			and absf(_head_yaw_dev()) <= deg_to_rad(ANCHOR_YAW_CONE_DEG):
-		# Fix Pass 11 (Item 1): the deferred yaw half of an
-		# automatic application - the head has come inside the
-		# cone on a stable pose, so baking now maps his
-		# near-forward onto the car's forward, never a turned
-		# head. (Ported from the Look Test, patch 2.)
-		_apply_seat_anchor(true)
-		anchor_state = "APPLIED-STABLE"
+	# Fix Pass 34: FP11's fourth branch stood here - the
+	# deferred yaw watch that baked once the head entered the
+	# cone. It is deleted with the cone: no automatic path in
+	# this function can apply yaw, on any later pose either.
 
 
 func _hmd_has_tracking_data() -> bool:
@@ -4381,9 +4382,8 @@ func _apply_seat_trim(new_trim: float) -> void:
 
 func _apply_seat_anchor(force_bake: bool) -> bool:
 	# Offset the seat so the HMD lands exactly on the eye anchor in car
-	# space, yaw-aligned to the car's heading. The correction is rigid
-	# and sits ABOVE the XR origin, so head motion afterwards is
-	# relative to the anchor.
+	# space. The correction is rigid and sits ABOVE the XR origin, so
+	# head motion afterwards is relative to the anchor.
 	#
 	# Fix Pass 11 (Item 1), ported from the Look Test patch 2: the
 	# yaw half of this correction maps the head's CURRENT facing
@@ -4394,25 +4394,29 @@ func _apply_seat_anchor(force_bake: bool) -> bool:
 	# only, so a still-but-turned head passes it and the turn
 	# becomes "forward" for the whole session (the Look Test's
 	# 45-degree view; the game carried the same latent flaw).
-	# Automatic calls therefore land the translation only when
-	# the head sits outside ANCHOR_YAW_CONE_DEG, and leave
-	# anchor_yaw_pending set; the yaw lands when the head enters
-	# the cone (see the watch in _process_anchor_pending).
-	# Returns true when the yaw was applied (correction complete).
+	# FP11's answer was a cone: bake inside 25 deg, owe the yaw
+	# outside it. Fix Pass 34 retires the cone as a HALF-MEASURE
+	# on the owner's field evidence: 25 deg of cone still eats a
+	# head turned 15-20 deg toward the dash (his TRK video), and
+	# a debt collected on a later pose is still a bake he never
+	# asked for. The law now: force_bake is the ONLY yaw path.
+	# A non-explicit application lands the translation with an
+	# IDENTITY basis, so the seat's yaw - the driver's yaw
+	# reference - is preserved exactly (bit-for-bit in the
+	# basis), at any head angle, with nothing owed afterwards.
+	# Returns true when the yaw was applied (an explicit bake).
 	var cam_car: Transform3D = _cam_in_car()
-	var fwd: Vector3 = _head_fwd_car(cam_car)
-	if not force_bake and absf(_yaw_dev_of(fwd)) > deg_to_rad(ANCHOR_YAW_CONE_DEG):
+	if not force_bake:
 		var corr_t := Transform3D(Basis.IDENTITY, _eye_anchor() - cam_car.origin)
 		seat_offset.transform = corr_t * seat_offset.transform
-		anchor_yaw_pending = true
 		return false
 	# Yaw that rotates the current horizontal view direction onto the
 	# car's forward (-Z in car space).
+	var fwd: Vector3 = _head_fwd_car(cam_car)
 	var yaw: float = atan2(fwd.z, fwd.x) + PI * 0.5
 	var rot := Basis(Vector3.UP, yaw)
 	var corr := Transform3D(rot, _eye_anchor() - rot * cam_car.origin)
 	seat_offset.transform = corr * seat_offset.transform
-	anchor_yaw_pending = false
 	return true
 
 
@@ -4666,8 +4670,8 @@ func _poll_grab(hand: String, ctrl: XRController3D, _delta: float) -> void:
 	diag_click[hand] = grip_click
 	grab_peak[hand] = maxf(float(grab_peak[hand]), grip_v)
 	# The Schmitt trigger. gripping[] IS this state - every
-	# downstream reader (articulation, the recenter gate, the
-	# hang button gates) gets the debounced value.
+	# downstream reader (articulation, the hang button gates)
+	# gets the debounced value.
 	var held: bool = bool(gripping[hand])
 	if held and grip_v < GRIP_RELEASE:
 		held = false
