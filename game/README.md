@@ -124,7 +124,10 @@ automatically (window 1280×800, mouse/keyboard as above).
 # stage 7 proves the lean experiment's deletion (Fix Pass 31);
 # stage 61 proves the landing stroke law, the sink's view
 # transmission in both A/B modes and the per-axle contact
-# thump's severity ordering (Fix Pass 32)
+# thump's severity ordering (Fix Pass 32);
+# stage 63 proves the view law: restarts re-seat position
+# only at ±20 deg of head yaw, the stick-click bake survives,
+# and a both-grips squeeze fires nothing (Fix Pass 34)
 # The smoke run first executes the API GUARD (reported separately):
 # every XR API method/property the game code calls by name is asserted
 # against ClassDB in the running engine. Hotfix 1 added it after
@@ -4731,6 +4734,158 @@ orientation). And if a future build ever shows an
 older stamp than the delivery message names, the pull
 didn't take — that's the Discard Changes tell this
 was built to expose.
+
+## Fix Pass 34 — Nothing Moves the View but the Driver
+
+Base: FP33 final (50e960c). The owner's field video
+(2026-11-01): centred, controller wiggled as a
+reference, hand to the dash, TRK pressed — and the
+view yawed ~15–20° over the following seconds and
+STAYED yawed. His words: "This the not centered text
+debacle for this game." Same family, same tell: the
+state banner rides the car's centreline, so a baked
+yaw shows as text sitting off-centre. Traced chain:
+`_cycle_track` → `_set_track` → `start_race()` →
+`_arm_anchor()` (non-explicit). Every race start
+re-armed the cockpit anchor, and FP11's yaw cone
+still baked any head position inside 25° of forward —
+a head turned toward the dash at press time became
+the new forward. From the same seat he spotted the
+second defect: "both grips. I use both grips when Im
+steering, that messing anything up?" Yes — the
+both-grips squeeze was FP11's recenter gesture, an
+explicit bake wearing the same shape as two-handed
+steering, and its gate (`_recenter_allowed`) had a
+same-frame hole: two hands landing on the wheel
+together could edge-fire it before the wheel claimed
+the first hand.
+
+### Item 1 — position-only restarts
+
+The split is implemented on the existing bake flag's
+semantics; no parallel anchor system was forked.
+`_apply_seat_anchor(force_bake=false)` now lands the
+translation with an IDENTITY basis — the seat's yaw
+is preserved bit-for-bit at any head angle — and
+FP11's deferred-yaw machinery is deleted whole: the
+`ANCHOR_YAW_CONE_DEG` constant, the
+`anchor_yaw_pending` state, and the cone watch branch
+in `_process_anchor_pending`. An automatic
+application owes nothing afterwards, on any later
+pose either. `force_bake=true` (the explicit
+recenter) is byte-identical: the bake still exists,
+exactly where it belongs. Stage 63 stages the field
+case: restart applied with the simulated head yawed
++20° and −20° — seat yaw delta 0.0000 rad both ways,
+eye re-seated (err 0.000 m).
+
+Every `start_race` caller inherits the law:
+
+- `_set_track` (track change: the TRK dash button,
+  the desktop V key, and the boot path)
+- the Y button — hang long-press and drive edge
+  (restart race)
+- the desktop R key
+- `_activate_dash_ctl("restart")` — the red RESTART
+  dash button
+
+### Item 2 — the both-grips recenter dies
+
+The `both_grips` edge → `_recenter` path and
+`_recenter_allowed()` are deleted, grep-clean (the
+names survive only in tombstone comments recording
+the repeal). The left stick click is now the ONLY
+recenter, its behaviour byte-identical — it never
+consulted the gate. The in-game panel line reads
+"Recenter: L stick click"; the README controls list
+already said exactly that, so no line needed deleting
+there. Squeezing both grips is now only ever what it
+looks like: holding the wheel with both hands.
+
+### Item 3 — the neighbour audit
+
+TRK (purple) sits on the dash-top row at x 0.57. Its
+only dash-top neighbour is **RESTART (red, x 0.40,
+0.17 m away)** — that is "the one next to it." Its
+fire path is `_activate_dash_ctl("restart")` →
+`start_race()` directly: the SAME non-explicit anchor
+arm as TRK's, convicted by the same mechanism — and
+"even worse" is consistent with the path, because a
+restart press is typically made looking straight at
+the button a beat longer, deeper inside the old cone,
+so more of the turn got baked. Under Item 1 both
+paths are position-only; no dash control can rotate
+the view. The rest of the row was traced too: VIEW
+(amber, x −0.35) only flips the view-coupling gain —
+it changes how much of the car's motion reaches the
+eye, never the yaw reference; SIDE (light blue,
+x 0.0) only mirrors the drop button's side; the DROP
+button itself (dash face, 0.24 m from TRK) fires
+`_do_release` and never touches the anchor. No other
+offender found.
+
+### Proof — stage 63 (16 checks)
+
+(a) `start_race` arms non-explicit; restart applies
+at head yaw ±20° → yaw delta 0.0000 rad, position
+re-seated. (b) Control: `_recenter()` arms explicit
+and the application bakes the posed head onto the
+car's forward (dev 0.000 rad) — the bake survives
+where it belongs. (c) Negative controls: both grips
+landing together from a no-hands state, in AIR and
+in DRIVE → no recenter event, anchor state and seat
+basis untouched; `has_method("_recenter_allowed")`
+is false. (d) The TRK press path end-to-end through
+the production grab poll → track cycles, restart
+arms position-only. Stage 63's header notes the one
+thing staging cannot prove: the anchor's stability
+gate is live-rig only, as it has been since stage 22.
+
+### Census
+
+Smoke **ALL 661** (FP33's 642 + 19 net), API guard
+ALL 71, zero engine errors. Every changed check line
+is one of four flagged groups, each marked in place:
+stage 22(c) re-derived — FP11–FP33's cone staging
+(two checks: translation-only at 40° with yaw owed;
+bake clears the debt) replaced by five: automatic
+apply preserves the seat basis EXACTLY at 40° off
+and at 20° off (inside the old cone — the field
+case), translation err 0.000 m, a property-list
+check that `anchor_yaw_pending` no longer exists,
+and the explicit bake kept as the control. Stage
+32's two gate checks ("suppressed in the hang" /
+"allowed in DRIVE") replaced by two behavioural
+squeeze controls (snapshot anchor state and seat
+basis, squeeze both grips across two production
+polls, assert all unchanged — hang and DRIVE).
+Stage 62's stamp string moves FP33 → FP34 (the
+standing ritual). Stage 63 is new (+16). Everything
+else is byte-identical to the FP33 baseline run,
+check name for check name. Render proof 172/173 —
+the one failure is the pre-existing sandbox hub-reach
+artifact, identical on the FP31–FP33 baselines; the
+proof's panel sweep was amended (flagged) to require
+"Recenter: L stick click" and forbid "BOTH grips",
+and capture 31 reads the new stamp verbatim.
+
+BUILD_STAMP moves to **FP34 · 2026-11-01** per the
+standing ritual.
+
+### What you're judging
+
+Three things, all from the seat: (1) press TRK or
+RESTART with your head turned wherever it turns —
+the view must not swing or settle anywhere new; the
+car re-seats under you, your forward stays yours.
+(2) Squeeze both grips onto the wheel, any time,
+anywhere — nothing should happen but steering.
+(3) Click the left stick — that, and only that,
+should still recenter you. As always, glance at
+GitHub Desktop's Changes tab before pulling: if
+`game\scripts\main.gd` shows as locally modified
+there, the pull won't take cleanly and the stamp in
+the lower right will tell on it.
 
 ## Quest export — status
 
