@@ -11,6 +11,9 @@ five questions in the headset (Quest 3 target):
 4. Does **grabbing the wheel** and physically turning it steer well?
 5. **Lean experiment:** does leaning into the banked corner for bonus
    grip feel like a real technique (bonus only, never required)?
+   — RETIRED in Fix Pass 31 (owner's order): judged vestigial
+   once FP21's per-corner loads made load transfer real; the
+   whole mechanic is deleted, see the Fix Pass 31 section.
 
 Design contract: `../design-spec.md` (v0.1 as amended, items 1–16) and
 `../build-brief-test1.md`. Deliberately NOT in this test: rivals/sumo,
@@ -90,8 +93,7 @@ VR (Quest):
   is DRIVE-only, so X keeps both jobs)
 - Restart race: left Y button · Info panels show/hide: right B
   button (Fix Pass 12 — the boards are hidden by default; B
-  calls them up and puts them away. Lean experiment on/off
-  lives on the green dash button now; red dash button = restart)
+  calls them up and puts them away. Red dash button = restart)
 - Switch track (while dangling): GRIP near the purple dash button —
   the mountain circuit (default) and the original test ribbon;
   a circuit race is 3 laps to the finish, the ribbon is
@@ -103,7 +105,7 @@ VR (Quest):
 Desktop fallback (no headset): the mirror rig drives the same car.
 - W/S throttle/brake · A/D steer · SHIFT boost · SPACE release
 - 1/2/3 flip FUEL/SPARK/BOOST · L call drone · R restart · V switch track
-- T lean experiment on/off · Q/E lean body left/right · C recenter
+- C recenter
 - J road-jitter experiment on/off (default ON)
 - Mouse drag steers while the left button is held
 
@@ -118,7 +120,8 @@ automatically (window 1280×800, mouse/keyboard as above).
 ```
 # logic smoke: drop start -> release -> touchdown scored -> climb ->
 # bank held -> gap crossed airborne -> drone lift on demand -> prep
-# sequence -> boost credit -> release -> driving -> lean grip A/B
+# sequence -> boost credit -> release -> driving -> at the bank,
+# stage 7 proves the lean experiment's deletion (Fix Pass 31)
 # The smoke run first executes the API GUARD (reported separately):
 # every XR API method/property the game code calls by name is asserted
 # against ClassDB in the running engine. Hotfix 1 added it after
@@ -4215,6 +4218,130 @@ stripe sits is where your lock is. Not in this pass:
 any change to the crane, the car, or the drive — if
 the ride feels different, it is because your hands
 are allowed on the wheel for all of it now.
+
+## Fix Pass 31 — Lean, Nuked (the mechanic deleted whole)
+
+Base: FP30 final (f430bb2). The owner's order,
+2026-10-31: "nuke lean and the blue lean indicator."
+No A/B, no measurement — decided. The lean experiment
+(body lean feeding a grip multiplier, in since the
+first test build) went in before FP21's per-corner
+load physics made load transfer real; with the loads
+honest, the ×1.25 factor was a second, fictional
+load system riding on top, and a control that does
+~nothing is the decorative-control defect. It is
+deleted whole: input, state, effect, indicator.
+
+### The touchpoint inventory (what "lean" touched)
+
+- **Input.** The green dash button (dash kind "lean",
+  second in the roster, at (-0.52, 0.95, -0.60)) —
+  roster entry, arbitration candidacy, press handling
+  and the button mesh itself; the desktop twin T
+  (toggle) and Q/E (lean body left/right). No other
+  binding existed.
+- **State.** lean_on, lean_neutral_x, lean_value,
+  grip_mult, the test_lean staging hook, and the
+  functions _toggle_lean, _capture_lean_neutral
+  (called from the seat anchor and the hang setup),
+  _update_lean_reading, _lean_effective, _grip_for.
+- **Persistence.** NONE — lean was never persisted:
+  the settings file only ever carried seat trim, drop
+  side and steering mode. A file carrying the orphaned
+  key loads cleanly (the loader reads only known
+  keys); the orphan is TOLERATED on load and SCRUBBED
+  on the next save, which rewrites the file from live
+  state. Both halves are proven in stage 7.
+- **Model effect.** grip_mult biased the lateral
+  bleed term, the FP15 telegraph ratios, and the
+  contact-patch long-cap budget. With lean OFF
+  _grip_for returned exactly 1.0, so deleting the
+  factor leaves the car in what was the lean-OFF
+  behaviour everywhere — no retune, no re-derivation.
+- **View effect.** The view spring's added roll term
+  (-lean × 10° × 1.25 gain) is gone; the constants
+  LEAN_VIEW_GAIN and LEAN_TILT_STEP_DEG go with it.
+- **Reporting.** The DIAG block's "LEAN EXP / GRIP"
+  line, the ZONE row's LEAN slot, the commands list's
+  "green lean" entry and the desktop T / Q/E lines.
+- **The blue indicator.** lean_needle — a lone cyan
+  box (0.2, 0.9, 1.0) riding car_body at the dash,
+  its x driven by the lean reading. It had NO housing
+  or backing of its own — the mesh was the whole
+  indicator — so the mesh and its update path are
+  simply gone; nothing else shared the spot. The
+  flask beside the vacated button does not move
+  (stage 7 + render proof assert FLASK_POS exactly).
+
+### Census disposition
+
+A pristine FP30 baseline (624 checks) was run first;
+the FP31 log was diffed line by line against it.
+**Only stage 7/7b ever staged driving with lean ON**
+(the A/B: grip x1.28 into the bank, x0.75 against).
+Every other stage that touched lean used it as a
+generic dash observable with the reading at zero —
+grip exactly 1.0 — so their driving expectations
+are the lean-off behaviour already. Amended lines,
+one by one, each flagged in the test source:
+
+- **stage 7/7b** — REPLACED: the four A/B checks give
+  way to eight deletion proofs (no lean properties,
+  no lean methods, roster of seven without "lean",
+  the vacated spot inside no control zone, gripping
+  there changes nothing, neither the needle cyan nor
+  the button green survives on any cockpit mesh, the
+  orphaned settings key tolerated/scrubbed, and the
+  bank view roll is the suspension roll alone).
+- **stage 5 / stage 30** — roster prints lose "lean"
+  (the checks compare the live roster; mechanical).
+- **stage 11a/11b/11c, 15, 33, 46(a), 59(vi)** — the
+  generic dash observable moves from LEAN to VIEW
+  (same machinery, same event counts; stage 46's
+  telemetry ring holds at 225 events). Stage 11c and
+  stage 33 each gain one restore check so later
+  stages inherit the view mode they expect.
+- **stage 15** — the per-button reach record loses
+  its lean line (the button is gone; seven remain)
+  and the ZONE printout loses the LEAN slot.
+- **stage 22** — registration indices move by the
+  deletion (seat levers 3/4 → 2/3, VIEW 5 of 8 →
+  4 of 7).
+- **stage 25** — print only: the drop button is idx
+  6 of 7 (its check was always computed).
+- **stage 44** — SIDE is sixth of seven, DROP last.
+- **stage 56** — the flask check's roster size 8 → 7.
+
+**Every other census line is byte-identical** —
+including all driving, flight, landing and lab-audit
+expectations. That is the behavioural proof: the
+car everywhere behaves as the old lean-OFF car,
+because in staging it almost always was.
+
+### Numbers
+
+- Baseline FP30: smoke 624/624, API guard 71/71.
+- FP31: smoke 629/629, API guard 71/71, render
+  proof 163/164 (the one failure is the
+  pre-existing sandbox llvmpipe hub-reach artifact,
+  identical on the FP30 baseline). The dash captures
+  (dash_top_view.png) show the green button and the
+  cyan needle gone and the flask where it always was.
+- No *.uid or *.png.import sidecars in the commits.
+
+### What you're judging
+
+Two absences. On the dash, the green button is gone
+— the row runs restart, flask, track, seat, view,
+side, drop, with nothing dead left behind. Above
+the dash, the cyan lean needle is gone. Everything
+else should feel exactly as it did: the car is in
+what was always its lean-off state, so if a corner
+feels different, that is a bug in this pass, not the
+deletion working as intended. Not in this pass: the
+landing-sink work, the dash-button view nudge, and
+the FP30 items still awaiting your verdict (wheel
+live through the whole hang, the centre gauge).
 
 ## Quest export — status
 
