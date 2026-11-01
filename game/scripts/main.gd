@@ -3,8 +3,12 @@ extends Node3D
 ## Stunt Car VR - DE Test 1 "Drop & Dangle"
 ## Throwaway FEEL prototype (Godot 4.7 / OpenXR, Quest-native target).
 ## One ribbon track, one placeholder Odd Rod car, grab-wheel steering,
-## Drop Start + crane recovery while dangling, and the
-## lean-for-traction experiment. See design-spec.md items 1-16.
+## Drop Start + crane recovery while dangling. See
+## design-spec.md items 1-16.
+## (Fix Pass 31 nuked the lean-for-traction experiment
+## entirely at the owner's order - input, grip multiplier,
+## view tilt and needle; the car is everywhere in what was
+## the experiment's OFF state now.)
 ## (Fix Pass 15 retired the drone that stood here from FP5 to
 ## FP14 - the crane is the original's rig; see Item 2.)
 ## (Fix Pass 13 deleted the dangle prep sequence entirely: the
@@ -22,7 +26,7 @@ extends Node3D
 ## authority scaled by speed), velocity is its own world vector
 ## and decomposes against the heading into forward + lateral
 ## parts, and tire grip bleeds the lateral part toward zero up to
-## a lateral grip limit (the lean modifiers apply to that limit).
+## a lateral grip limit.
 ## Demanding more than the limit leaves REAL slip - the car
 ## travels at an angle to where it points, recoverable by counter-
 ## steer - and slip_state derives from that actual lateral
@@ -178,8 +182,7 @@ const YAW_TAU: float = 0.16 # s, yaw-rate lag (inertia)
 # Tire grip: the lateral velocity (velocity across the heading)
 # is bled toward zero by a lateral acceleration that is
 # proportional to the slip (GRIP_BITE_RATE per second) up to the
-# lateral grip limit GRIP_LAT_ACCEL - the lean experiment's grip
-# multiplier scales both. Below the limit the velocity follows
+# lateral grip limit GRIP_LAT_ACCEL. Below the limit the velocity follows
 # the heading (the car turns); demanding more yaw than the limit
 # can curve the velocity through leaves the excess as slip.
 # Sizing: holding the R30 banked sweeper at the stage-2f pinned
@@ -452,13 +455,9 @@ const REBOUND_RETURN_DEPTH: float = 0.24 # compression (m) past which the return
 const REBOUND_RETURN_K_MULT: float = 3.0 # spring-rate multiplier on the gated return
 const REBOUND_RETURN_DAMP_MULT: float = 0.5 # extension-damping multiplier on the gated return
 const REBOUND_GATE_EXPIRY_S: float = 1.2 # an unfired gate lapses (a later crest strike is not a landing return)
-# Fix Pass 5 - lean view-tilt amplification (Chris, run 5: "i'm not
-# really getting a sense of leaning, the view would have to tilt
-# more"). This REVISES the experiment's original "input only, no
-# camera roll" rule at his direction: while the experiment is ON, the
-# view rolls LEAN_TILT_STEP_DEG per full lean times LEAN_VIEW_GAIN.
-const LEAN_VIEW_GAIN: float = 1.25
-const LEAN_TILT_STEP_DEG: float = 10.0
+# Fix Pass 31: the lean view-tilt amplification constants that
+# stood here (LEAN_VIEW_GAIN / LEAN_TILT_STEP_DEG) are deleted
+# with the lean experiment.
 # Fix Pass 5 - precarious dangle. Two pendulum axes on DIFFERENT
 # lengths (out of phase -> the resultant path is diagonal and never
 # settles into a single-plane rhythm), light damping, plus drone dips:
@@ -576,7 +575,7 @@ const AUDIO_STALL_MS: int = 600 # physics-tick gap that counts as a stall
 # the steering demand itself: lateral acceleration the driven
 # yaw asks for (|vf * omega_target|) against the lateral grip
 # cap the bleed actually enforces at each axle (GRIP_LAT_ACCEL
-# x grip_mult x that axle's load factor - the FP14 Item 5
+# x that axle's load factor - the FP14 Item 5
 # carrier, same exponent/floor/cap). The ratio exists BEFORE
 # any slide does, and every cue in this item (the tire song's
 # pre-limit band, the contact-patch dust, the controller
@@ -632,8 +631,10 @@ const AUDIT_SECTOR_M: float = 250.0
 # run-20 screenshot shows the blue fill as a sliver behind
 # a spoke). The meter is now a LIQUID FLASK set into the
 # dash-TOP button row (see _build_cockpit) - the row the
-# driver can actually see. FLASK_POS sits between the green
-# LEAN button (-0.52) and the amber VIEW button (-0.35):
+# driver can actually see. FLASK_POS sits between the amber
+# VIEW button (-0.35) and the dash spot the green LEAN button
+# held until Fix Pass 31 removed it (-0.52); the flask itself
+# does not move in that pass:
 # sightlines from the eye anchor to that spot cross the
 # wheel plane at radius ~0.33-0.42 m, OUTSIDE the rim band
 # (0.155-0.245) and beyond the spokes' reach (0.20) at any
@@ -816,15 +817,14 @@ var contact_readout_t: float = 0.0 # seconds the touchdown readout stays up
 var contact_transient_t: float = 0.0 # seconds of contact-governed tires left (see _land)
 var contact_load_age: float = 0.0 # seconds since touchdown (the load ramp's clock)
 
-# lean experiment
-var lean_on: bool = false
+# Fix Pass 31: the lean experiment's state lived here
+# (lean_on / lean_value / lean_neutral_x / grip_mult /
+# test_lean) - all deleted with the mechanic. grip_mult was
+# exactly 1.0 in every state the car can still reach, so its
+# factors simply leave the grip expressions below.
 var jitter_on: bool = true # Fix Pass 7 (Item 2): jitter experiment toggle, default ON
 var view_gain_mode: int = 0 # Fix Pass 14 (Item 6): the view-coupling A/B - 0 = A (0.6x, as shipped through FP13), 1 = B (1.0x, camera = car). Session state, NOT persisted: every boot starts at A and the owner flips it from the dash.
-var lean_neutral_x: float = 0.0
-var lean_value: float = 0.0
-var grip_mult: float = 1.0
 var load_grip: float = 1.0 # FP14 (Item 5): mean road-load factor on the bleed (see GRIP_LOAD_MIN)
-var test_lean: float = -99.0 # smoke/render override; -99 = off
 
 # inputs (merged XR + desktop + test overrides)
 var in_throttle: float = 0.0
@@ -1037,7 +1037,6 @@ var wheel_spin: Node3D # spin node inside it (rotates about the wheel axis)
 # tick is fixed to the tilt node at top centre.
 var wheel_centre_stripe: MeshInstance3D
 var wheel_centre_tick: MeshInstance3D
-var lean_needle: MeshInstance3D
 # Fix Pass 15 (Item 2): the crane rig's nodes (built once,
 # posed per hang by _place_crane, hidden outside MODE_HANG).
 var crane: Node3D
@@ -1344,13 +1343,12 @@ func _build_rig() -> void:
 	# Rig stack: car -> seat_offset -> ViewSpring -> BodySpring ->
 	# XROrigin3D -> camera/controllers. The seat offset carries the
 	# Fix Pass 2 anchor correction; the origin itself stays at zero
-	# so tracked poses pass through untouched (the lean experiment
-	# reads the camera local to the origin).
+	# so tracked poses pass through untouched.
 	seat_offset = Node3D.new()
 	seat_offset.name = "SeatOffset"
 	car.add_child(seat_offset)
 	# Fix Pass 5: ViewSpring sits between the anchor correction and
-	# the origin and carries ONLY transient suspension/lean view
+	# the origin and carries ONLY transient suspension view
 	# motion (zero at rest). The anchor math never sees it.
 	view_node = Node3D.new()
 	view_node.name = "ViewSpring"
@@ -3013,10 +3011,13 @@ func _build_cockpit() -> void:
 	# Fix Pass 13 (Item 1): the three prep switches that lived
 	# on the dash top are DELETED with the prep sequence - the
 	# dash top is bare now. The dash controls that remain are
-	# the three buttons below (restart / lean / track), the
+	# the buttons below (restart / track), the
 	# seat levers on the left pod, and (since Fix Pass 20) the
 	# DROP BUTTON on the dash face.
-	# Red RESTART button + green LEAN toggle button (physical dash controls)
+	# Red RESTART button (physical dash control)
+# Fix Pass 31: the green LEAN toggle button that stood at
+# -0.52 beside it is DELETED with the lean experiment - the
+# spot is bare dash now (the flask at -0.435 does not move).
 	# Fix Pass 10 (Item 3): restart shifts left (0.48 -> 0.40) to
 	# make room for the purple TRACK button at 0.57 - the pair
 	# sits 0.17 m apart, inside the 0.15 m activation radius of
@@ -3038,19 +3039,6 @@ func _build_cockpit() -> void:
 	rst_mi.material_override = _mat_unshaded(Color(0.9, 0.1, 0.1))
 	rst.add_child(rst_mi)
 	_register_dash_ctl(rst, "restart")
-	var lnt := Node3D.new()
-	lnt.position = Vector3(-0.52, 0.95, -0.60) # on the dash (Item 2, as restart)
-	car_body.add_child(lnt)
-	var ln_mi := MeshInstance3D.new()
-	var ln_m := CylinderMesh.new()
-	ln_m.top_radius = 0.036 # FP16 (Item 2): was 0.045
-	ln_m.bottom_radius = 0.036
-	ln_m.height = 0.04
-	ln_mi.mesh = ln_m
-	ln_mi.material_override = _mat_unshaded(Color(0.15, 0.75, 0.3))
-	ln_mi.name = "LeanBtnMesh"
-	lnt.add_child(ln_mi)
-	_register_dash_ctl(lnt, "lean")
 	# Purple TRACK button: ribbon <-> mountain circuit
 	var trk := Node3D.new()
 	trk.position = Vector3(0.57, 0.95, -0.60) # on the dash (Item 2, as restart)
@@ -3219,22 +3207,10 @@ func _build_cockpit() -> void:
 	fglass.name = "FlaskGlass"
 	flask_node.add_child(fglass)
 	_box(flask_node, Vector3(0.056, 0.024, 0.056), Vector3(0.0, 0.131, 0.0), _mat(Color(0.55, 0.55, 0.58)), "FlaskCollar")
-	# Lean indicator needle on the dash (experiment feedback)
-	# (rides up with the raised wheel so it stays clear of the rim)
-	# Fix Pass 13 (Item 2): shifted left off the centreline -
-	# the centre drop lever's arc sweeps the space it sat in.
-	# Fix Pass 15 (Item 3): the needle DROPS toward the
-	# dash (y 1.155 -> 1.04, mount x back to FP13's -0.18):
-	# the DIAG text grew in this pass (SIDE zone tag + DRP
-	# side readout), and the board's lower sightlines from
-	# the anchored eye pass through the needle's old float
-	# height (render proof sweep: 2 of 63 blocked; shifting
-	# the needle sideways only moved the block to the next
-	# column - the eye-to-board fan crosses its whole x
-	# span). Below y 1.105 every board sightline passes
-	# over it, and it reads as dash-mounted instead of
-	# floating. The FP13 x-centre stands.
-	lean_needle = _box(car_body, Vector3(0.03, 0.13, 0.02), Vector3(-0.18, 1.04, -0.615), _mat_unshaded(Color(0.2, 0.9, 1.0)))
+	# Fix Pass 31: the cyan lean needle that stood here (a
+	# lone _box on car_body at (-0.18, 1.04, -0.615), no
+	# housing of its own) is DELETED with the lean
+	# experiment - nothing replaces it.
 	# Big state label above the dash
 	state_label = Label3D.new()
 	state_label.position = Vector3(0, 1.52, -0.85)
@@ -3409,7 +3385,6 @@ func _panel_text() -> String:
 		lines.append("STATE %s  LAP %d/%d  TD %s" % [_state_name(), mini(lap_count + 1, RACE_LAPS), RACE_LAPS, last_touchdown])
 	else:
 		lines.append("STATE %s  TD %s" % [_state_name(), last_touchdown])
-	lines.append("LEAN EXP %s  GRIP x%.2f" % ["ON" if lean_on else "OFF", grip_mult])
 	lines.append("-- VR CONTROLS --")
 	lines.append("Steering: GRIP wheel + turn hand (one or both), or R thumbstick")
 	lines.append("Throttle R trigger / Brake L trigger")
@@ -3419,14 +3394,14 @@ func _panel_text() -> String:
 	lines.append("Seat: GRIP-HOLD SEAT+/SEAT- pod levers")
 	lines.append("Call crane: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
-	lines.append("Dash buttons (GRIP): red restart, green lean, purple track, amber view A/B, blue drop side")
+	lines.append("Dash buttons (GRIP): red restart, purple track, amber view A/B, blue drop side")
 	lines.append("Recenter: L stick click / BOTH grips")
 	lines.append("restart race: L Y button")
 	lines.append("Panels: R B button (show/hide)")
 	lines.append("-- DESKTOP --")
 	lines.append("W/S throttle/brake, A/D steer, SHIFT boost, N steer mode")
 	lines.append("SPACE release")
-	lines.append("TAB panels, L lift, T lean, J jitter, G view A/B, M drop side, Q/E lean body")
+	lines.append("TAB panels, L lift, J jitter, G view A/B, M drop side")
 	lines.append("PgUp/PgDn seat trim, R restart race")
 	lines.append("C recenter, V track")
 	# Fix Pass 4: the DIAG block no longer appends here - it renders
@@ -3519,7 +3494,7 @@ func _diag_zone_line() -> String:
 	# owner's next capture states outright whether a dead
 	# lever is a dead CHANNEL (grip reads 0.00 above) or a
 	# hand that never entered the zone.
-	var short: Dictionary = {"restart": "RST", "lean": "LEAN", "track": "TRK",
+	var short: Dictionary = {"restart": "RST", "track": "TRK",
 		"seatup": "SUP", "seatdn": "SDN", "view": "VIEW", "side": "SIDE", "drop": "DROP"}
 	var near_l: int = _dash_ctl_near(_hand_pos("L"))
 	var near_r: int = _dash_ctl_near(_hand_pos("R"))
@@ -4099,8 +4074,6 @@ func _input(event: InputEvent) -> void:
 		KEY_L:
 			if mode == MODE_DRIVE:
 				_call_crane()
-		KEY_T:
-			_toggle_lean()
 		KEY_V:
 			_cycle_track()
 		KEY_J:
@@ -4297,8 +4270,7 @@ func _apply_seat_trim(new_trim: float) -> void:
 func _apply_seat_anchor(force_bake: bool) -> bool:
 	# Offset the seat so the HMD lands exactly on the eye anchor in car
 	# space, yaw-aligned to the car's heading. The correction is rigid
-	# and sits ABOVE the XR origin, so head motion (and the lean
-	# reading, which is measured local to the origin) afterwards is
+	# and sits ABOVE the XR origin, so head motion afterwards is
 	# relative to the anchor.
 	#
 	# Fix Pass 11 (Item 1), ported from the Look Test patch 2: the
@@ -4315,15 +4287,12 @@ func _apply_seat_anchor(force_bake: bool) -> bool:
 	# anchor_yaw_pending set; the yaw lands when the head enters
 	# the cone (see the watch in _process_anchor_pending).
 	# Returns true when the yaw was applied (correction complete).
-	# The lean neutral is captured on BOTH halves - a
-	# translation-only landing still moves the head's frame.
 	var cam_car: Transform3D = _cam_in_car()
 	var fwd: Vector3 = _head_fwd_car(cam_car)
 	if not force_bake and absf(_yaw_dev_of(fwd)) > deg_to_rad(ANCHOR_YAW_CONE_DEG):
 		var corr_t := Transform3D(Basis.IDENTITY, _eye_anchor() - cam_car.origin)
 		seat_offset.transform = corr_t * seat_offset.transform
 		anchor_yaw_pending = true
-		_capture_lean_neutral()
 		return false
 	# Yaw that rotates the current horizontal view direction onto the
 	# car's forward (-Z in car space).
@@ -4332,14 +4301,7 @@ func _apply_seat_anchor(force_bake: bool) -> bool:
 	var corr := Transform3D(rot, _eye_anchor() - rot * cam_car.origin)
 	seat_offset.transform = corr * seat_offset.transform
 	anchor_yaw_pending = false
-	_capture_lean_neutral()
 	return true
-
-
-func _toggle_lean() -> void:
-	lean_on = not lean_on
-	if lean_on:
-		_capture_lean_neutral()
 
 
 func _toggle_jitter() -> void:
@@ -4405,11 +4367,6 @@ func _toggle_drop_btn_side() -> void:
 	if contact_label != null:
 		contact_label.text = "DROP SIDE: %s" % ("LEFT" if drop_btn_left else "RIGHT")
 		contact_readout_t = 2.5
-
-
-func _capture_lean_neutral() -> void:
-	if xr_cam != null:
-		lean_neutral_x = xr_cam.transform.origin.x
 
 
 # --- grab wheel ---
@@ -5109,8 +5066,6 @@ func _dash_ctl_near(world_pos: Vector3) -> int:
 func _activate_dash_ctl(kind: String) -> void:
 	if kind == "restart":
 		start_race()
-	elif kind == "lean":
-		_toggle_lean()
 	elif kind == "track":
 		_cycle_track()
 	elif kind == "view":
@@ -5208,7 +5163,6 @@ func start_race() -> void:
 	pend_th_l = 0.26
 	pend_om_f = 0.0
 	pend_om_l = 0.0
-	_capture_lean_neutral()
 	_refresh_car_visuals()
 
 
@@ -5532,7 +5486,6 @@ func _physics_process(delta: float) -> void:
 		tire_band = 0.0
 	_update_turbo_meter(delta) # Fix Pass 24 (Item 2): the meter's fill + flash state
 	_update_ctl_articulation(delta) # Fix Pass 13 (Item 5): seat levers + button dips
-	_update_lean_reading()
 	_update_suspension(delta)
 	_update_body_spring(delta)
 	_refresh_car_visuals()
@@ -5609,7 +5562,7 @@ func _update_drive(delta: float) -> void:
 	# - velocity is its own world vector, decomposed against the
 	#   heading each frame into forward (vf) and lateral (vl);
 	# - tire grip bleeds vl toward zero at up to the lateral grip
-	#   limit (the lean experiment's multiplier scales it), and
+	#   limit, and
 	#   the bank's gravity feeds vl along the frame side;
 	# - whatever lateral velocity survives IS the slip:
 	#   slip_state derives from it, so the skid audio sings on
@@ -5699,7 +5652,6 @@ func _update_drive(delta: float) -> void:
 	vl = v_acc.dot(r1)
 	var side_align: float = Vector3(fr["side"]).dot(r1)
 	vl += -GRAV * sin(float(fr["bank"])) * side_align * delta
-	grip_mult = _grip_for(yaw_rate / maxf(absf(vf), 2.0))
 	# Fix Pass 14 (Item 5): the bleed scales by the load the
 	# corners carry (load_grip, from _update_suspension). A
 	# slide across an unloading crest keeps most of its
@@ -5710,8 +5662,8 @@ func _update_drive(delta: float) -> void:
 	# corners read deep at a touchdown (factor > 1), which
 	# would double-count.
 	var lg5: float = load_grip if contact_transient_t <= 0.0 else 1.0
-	var bleed: float = clampf(-GRIP_BITE_RATE * vl * grip_mult * lg5,
-		-GRIP_LAT_ACCEL * grip_mult * lg5, GRIP_LAT_ACCEL * grip_mult * lg5)
+	var bleed: float = clampf(-GRIP_BITE_RATE * vl * lg5,
+		-GRIP_LAT_ACCEL * lg5, GRIP_LAT_ACCEL * lg5)
 	# Fix Pass 13 (Item 1): during the contact transient the
 	# bleed itself is load-limited - a tire still taking the
 	# car's weight cannot bite at full rate yet (the same ramp
@@ -5725,7 +5677,7 @@ func _update_drive(delta: float) -> void:
 	# it is spent: the lateral acceleration the current yaw
 	# asks the velocity to curve through (|vf * omega_target|)
 	# over the cap the bleed enforces at each axle - the same
-	# GRIP_LAT_ACCEL x grip_mult, with each axle's own FP14
+	# GRIP_LAT_ACCEL, with each axle's own FP14
 	# load factor (during the contact transient the bleed's cap
 	# drops the load factor, so the ratio does too - one rule).
 	# Per-AXLE, deliberately: FP14 tried per-corner carriers
@@ -5743,8 +5695,8 @@ func _update_drive(delta: float) -> void:
 		lgr15 = clampf(pow(maxf(load_r, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
 	if load_f > 0.05 and load_r > 0.05 and absf(vf) > 2.0:
 		var dem15: float = absf(vf * omega_target)
-		var rf15: float = dem15 / maxf(GRIP_LAT_ACCEL * grip_mult * lgf15, 0.01)
-		var rr15: float = dem15 / maxf(GRIP_LAT_ACCEL * grip_mult * lgr15, 0.01)
+		var rf15: float = dem15 / maxf(GRIP_LAT_ACCEL * lgf15, 0.01)
+		var rr15: float = dem15 / maxf(GRIP_LAT_ACCEL * lgr15, 0.01)
 		tire_ratio = maxf(rf15, rr15)
 		tire_ratio_axle = 0 if rf15 >= rr15 else 1
 	else:
@@ -5795,21 +5747,6 @@ func _update_drive(delta: float) -> void:
 		state_label.text = "FINISH!"
 	# place the car
 	_place_car_on_track(fr_now)
-
-
-func _grip_for(curv: float) -> float:
-	if not lean_on:
-		return 1.0
-	# lean into the turn (lean sign matches turn direction) = more grip.
-	# Turn left (curv>0) needs lean left (negative head offset) -> product
-	# test below uses -lean_value*curv so that matching signs give >1.
-	var lv: float = lean_value
-	if test_lean > -50.0:
-		lv = test_lean
-	if absf(curv) < 0.0005:
-		return 1.0 + 0.05 * absf(lv)
-	var match_amt: float = clampf(-lv * signf(curv), -1.0, 1.0)
-	return clampf(1.0 + 0.28 * match_amt, 0.75, 1.30)
 
 
 func _place_car_on_track(fr: Dictionary) -> void:
@@ -6128,13 +6065,12 @@ func _contact_long_cap(vl_now: float) -> float:
 	# Fix Pass 13 (Item 1): the longitudinal tire force the
 	# friction ellipse leaves during the contact transient, or
 	# -1 when no contact governs the tires. budget is the
-	# frame's lateral limit (the lean multiplier scales both
-	# sides of the ellipse, as it scales the bleed); a_lat is
-	# what the bleed is about to spend of it.
+	# frame's lateral limit; a_lat is what the bleed is about
+	# to spend of it.
 	if contact_transient_t <= 0.0:
 		return -1.0
-	var budget: float = GRIP_LAT_ACCEL * grip_mult
-	var a_lat: float = minf(GRIP_BITE_RATE * absf(vl_now) * grip_mult, budget)
+	var budget: float = GRIP_LAT_ACCEL
+	var a_lat: float = minf(GRIP_BITE_RATE * absf(vl_now), budget)
 	return sqrt(maxf(budget * budget - a_lat * a_lat, 0.0)) * _contact_load_factor()
 
 
@@ -6458,27 +6394,6 @@ func _orient_car_hang(delta: float, snap: bool) -> void:
 		z_axis = -facing
 	var x_axis: Vector3 = y_axis.cross(z_axis).normalized()
 	car.global_transform.basis = Basis(x_axis, y_axis, z_axis).orthonormalized()
-
-
-func _update_lean_reading() -> void:
-	if xr_cam != null and xr_ok:
-		lean_value = clampf((xr_cam.transform.origin.x - lean_neutral_x) / 0.16, -1.0, 1.0)
-	elif Input.is_key_pressed(KEY_Q):
-		lean_value = move_toward(lean_value, -1.0, 0.05)
-	elif Input.is_key_pressed(KEY_E):
-		lean_value = move_toward(lean_value, 1.0, 0.05)
-	else:
-		lean_value = move_toward(lean_value, 0.0, 0.05)
-	if lean_needle != null:
-		lean_needle.position.x = -0.18 + lean_value * 0.16 # FP13: centred on its shifted mount
-
-
-func _lean_effective() -> float:
-	# The lean the game acts on: test override wins (same pattern as
-	# _grip_for), else the live head/body reading.
-	if test_lean > -50.0:
-		return test_lean
-	return lean_value
 
 
 func _susp_integrate(target_f: float, target_r: float, delta: float) -> void:
@@ -7050,10 +6965,7 @@ func _update_view_spring() -> void:
 	#   acceleration, dip under braking) at VIEW_PITCH_GAIN;
 	# - heave adds a fraction of the spring compression on top of the
 	#   body's own ride motion;
-	# - roll carries the suspension roll (FP14 Item 3, below)
-	#   plus the lean experiment's amplified tilt (Item 4): view
-	#   roll = -lean * step * gain (lean right tips the view right),
-	#   present only while the experiment is ON.
+	# - roll carries the suspension roll (FP14 Item 3, below).
 	var active: bool = mode == MODE_DRIVE or mode == MODE_AIR
 	var v_pitch: float = 0.0
 	var v_y: float = 0.0
@@ -7069,8 +6981,6 @@ func _update_view_spring() -> void:
 		# exactly the pitch treatment. (Item 6's A/B switch
 		# scales this gain for pitch and roll together.)
 		v_roll = edge_roll * _view_gain()
-		if lean_on:
-			v_roll += -_lean_effective() * deg_to_rad(LEAN_TILT_STEP_DEG) * LEAN_VIEW_GAIN
 	if view_node != null:
 		view_node.rotation = Vector3(v_pitch, 0.0, v_roll)
 		view_node.position = Vector3(0.0, v_y, 0.0)
