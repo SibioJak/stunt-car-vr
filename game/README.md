@@ -121,7 +121,10 @@ automatically (window 1280×800, mouse/keyboard as above).
 # logic smoke: drop start -> release -> touchdown scored -> climb ->
 # bank held -> gap crossed airborne -> drone lift on demand -> prep
 # sequence -> boost credit -> release -> driving -> at the bank,
-# stage 7 proves the lean experiment's deletion (Fix Pass 31)
+# stage 7 proves the lean experiment's deletion (Fix Pass 31);
+# stage 61 proves the landing stroke law, the sink's view
+# transmission in both A/B modes and the per-axle contact
+# thump's severity ordering (Fix Pass 32)
 # The smoke run first executes the API GUARD (reported separately):
 # every XR API method/property the game code calls by name is asserted
 # against ClassDB in the running engine. Hotfix 1 added it after
@@ -4342,6 +4345,321 @@ deletion working as intended. Not in this pass: the
 landing-sink work, the dash-button view nudge, and
 the FP30 items still awaiting your verdict (wheel
 live through the whole hang, the centre gauge).
+
+## Fix Pass 32 — The Landing
+
+Base: FP31 final (1bc901d). The owner's conviction,
+from his FP29-build lab-lap video (2026-10-31):
+landings feel "flat and rigid when hitting road" —
+"isn't sinking down." Forensics on the capture agreed
+twice over: dense frames show no visible body sink at
+contact, and the audio track's level at every
+touchdown is indistinguishable from mid-flight —
+there was no landing sound at all. The model's facts
+convicted the mechanism: SUSP_TRAVEL is 0.34 m, but
+FP5's touchdown initialiser set compression INSTANTLY
+as a state (c = rest + vy × 0.045 × axle factors),
+so the stroke existed on paper and never in time.
+
+### Item 0 — the measurement (staged probe, published)
+
+Protocol: ribbon start straight, car warped and
+settled, rolling camera baseline sampled, then a
+staged arrival through the production `_land` at
+three severities; 270 frames at 90 Hz per case.
+Body sink = peak mean compression over rest; camera
+sink = rolling camera height over its post-contact
+minimum (the step log's own accounting: car height +
+view-spring offset − body sink); transmission =
+camera sink / body sink. View A and View B measured
+separately; they are identical to the last digit,
+because the heave/body channels the sink travels are
+not the channels the A/B gain touches (it gains
+pitch/roll only). BEFORE is the pristine FP31 build,
+same probe, same staging:
+
+| arrival | peak F | peak R | time to peak | body sink | camera sink | transm. | settle | audio margin |
+|---|---|---|---|---|---|---|---|---|
+| vy 3.0 BEFORE | 0.265 | 0.236 | 0.033 s | 0.150 m | 0.206 m | 1.37 | 0.23 s | 0.0 dB (no voice) |
+| vy 3.0 AFTER | 0.207 | 0.190 | 0.133 s | 0.099 m | 0.143 m | 1.45 | 0.58 s | +2.3 dB (tick −16.7/−18.2 dB) |
+| vy 6.0 BEFORE | 0.340 | 0.340 | 0.011 s | 0.240 m | 0.341 m | 1.42 | 0.81 s | 0.0 dB |
+| vy 6.0 AFTER | 0.323 | 0.281 | 0.133 s | 0.202 m | 0.291 m | 1.44 | 0.92 s | +6.6 dB (thump −9.0/−12.4 dB) |
+| vy 8.5 BEFORE | 0.340 | 0.340 | 0.011 s | 0.240 m | 0.362 m | 1.51 | 0.82 s | 0.0 dB |
+| vy 8.5 AFTER | 0.340 | 0.340 | 0.111 s | 0.240 m | 0.356 m | 1.48 | 1.18 s | +10.9 dB (thump −4.0/−7.2 dB) |
+
+Read the BEFORE rows first: vy 6.0 and vy 8.5 are
+the SAME row — both teleported to the 0.34 clamp in
+one frame (time-to-peak 0.011 s is one physics tick
+plus the rear axle's beat). Severity did not exist.
+AFTER: severity orders by depth, settle and voice;
+time-to-peak sits at 0.133 s, inside the brief's
+0.12–0.30 band, at every severity; the vy 8.5 row
+bottoms both axles (mean peak time 0.111 s is the
+clamp arriving, front at 0.089 — a 1.2 s-class flight
+onto flat at full droop IS a bottoming hit, and the
+FP14 bottoming kick is its voice in the body layer).
+Transmission was never short of travel (1.37–1.51
+before) — it was short of TIME. The sink now arrives
+over ~0.13–0.25 s instead of 1–3 frames, through the
+same channels, nothing retuned (Item 2 below).
+
+### Item 1 — compression as a motion
+
+- **The instant set is deleted.** `_land` no longer
+  assigns compression. The arriving state (post-droop,
+  post-flight, whatever it is) is KEPT, and the impact
+  enters as a compression VELOCITY: per axle,
+  vy × LAND_CV_K (0.85) with FP5's own axle bias
+  (front 1.15, rear 0.90) — a nose-first arrival
+  carries more front velocity and sinks front first,
+  in depth and in voice.
+- **Placement continuity, re-derived.** The old set
+  was also secretly the placement: it put the car at
+  the compressed height in the same frame. That is
+  now computed honestly at the landing frame — heave
+  and pitch re-derived from the ARRIVING attach
+  heights through the body spring's own formulas, so
+  the placed car is continuous with the flying car,
+  and the sink that follows is the integrator's.
+- **The delivery ramp.** A one-frame velocity step
+  peaked the stroke at 0.100 s at every severity
+  (probe round 1): a linear system's peak time
+  answers its input's shape, not its size. The impact
+  velocity now delivers like the contact itself does
+  — a 25% bite at first touch, the rest over 0.10 s
+  (the same load-ramp idea as CONTACT_LOAD_RAMP_S) —
+  which moves the peak to 0.133 s without touching
+  the spring's stiffness or damping.
+- **LAND_CV_K was measured up in the open, three
+  steps, against real arrivals** (the staged probe
+  reads ~0.02 m deeper than a droop arrival at the
+  same vy, so the probe alone would have shipped it
+  shy): at 0.58 the Drop Start's stroke peaked
+  0.216 — 4 mm under the rebound's deep-hit evidence,
+  no hop, and the gated gap throw fired 2.37 against
+  its 2.6 proof line; at 0.72 the deep hit registered
+  (peak 0.245) but the return crossed the fire travel
+  early in its velocity build — throw 1.19 m/s, which
+  the air window's vy < 0.5 bound snatched on the way
+  up (hop 0.029 m); at 0.85 the drop peaks 0.273,
+  throws 1.36 and hops 0.067 m, and the gap throw
+  fires 3.62 (FP31: 3.80) for a 0.41× second flight
+  (FP31: 0.48×) — the film band, on the machinery's
+  own terms.
+- **REBOUND_DEEP_HIT 0.22 → 0.20 (flagged
+  re-derivation).** FP14 set the stored-energy
+  evidence line against the instant law, where a
+  vy 4.1 landing was SET to 0.285. The velocity law
+  peaks that landing at 0.218 (stage-36 trace), 2 mm
+  under the line — so its return rang twice with no
+  bounce, the one film-law failure of the first full
+  run. The line moves to where the energy now lives;
+  the throw's other terms (fire travel, velocity and
+  load floors, chain rule, gated cap) are untouched,
+  and the isolation diff is clean: stages 51/54/58
+  are value-identical with and without the move —
+  it added no throw anywhere in the audited drives.
+  With it, the parked soft landing reads exactly the
+  film shape: one overshoot, one soft bounce
+  (0.97 m/s), settled in 71 frames (FP31: 86).
+- **Body layer reconciled, not stacked.** The old
+  instant `_body_impulse` fired the body sink from
+  the SET value — it would now peak before the car
+  compresses. It is deleted. In its place, a landing
+  FOLLOW: for 1.2 s after a landing the body spring's
+  rest point tracks the suspension's actual sink
+  excursion × BODY_FOLLOW_K 0.22 (≤ ~5.3 cm, inside
+  the layer's own cap) — it cannot precede what it
+  follows, so stage 2e's phase law (body peak after
+  car peak) holds by construction: car peak frame
+  2 → 11, body peak 12 → 23, calm sink 0.008 →
+  0.022 m. The bottoming kick (BODY_CATCH_IMPULSE)
+  and the road-following rest point are untouched.
+
+### Item 2 — the view channel
+
+No gain was retuned anywhere — not the A 0.6× spring,
+not the seat heave gain. The after-transmission
+(1.44–1.48 in BOTH modes) decomposes as 1.00 from
+placement (the car body physically sits lower by the
+sink) + the shipped 0.35 seat-heave term + ~0.1 of
+body follow at the camera minimum. FP32 adds no
+camera term of its own: what changed is that the
+body's sink is now a motion, so the same channels
+carry it over a quarter second instead of a frame.
+Stage 61 proves ≥ 0.85 in both modes on staged
+arrivals (1.44 / 1.44); stage 9's geometry-bounded
+view steps all still pass with margin (worst outside
+the staircase 0.0083 m vs bound 0.014; at the
+staircase 0.0215 vs 0.032) — the largest full-view
+event tail grows 0.0139 → 0.0266 m at the dip-lip
+landing zone, which is the sink arriving, on the
+record as an event tail, not a step defect.
+
+### Item 3 — the contact sound
+
+A seventh voice family joins the five loops: two
+one-shot players (front/rear axle) carrying a
+generated 0.45 s thump — a 52 Hz body under a
+low-passed thock, no tinny edge, seeded so it is the
+same sound every run. `_land` arms each axle with
+its share of the impact (the 1.15/0.90 bias over the
+grade's vy, CROSSED-UP/HARD arrivals at the top of
+the range); the axle's voice fires at the moment
+that axle actually loads — its compression crossing
+rest still driving in, checked on the physics tick
+right after integration — so a nose-first landing's
+thump lands with the front, and severity at the
+crossing can only raise the arm's estimate
+(compression rate is the second witness). Level:
+−23 dB (a drumbeat hop's tick) to −4 dB (the full
+thump) by severity^1.15. An arm that never loads
+expires silent after 0.6 s. The voices sit inside
+the existing discipline exactly like the loops: the
+latch stops them, the stall watchdog cuts them, a
+pre-race or latched fire is refused; they duck
+nothing and stack on the bed. Measured on the
+probe's analytic mix (the five loops' own accounting
+extended to the thumps): the 150 ms after contact
+runs +2.3 dB over the in-flight bed for a hop,
++6.6 dB for the 1.2 s class, +10.9 dB for the hard
+arrival — against 0.0 dB everywhere before, when
+there was no voice to measure. Stage 61 proves the
+firing and the ordering in-suite (flight thump
+−9.0 dB, hop tick −19.0 dB on its staging).
+
+### Census disposition
+
+A pristine FP31 baseline (629 checks) was run
+first; the FP32 log was diffed line by line.
+Landing initialisation feeds every trajectory, so
+movement is the expectation — the full list of
+changed observables, each with its before/after:
+
+- **stage 2c** — AMENDED IN PLACE (flagged in the
+  test source): the touchdown checks now read the
+  stroke's PEAK over the following second instead of
+  the instant set, and the calm margin re-derives
+  +0.08 → +0.05 (the instant law set a vy 3.0 arrival
+  to 0.238; the velocity law peaks it at 0.199).
+  Drop hop 0.13 → 0.07 m (a softer bounce — the old
+  hop rode the teleport-to-clamp's stored energy);
+  diag return cv sum −3.60 → −2.95.
+- **stage 2e** — body-layer values move with the
+  follow: calm sink peak 0.008 → 0.022 m, rough
+  0.055 → 0.055 m, phase frames car 2 → 11 / body
+  12 → 23 (law intact, both later — the stroke
+  develops slower, the body still lands after it).
+- **stage 3** — peak average compression over the
+  instrumented lap 0.227 → 0.178 m (driven
+  compressions now develop against their targets
+  instead of inheriting landing sets).
+- **stage 8** — staircase peak 0.340 → 0.335 m;
+  sweeper heading max 6.1 → 6.2°, lap 47.4 → 47.2 s.
+- **stage 9** — DRIVE frames 2941 → 3037; full-view
+  worst event tail (height) 0.0139 → 0.0266 m at the
+  dip-lip zone (Item 2 above); every bounded
+  geometry check passes with margin.
+- **stage 10b** — hump air 6.90 → 7.08 s; grades:
+  see the grade list below.
+- **stage 29** — AMENDED IN PLACE (flagged): the
+  fly_case fixture now cancels the landing ramp
+  with the rest of the spring state it zeroes.
+  Staged cold inside the previous case's 0.10 s
+  delivery, the leftover velocity (a 22 m/s climb
+  landing's, ~15 m/s of it) slammed the warped car
+  low and the dip-lip flight fizzled into a frame-1
+  "landing." Warps are test-only; a real landing's
+  own `_land` always restarts its delivery, so the
+  game never meets this. Both flights then measure
+  exactly their FP31 values (3.68 s / 2.32 s).
+- **stage 30** — getaway times: clean 2.16 → 2.04 s,
+  seeded 2.67 → 2.61 s, sway-peak 3.47 → 3.42 s;
+  grades and boost deltas UNCHANGED (grade list);
+  the sway spread (the penalty) 1.31 → 1.38 s.
+- **stage 35** — the gap landing's ground contact
+  7 → 17 frames (the developing stroke is on the
+  ground longer — inside the stage's 5–45 window);
+  rebound ratio 0.48× → 0.41× (band 0.4–0.75);
+  gated throw 3.80 → 3.62 m/s. Hump row frame-class
+  identical.
+- **stage 36** — the parked soft landing: FP31's
+  shape restored by the deep-hit re-derivation
+  (overshoots 1, one bounce, settle 86 → 71 frames).
+  The poked-spring cases (a)/(b) are byte-identical.
+- **stage 46** — telemetry ring 225 → 228 events.
+- **stage 51** — hump-row flight lists reshuffle at
+  frame grain: circuit total air 5.59 → 5.87 s with
+  one 0.30 s drumbeat flight appearing; ribbon band
+  count 2 → 1 (the drumbeat check reads ≥ 1).
+- **Trajectory-noise class** (values move, no check
+  near a bound): stages 11b (816 → 814 frames), 13
+  (micro), 19 (18108 → 18204 frames), 26 (end s
+  2498 → 2496), 38 (vy0 +0.01–0.02), 40 (397 crest
+  samples vs 400), 43 (band lead 0.39 → 0.38 s).
+
+### Grade and PAY changes (flagged, own list)
+
+No grade BOUNDARY and no payout CONSTANT moved —
+the FP13/FP24 thresholds and the FP24 formula are
+untouched. What moved is what the unchanged rules
+measure, because arrivals now develop in time:
+
+- **Grades.** Stage 10b's hump landings: two of
+  eight re-grade FLAT → OK (arrival heading/lat
+  state shifted by the new stroke upstream; dent 0
+  in both runs). Stage 30's three staged drops grade
+  CLEAN / SCRUBBED / CROSSED-UP in the same slots as
+  FP31, boost deltas +0.0 throughout. Stage 58's P6
+  episodes grade CLEAN ×3 in both runs; its rebound
+  episode lengthens 0.26 → 0.48 s and lands further
+  out (lat 0.18 → 3.45) — the crest's rebound now
+  rides the gated return's full arc. Every other
+  staged grade print is byte-identical.
+- **PAY (stage 54/58 audits, formula-unchanged
+  projections).** Circuit lap: air 7.70 → 7.97 s,
+  income 77.0 → 79.7 units. Ribbon lap: air 9.67 →
+  10.28 s, income 96.7 → 100.6 (the growth sits in
+  sector 4, 0.62 → 1.06 s — rebound second flights
+  paying as their own landings, FP24's own rule).
+  Lab: P1 135 → 134, P3 81 → 81, P4 10 → 15 (the
+  chasm crossing now carries a payable rebound
+  flight: air 0.97 → 1.47 s), P6 36 → 30, P8 45 →
+  44; totals 324 → 312 units on 32.37 → 31.21 s.
+
+### Numbers
+
+- Baseline FP31: smoke 629/629, API guard 71/71.
+- FP32: smoke **636/636** (629 + stage 61's seven),
+  API guard 71/71, render proof 163/164 — the one
+  failure is the pre-existing sandbox llvmpipe
+  hub-reach artifact, identical on the FP31 baseline
+  proof. New stage 61 (7 checks): the stroke law,
+  both-mode transmission, thump firing + ordering.
+- No *.uid or *.png.import sidecars in the commits.
+
+### What you're judging
+
+Three surfaces, all in the landing. (1) THE SINK:
+a real landing should now visibly travel — the car
+drops into its springs over a quarter second and
+comes back once; drumbeat hops stay small, the big
+crest flights should use the stroke. (2) THE BOUNCE
+AFTER: big landings still rebound (that contract is
+staged at 0.41×), and the Drop Start should land
+with its one soft bounce, a touch softer than
+before. (3) THE THUMP: every touchdown now speaks,
+per axle — hops tick, flights thump, crossed-up
+arrivals hit hardest; judge the low end (there
+should be no tinny edge) and whether the front/rear
+stagger reads on nose-first arrivals. Deliberately
+not in this pass: the flight model / tumble question
+and long-air agency (the physics queue's next item,
+your placement call), the dash-button view nudge,
+the Extremes Lab, and the still-owed VIEW A/B
+ruling. One pull note: if GitHub Desktop nags about
+discarding changes, glance at the Changes tab before
+discarding — the fingerprint check from FP31 stands.
 
 ## Quest export — status
 
