@@ -2,13 +2,14 @@ extends SceneTree
 
 ## Headless smoke for DE Test 1 (fallback mode, scripted inputs through
 ## the production action functions - _do_release /
-## _call_crane / _toggle_lean - plus an autopilot on the wheel):
+## _call_crane - plus an autopilot on the wheel):
 ##   Godot --headless --path . --script tests/smoke_test.gd
 ## Stages asserted: drop-start dangle sways -> release -> touchdown
 ## scored -> drive -> climb -> banked corner held -> gap crossed
 ## airborne -> on-demand crane lift -> dangle -> release over
-## track -> driving resumes -> lean experiment changes grip at
-## the bank. (The prep sequence this header used to list was
+## track -> driving resumes -> the bank (Fix Pass 31: stage 7
+## is the lean experiment's DELETION proof there now). (The
+## prep sequence this header used to list was
 ## deleted in Fix Pass 13 - stage 5 proves the deletion, and
 ## stage 30 stages the touchdown connection that replaced it.)
 ## Fix Pass 6 stages: 2e = driver-body seat spring (sink depth,
@@ -44,7 +45,7 @@ extends SceneTree
 ## 6.0x the measured front wheel track.
 ## NOT covered here (XR layer, reported UNVERIFIED, never passed
 ## silently): grab-wheel hand tracking, switch flipping by hand
-## proximity, HMD lean reading, panel legibility in the headset.
+## proximity, panel legibility in the headset.
 ##
 ## Also runs the API GUARD (check_api_surface, reported separately
 ## below): every XR API method/property the game code calls by name is
@@ -328,8 +329,9 @@ func grip_press_ctl(kind: String, hand: String = "R") -> void:
 	# mid-press.
 	# Fix Pass 13: this helper drove the prep switches until
 	# Item 1 deleted them; it now addresses any dash control
-	# by kind (the stages use the LEAN button - a harmless,
-	# observable toggle).
+	# by kind (the stages use the VIEW button - a harmless,
+	# observable toggle; Fix Pass 31: it was the LEAN button
+	# until that control was deleted with the experiment).
 	var ctl: int = main.dash_ctl_kinds.find(kind)
 	var seg: Array[Vector3] = main._dash_ctl_segment(ctl)
 	main.test_hand_pos[hand] = (seg[0] + seg[1]) * 0.5
@@ -361,19 +363,21 @@ func dash_one_hand(hand: String) -> bool:
 	# (a simulated DEAD channel) and its hand parked far away,
 	# so no zone entry can be credited to it.
 	# Fix Pass 13: the prep sequence this used to complete is
-	# deleted; the proof is now the LEAN button toggled on and
-	# back off through the production grip path.
+	# deleted; the proof is a surviving toggle worked on and
+	# back off through the production grip path (Fix Pass 31:
+	# the VIEW A/B button carries it now - the LEAN button it
+	# used is deleted with the experiment).
 	var other: String = "L" if hand == "R" else "R"
 	main.start_race()
 	await frames(4)
 	main.test_grip[other] = 0.0
 	main.test_hand_pos[other] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
 	main.test_hand_set = true
-	var was_on: bool = main.lean_on
-	grip_press_ctl("lean", hand)
-	var on_ok: bool = main.lean_on != was_on
-	grip_press_ctl("lean", hand)
-	var off_ok: bool = main.lean_on == was_on
+	var was_on: int = main.view_gain_mode
+	grip_press_ctl("view", hand)
+	var on_ok: bool = main.view_gain_mode != was_on
+	grip_press_ctl("view", hand)
+	var off_ok: bool = main.view_gain_mode == was_on
 	return on_ok and off_ok and float(main.test_grip[other]) == 0.0
 
 
@@ -939,35 +943,105 @@ func _run() -> void:
 	check(resumed and absf(main.car_lat) < 0.35,
 		"stage6: swing-centre release lands on the ribbon (car_lat %.3f m)" % main.car_lat)
 
-	# Stage 7: lean experiment changes grip at the bank (bonus layer).
+	# Stage 7 (Fix Pass 31): THE LEAN EXPERIMENT IS DELETED -
+	# this stage is its negative control, at the same bank the
+	# bonus layer used to be proven on. The old stage staged
+	# test_lean / _toggle_lean and asserted the multiplier
+	# (into the bank x1.28, wrong way x0.75) and the view tilt
+	# it bought. Chris judged the mechanic vestigial - FP21's
+	# per-corner loads made load transfer real, so the layer
+	# on top was a placebo with a button and a gauge - and
+	# ordered it nuked whole. What survives must be exactly
+	# the old OFF state, so this stage proves the deletion:
+	# no lean state or methods on the script, no "lean" in
+	# the dash roster (seven controls), a grip at the vacated
+	# button spot finds no control and changes nothing,
+	# neither the needle's cyan nor the button's green
+	# survives anywhere in the cockpit, and a settings file
+	# carrying the orphaned lean key loads cleanly.
 	main.debug_warp_to_s(155.0)
-	main.test_lean = -1.0 # lean LEFT, into the left-hand bank
-	if not main.lean_on:
-		main._toggle_lean()
 	await frames(12, true)
-	check(main.lean_on and main.grip_mult > 1.05,
-		"stage7: lean into the bank raises grip (x%.2f)" % main.grip_mult)
-	main.test_lean = 1.0 # wrong way
-	await frames(12, true)
-	check(main.grip_mult < 0.95,
-		"stage7: lean the wrong way drops grip (x%.2f)" % main.grip_mult)
-	# Stage 7b (Fix Pass 5, Item 4): lean view-tilt amplification.
-	# With the experiment ON and a full lean, the ViewSpring node
-	# rolls by step x gain (10 deg x 2.5 = ~25 deg, sign opposed to
-	# the lean value: lean right tips the view right). With the
-	# experiment OFF the view roll is exactly zero - the original
-	# "no camera roll" behaviour is now the OFF state.
-	main.test_lean = -1.0
-	await frames(6, true)
-	var tilt_on: float = absf(main.view_node.rotation.z)
-	var tilt_expect: float = deg_to_rad(main.LEAN_TILT_STEP_DEG) * main.LEAN_VIEW_GAIN
-	check(tilt_on > tilt_expect * 0.75,
-		"stage7b: lean ON tilts the view (roll %.1f deg, expect ~%.1f)" % [rad_to_deg(tilt_on), rad_to_deg(tilt_expect)])
-	main._toggle_lean() # experiment OFF
-	await frames(6, true)
-	check(absf(main.view_node.rotation.z) < 0.01,
-		"stage7b: lean OFF leaves the view level (roll %.3f deg)" % rad_to_deg(main.view_node.rotation.z))
-	main.test_lean = -99.0
+	var props7: Dictionary = {}
+	for p7: Dictionary in main.get_property_list():
+		props7[String(p7["name"])] = true
+	var lean_props7: Array[String] = []
+	for lp7: String in ["lean_on", "lean_value", "lean_neutral_x", "grip_mult", "test_lean", "lean_needle"]:
+		if props7.has(lp7):
+			lean_props7.append(lp7)
+	check(lean_props7.is_empty(),
+		"stage7: no lean state survives on the script (found %s)" % str(lean_props7))
+	check(not main.has_method("_toggle_lean") and not main.has_method("_grip_for")
+		and not main.has_method("_update_lean_reading") and not main.has_method("_lean_effective")
+		and not main.has_method("_capture_lean_neutral"),
+		"stage7: no lean methods survive on the script")
+	check(main.dash_ctl_kinds.find("lean") == -1 and main.dash_ctl_kinds.size() == 7,
+		"stage7: the dash roster has no lean and carries seven controls (%s)" % str(main.dash_ctl_kinds))
+	# The vacated spot: the green button stood at car_body
+	# (-0.52, 0.95, -0.60). A hand posed there must sit inside
+	# no control zone (the nearest survivor, VIEW at -0.35,
+	# is 0.17 m away - outside its 0.15 m radius), and a full
+	# grip there must change nothing at all.
+	var ghost7: Vector3 = main.car_body.global_transform * Vector3(-0.52, 0.95, -0.60)
+	check(main._dash_ctl_near(ghost7) == -1,
+		"stage7: the vacated button spot is inside no control zone (near %d)" % main._dash_ctl_near(ghost7))
+	var snap7: Array = [main.view_gain_mode, main.active_track, main.drop_btn_left,
+		main.steer_mode, main.mode, main.jitter_on, main.grab_hand]
+	main.test_hand_pos["R"] = ghost7
+	main.test_hand_set = true
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	main.test_grip["R"] = 1.0
+	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	main.test_grip["R"] = 0.0
+	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
+	var now7: Array = [main.view_gain_mode, main.active_track, main.drop_btn_left,
+		main.steer_mode, main.mode, main.jitter_on, main.grab_hand]
+	check(now7 == snap7,
+		"stage7: gripping at the vacated spot changes nothing (%s -> %s)" % [str(snap7), str(now7)])
+	# Neither colour survives: the needle's cyan (0.2, 0.9,
+	# 1.0) and the button's green (0.15, 0.75, 0.3) were each
+	# used by exactly one mesh in the cockpit.
+	var stack7: Array = [main.car_body]
+	var scanned7: int = 0
+	var bad7: int = 0
+	while not stack7.is_empty():
+		var nd7: Node = stack7.pop_back()
+		for ch7: Node in nd7.get_children():
+			stack7.append(ch7)
+		if nd7 is MeshInstance3D:
+			scanned7 += 1
+			var mo7: Material = (nd7 as MeshInstance3D).material_override
+			if mo7 is StandardMaterial3D:
+				var ac7: Color = (mo7 as StandardMaterial3D).albedo_color
+				if ac7 == Color(0.2, 0.9, 1.0) or ac7 == Color(0.15, 0.75, 0.3):
+					bad7 += 1
+	check(bad7 == 0,
+		"stage7: neither the needle cyan nor the button green survives in the cockpit (%d meshes scanned, %d bad)" % [scanned7, bad7])
+	# The orphaned settings key: no build ever persisted
+	# lean (the settings file's keys are seat/trim,
+	# lever/left, steer/mode), but a file carrying one must
+	# load cleanly - ConfigFile ignores unknown keys on load,
+	# and the next save rewrites the file without it.
+	var snap_trim7: float = main.seat_trim
+	var snap_side7: bool = main.drop_btn_left
+	var snap_mode7: int = main.steer_mode
+	var cfg7 := ConfigFile.new()
+	cfg7.set_value("seat", "trim", snap_trim7)
+	cfg7.set_value("lever", "left", snap_side7)
+	cfg7.set_value("steer", "mode", "stick" if snap_mode7 == 1 else "wheel")
+	cfg7.set_value("lean", "on", true) # the orphan
+	cfg7.save("user://settings.cfg")
+	main._load_settings()
+	check(main.seat_trim == snap_trim7 and main.drop_btn_left == snap_side7 and main.steer_mode == snap_mode7,
+		"stage7: a settings file carrying the orphaned lean key loads cleanly (known keys intact)")
+	main._save_settings() # the rewrite scrubs the orphan
+	# Stage 7b's successor: the view roll at the bank is the
+	# suspension roll alone, through the A/B gain - the lean
+	# tilt term that used to be added here is gone with the
+	# experiment (the identity is _update_view_spring's own).
+	check(absf(main.view_node.rotation.z - main.edge_roll * main._view_gain()) < 0.01,
+		"stage7b: the view roll at the bank is the suspension roll alone (view %.3f, edge x gain %.3f)" % [main.view_node.rotation.z, main.edge_roll * main._view_gain()])
 
 	# Stage 8 (Fix Pass 7, Item 1): the FULL extended lap, driven
 	# end to end from a fresh Drop Start through the production
@@ -1341,10 +1415,11 @@ func _run() -> void:
 	# are DELETED (Item 1). The grip-path properties it proves
 	# (level-based fire on zone entry, exactly-once latch,
 	# both human orders, three successive dangles) are now
-	# exercised on the surviving dash controls - the LEAN
+	# exercised on the surviving dash controls - the VIEW
 	# button is the observable (a toggle: a second fire is
 	# directly visible as a toggle back), the TRACK button
-	# and a sweep back to LEAN carry the sweep.
+	# and a sweep back to VIEW carry the sweep. (Fix Pass 31:
+	# the LEAN button carried this until its deletion.)
 	main.test_throttle = 0.0
 	main.test_boost = false
 	# --- dangle A: fresh Drop Start (the production restart
@@ -1355,27 +1430,27 @@ func _run() -> void:
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle",
 		"stage11a: fresh Drop Start dangle (mode=%d phase=%s)" % [main.mode, main.hang_phase])
 	# (a) GRIP FIRST, THEN REACH - the run-9 failure order.
-	var lean_ctl_a: int = main.dash_ctl_kinds.find("lean")
-	var lean_seg_a: Array[Vector3] = main._dash_ctl_segment(lean_ctl_a)
-	var lean_mid_a: Vector3 = (lean_seg_a[0] + lean_seg_a[1]) * 0.5
-	main.test_hand_pos["R"] = lean_mid_a + Vector3(0.0, 0.55, 0.0)
+	var view_ctl_a: int = main.dash_ctl_kinds.find("view")
+	var view_seg_a: Array[Vector3] = main._dash_ctl_segment(view_ctl_a)
+	var view_mid_a: Vector3 = (view_seg_a[0] + view_seg_a[1]) * 0.5
+	main.test_hand_pos["R"] = view_mid_a + Vector3(0.0, 0.55, 0.0)
 	main.test_hand_set = true
 	check(main._dash_ctl_near(main.test_hand_pos["R"]) == -1,
 		"stage11a: the reach starts outside every control zone")
-	var lean_a0: bool = main.lean_on
+	var view_a0: int = main.view_gain_mode
 	main.test_grip["R"] = 1.0
 	for ih: int in 2:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.lean_on == lean_a0,
+	check(main.view_gain_mode == view_a0,
 		"stage11a: gripping in empty air fires nothing")
-	main.test_hand_pos["R"] = lean_mid_a # hand arrives, grip STILL held
+	main.test_hand_pos["R"] = view_mid_a # hand arrives, grip STILL held
 	for ih2: int in 2:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.lean_on != lean_a0,
+	check(main.view_gain_mode != view_a0,
 		"stage11a: grip-first-then-reach fires the control on zone entry")
 	# (b) HELD-GRIP SWEEP: without ever releasing, the hand
 	# moves to the TRACK button - it fires on entry - then
-	# back to LEAN, which fires again (toggle back). Each
+	# back to VIEW, which fires again (toggle back). Each
 	# entry fires exactly once; the parked probe below is
 	# what proves the "exactly once".
 	var trk_ctl_a: int = main.dash_ctl_kinds.find("track")
@@ -1403,18 +1478,18 @@ func _run() -> void:
 		"stage11a: held-grip sweep fires the next control on entry (track %s)" % main.active_track)
 	# The track switch restarted the race on the circuit -
 	# the car hangs at a new world pose, so the sweep back
-	# re-reads the LEAN segment from the live car.
-	var lean_seg_a2: Array[Vector3] = main._dash_ctl_segment(lean_ctl_a)
-	main.test_hand_pos["R"] = (lean_seg_a2[0] + lean_seg_a2[1]) * 0.5
+	# re-reads the VIEW segment from the live car.
+	var view_seg_a2: Array[Vector3] = main._dash_ctl_segment(view_ctl_a)
+	main.test_hand_pos["R"] = (view_seg_a2[0] + view_seg_a2[1]) * 0.5
 	for ih3b: int in 2:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.lean_on == lean_a0,
+	check(main.view_gain_mode == view_a0,
 		"stage11a: sweeping back fires the first control again (toggle back)")
-	# Parked in the LEAN zone, still gripping: no re-fire (a
-	# re-fire would toggle LEAN again - directly observable).
+	# Parked in the VIEW zone, still gripping: no re-fire (a
+	# re-fire would toggle VIEW again - directly observable).
 	for ih4: int in 4:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.lean_on == lean_a0,
+	check(main.view_gain_mode == view_a0,
 		"stage11a: a parked held grip does not re-fire")
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
@@ -1473,28 +1548,28 @@ func _run() -> void:
 	main.test_throttle = 0.0
 	check(dang_b, "stage11b: steering hard over drives the car off the edge into a crane-recovery dangle (mode=%d phase=%s, %d frames)" % [main.mode, main.hang_phase, tf])
 	check(not main.is_drop_start, "stage11b: this dangle is a recovery, not a Drop Start")
-	# held-grip probe on the LEAN button: a grip parked in
+	# held-grip probe on the VIEW button: a grip parked in
 	# the zone across many polls fires EXACTLY once (a second
-	# fire would toggle LEAN straight back - so the state
+	# fire would toggle VIEW straight back - so the state
 	# after six polls proves the latch). Fix Pass 13: this
 	# probe ran on a prep switch and read the sequence index;
 	# the toggle carries the same information now.
-	var lean_b0: bool = main.lean_on
-	var hold_ctl_b: int = main.dash_ctl_kinds.find("lean")
+	var view_b0: int = main.view_gain_mode
+	var hold_ctl_b: int = main.dash_ctl_kinds.find("view")
 	var hold_seg_b: Array[Vector3] = main._dash_ctl_segment(hold_ctl_b)
 	main.test_hand_pos["R"] = (hold_seg_b[0] + hold_seg_b[1]) * 0.5
 	main.test_hand_set = true
 	main.test_grip["R"] = 1.0
 	for ihb: int in 6:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.lean_on != lean_b0,
-		"stage11b: a HELD grip parked in the zone fires exactly once (lean %s -> %s)" % [lean_b0, main.lean_on])
+	check(main.view_gain_mode != view_b0,
+		"stage11b: a HELD grip parked in the zone fires exactly once (view %s -> %s)" % [view_b0, main.view_gain_mode])
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
 	# pose-then-grip, the other human order, on the same
 	# recovery dangle: the button toggles back.
-	grip_press_ctl("lean")
-	check(main.lean_on == lean_b0,
+	grip_press_ctl("view")
+	check(main.view_gain_mode == view_b0,
 		"stage11b: pose-then-grip works the dash on the recovery dangle")
 	# --- FINISH, restart, fresh Drop Start dangle ---
 	# The release is staged on a SETTLED pendulum: this stage
@@ -1532,10 +1607,18 @@ func _run() -> void:
 	await frames(4)
 	check(main.mode == main.MODE_HANG and main.hang_phase == "dangle" and main.is_drop_start,
 		"stage11c: restart re-enters a Drop Start dangle")
-	var lean_c0: bool = main.lean_on
-	grip_press_ctl("lean")
-	check(main.lean_on != lean_c0,
+	var view_c0: int = main.view_gain_mode
+	grip_press_ctl("view")
+	check(main.view_gain_mode != view_c0,
 		"stage11c: the grip path still works the dash on the post-FINISH Drop Start")
+	# Fix Pass 31: the LEAN toggle this press used to flip
+	# was inert downstream; VIEW is not - stage 40 boots on
+	# A, so the mode is restored by direct activation
+	# (bookkeeping, not a claim: no grab events, and the
+	# stage-46 event count is unmoved).
+	main._activate_dash_ctl("view")
+	check(main.view_gain_mode == view_c0,
+		"stage11c: the VIEW mode is restored - later stages boot on the mode they expect")
 	main.test_hand_set = false
 	main.test_grip["R"] = 0.0
 	main.test_grip["L"] = 0.0
@@ -1703,18 +1786,19 @@ func _run() -> void:
 	# every dash control must sit within same-side shoulder
 	# reach (an arm plus the torso allowance a seated player
 	# actually has); cross-body is printed for the record
-	# (the buttons also have controller twins - lean lives on
-	# the dash button by grip and used to be R B, restart =
-	# L Y button).
+	# (the buttons also have controller twins - restart =
+	# L Y button, VIEW's twin is the G key).
 	# Fix Pass 13: (a) completed the prep sequence; the
-	# sequence is deleted, so the proof is the LEAN button
-	# toggled on and off one-handed (dash_one_hand). (b) was
+	# sequence is deleted, so the proof is a surviving toggle
+	# worked on and off one-handed (dash_one_hand; Fix Pass
+	# 31: the VIEW button - the LEAN button it used is
+	# deleted). (b) was
 	# keyed to the three prep switches; it now covers every
 	# surviving dash control.
 	var ok15a: bool = await dash_one_hand("R")
-	check(ok15a, "stage15: dash worked with a DEAD LEFT channel (right hand toggles LEAN on and off)")
+	check(ok15a, "stage15: dash worked with a DEAD LEFT channel (right hand toggles VIEW on and off)")
 	var ok15b: bool = await dash_one_hand("L")
-	check(ok15b, "stage15: dash worked with a DEAD RIGHT channel (left hand toggles LEAN on and off)")
+	check(ok15b, "stage15: dash worked with a DEAD RIGHT channel (left hand toggles VIEW on and off)")
 	main.test_hand_set = false
 	main.test_grip["L"] = 0.0
 	main.test_grip["R"] = 0.0
@@ -2253,12 +2337,17 @@ func _run() -> void:
 	# set is exactly [restart, lean, track, seatup, seatdn].
 	# Fix Pass 14 (Item 6): the amber VIEW button registers
 	# after them (idx 5) so none of these indices move.
-	check(sup_idx == 3 and sdn_idx == 4,
+	# Fix Pass 31 (FLAGGED - the indices move BY the deletion):
+	# the LEAN button (idx 1) is deleted with the experiment,
+	# so everything after it registers one earlier - the set
+	# is [restart, track, seatup, seatdn, view, side, drop].
+	check(sup_idx == 2 and sdn_idx == 3,
 		"stage22: seat levers registered after the dash buttons (idx %d/%d)" % [sup_idx, sdn_idx])
 	# Fix Pass 20 (Item 1): the DROP BUTTON registers after
 	# SIDE - eight controls; VIEW's own index does not move.
-	check(main.dash_ctl_kinds.find("view") == 5 and main.dash_ctl_kinds.size() == 8,
-		"stage22: the VIEW button keeps its FP14 index (idx %d of %d - FP15's SIDE, then FP20's DROP, register after it)" % [main.dash_ctl_kinds.find("view"), main.dash_ctl_kinds.size()])
+	# Fix Pass 31: seven controls, VIEW at idx 4.
+	check(main.dash_ctl_kinds.find("view") == 4 and main.dash_ctl_kinds.size() == 7,
+		"stage22: the VIEW button sits one earlier after the lean deletion (idx %d of %d - FP15's SIDE, then FP20's DROP, register after it)" % [main.dash_ctl_kinds.find("view"), main.dash_ctl_kinds.size()])
 	main._apply_seat_trim(0.0)
 	main.test_hand_set = true
 	var seg_sup: Array = main._dash_ctl_segment(sup_idx)
@@ -3201,22 +3290,32 @@ func _run() -> void:
 	await frames(30)
 	check(absf(up33.rotation_degrees.x - (-20.0)) < 2.0,
 		"stage33: the lever springs back to rest on release (%.1f deg)" % up33.rotation_degrees.x)
-	var lean_idx33: int = main.dash_ctl_kinds.find("lean")
-	var lean_node33: Node3D = main.dash_ctl_nodes[lean_idx33]
-	var base_y33: float = main.dash_ctl_base_y[lean_idx33]
-	var p33: Vector3 = (main._dash_ctl_segment(lean_idx33)[0] as Vector3)
+	# Fix Pass 31: the dip probe's button is VIEW now (the
+	# LEAN button it used is deleted with the experiment);
+	# the articulation machinery is per-control generic, so
+	# the claim is unmoved. The probe's press flips the A/B
+	# mode - restored below by direct activation
+	# (bookkeeping: stage 40 boots on A).
+	var view_mode33: int = main.view_gain_mode
+	var view_idx33: int = main.dash_ctl_kinds.find("view")
+	var view_node33: Node3D = main.dash_ctl_nodes[view_idx33]
+	var base_y33: float = main.dash_ctl_base_y[view_idx33]
+	var p33: Vector3 = (main._dash_ctl_segment(view_idx33)[0] as Vector3)
 	main.test_hand_pos["R"] = p33
 	main.test_grip["R"] = 1.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	await frames(15)
-	check(lean_node33.position.y < base_y33 - 0.005,
-		"stage33: a held dash button DIPS (%.4f m)" % (base_y33 - lean_node33.position.y))
+	check(view_node33.position.y < base_y33 - 0.005,
+		"stage33: a held dash button DIPS (%.4f m)" % (base_y33 - view_node33.position.y))
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main.test_hand_set = false
 	await frames(15)
-	check(absf(lean_node33.position.y - base_y33) < 0.002,
+	check(absf(view_node33.position.y - base_y33) < 0.002,
 		"stage33: the button returns flush on release")
+	main._activate_dash_ctl("view")
+	check(main.view_gain_mode == view_mode33,
+		"stage33: the dip probe's VIEW press is answered back (mode restored)")
 
 	# ---------- stage 34: Fix Pass 13 (Item 6) - the pickup, FP15 the crane ----
 	# (a) Drop Start is a pickup: the car starts ON THE PAD
@@ -4488,8 +4587,10 @@ func _run() -> void:
 	main.debug_set_hang_dangle() # FP13 (Item 6): setup shortcut - the opening transport is stage 34's subject
 	await frames(4)
 	main.dip_timer = 1000.0
-	check(main.dash_ctl_kinds.size() == 8 and main.dash_ctl_kinds[6] == "side" and main.dash_ctl_kinds[7] == "drop",
-		"stage44: SIDE is seventh of eight dash controls, the DROP BUTTON last (%s)" % str(main.dash_ctl_kinds))
+	# Fix Pass 31 (FLAGGED - the roster shrank by the deletion):
+	# the LEAN button (idx 1) is gone, so SIDE is sixth of seven.
+	check(main.dash_ctl_kinds.size() == 7 and main.dash_ctl_kinds[5] == "side" and main.dash_ctl_kinds[6] == "drop",
+		"stage44: SIDE is sixth of seven dash controls, the DROP BUTTON last (%s)" % str(main.dash_ctl_kinds))
 	var side_was_left44: bool = main.drop_btn_left
 	if side_was_left44:
 		grip_press_ctl("side") # normalise to the right first
@@ -4598,27 +4699,31 @@ func _run() -> void:
 	main.debug_set_hang_dangle()
 	await frames(4)
 	main.dip_timer = 1000.0
-	var lean_seg46: Array[Vector3] = main._dash_ctl_segment(main.dash_ctl_kinds.find("lean"))
-	var lean_mid46: Vector3 = (lean_seg46[0] + lean_seg46[1]) * 0.5
+	# Fix Pass 31: the latch probe's toggle is VIEW now (the
+	# LEAN button it rode is deleted with the experiment);
+	# the latch machinery is per-control generic, so every
+	# claim below is unmoved.
+	var view_seg46: Array[Vector3] = main._dash_ctl_segment(main.dash_ctl_kinds.find("view"))
+	var view_mid46: Vector3 = (view_seg46[0] + view_seg46[1]) * 0.5
 	main.test_hand_set = true
 	main.test_hand_pos["L"] = main.car.global_position + Vector3(5.0, 5.0, 5.0)
-	main.test_hand_pos["R"] = lean_mid46
+	main.test_hand_pos["R"] = view_mid46
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	var lean_was46: bool = main.lean_on
+	var view_was46: int = main.view_gain_mode
 	var chatter_was46: int = main.grab_chatter_count
 	main.test_grip["R"] = 1.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(main.lean_on != lean_was46, "stage46: full squeeze fires LEAN (latch engages)")
+	check(main.view_gain_mode != view_was46, "stage46: full squeeze fires VIEW (latch engages)")
 	main.test_grip["R"] = 0.45
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(main.lean_on != lean_was46 and bool(main.gripping["R"]),
+	check(main.view_gain_mode != view_was46 and bool(main.gripping["R"]),
 		"stage46: a dip to 0.45 holds the latch (no drop, no re-fire)")
 	main.test_grip["R"] = 1.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
-	check(main.lean_on != lean_was46,
+	check(main.view_gain_mode != view_was46,
 		"stage46: recovery to full squeeze does NOT re-fire (FP15 double-toggle is dead)")
 	check(main.grab_chatter_count > chatter_was46,
 		"stage46: the rescued dip was counted as chatter (%d)" % main.grab_chatter_count)
@@ -5552,7 +5657,9 @@ func _run() -> void:
 			bar_found56 = true
 	check(not bar_found56 and main.flask_node != null and main.flask_node.get_parent() == main.car_body,
 		"stage56: FP24's bar is deleted outright; the flask stands on the car body in the dash row")
-	check(main.dash_ctl_kinds.size() == 8 and not main.dash_ctl_kinds.has("flask"),
+	# Fix Pass 31 (FLAGGED): the roster is seven now - the
+	# LEAN button was deleted after this stage was written.
+	check(main.dash_ctl_kinds.size() == 7 and not main.dash_ctl_kinds.has("flask"),
 		"stage56: the flask is not a dash control - the roster is unchanged (%s)" % str(main.dash_ctl_kinds))
 	main.boost_meter = main.BOOST_CAPACITY
 	await frames(2)
@@ -6281,15 +6388,17 @@ func _run() -> void:
 	check(absf(main.wheel_angle - wa59) < 0.001,
 		"stage59: HOLD - 2.0 s ungripped in DRIVE, the wheel_angle is untouched (%.4f rad)" % main.wheel_angle)
 	check(main._steer_source() == "-", "stage59: no source steers at rest in WHEEL mode")
-	# (vi) ONE-STEP REGRIP: a dash latch (LEAN) taken to the
-	# wheel in the same squeeze - the transfer fires, the
-	# latch ends clean, the next poll steers.
-	var lean59: int = main.dash_ctl_kinds.find("lean")
-	var lseg59: Array[Vector3] = main._dash_ctl_segment(lean59)
+	# (vi) ONE-STEP REGRIP: a dash latch (VIEW - Fix Pass 31:
+	# the LEAN latch it used is deleted with the experiment;
+	# the transfer machinery is control-agnostic) taken to
+	# the wheel in the same squeeze - the transfer fires,
+	# the latch ends clean, the next poll steers.
+	var view59: int = main.dash_ctl_kinds.find("view")
+	var lseg59: Array[Vector3] = main._dash_ctl_segment(view59)
 	main.test_hand_pos["L"] = (lseg59[0] + lseg59[1]) * 0.5
 	main.test_grip["L"] = 1.0
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
-	check(int(main.dash_ctl_fired["L"]) == lean59, "stage59: the LEAN latch is L's (dash owner)")
+	check(int(main.dash_ctl_fired["L"]) == view59, "stage59: the VIEW latch is L's (dash owner)")
 	main.test_hand_pos["L"] = rim59.call(0.25, PI / 2.0)
 	main._poll_grab("L", main.hand_ctrl["L"], 0.016)
 	check(main.grab_hand == "L" and int(main.dash_ctl_fired["L"]) == -1,
@@ -6566,7 +6675,7 @@ func _run() -> void:
 	main._set_track("circuit")
 
 	print("---")
-	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); HMD lean reading; in-headset panel legibility")
+	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")
 	if guard_failures == 0:
 		print("API GUARD: ALL %d CHECKS PASSED" % guard_checks)
 	else:

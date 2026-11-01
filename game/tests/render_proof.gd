@@ -375,7 +375,7 @@ func _run() -> void:
 	main._update_panel()
 	var ptxt: String = main.panel_label.text + "\n" + main.diag_label.text
 	for kw: String in ["GRIP", "Throttle", "Brake", "Boost", "Release", "Call crane",
-			"restart", "lean", "track", "Recenter", "SPACE", "W/S", "V track",
+			"restart", "track", "Recenter", "SPACE", "W/S", "V track",
 			"DIAG", "ANCHOR", "CAMH", "HLD", "Jitter", "JIT", "CONTACT",
 			"SEAT+", "SEAT-", "PgUp/PgDn", "BOTH", "SEAT", "DROP BUTTON", "Panels", "TAB",
 			"amber view", "G view", "drop side", "M drop side", "GRAB"]:
@@ -392,8 +392,31 @@ func _run() -> void:
 	# seven controls.
 	# Fix Pass 20 (Item 1): the DROP BUTTON joins on the dash
 	# face, registered last - eight controls.
-	check(main.dash_ctl_kinds == ["restart", "lean", "track", "seatup", "seatdn", "view", "side", "drop"],
-		"dash carries exactly the eight controls (%s)" % str(main.dash_ctl_kinds))
+	# Fix Pass 31: the green LEAN button is DELETED with the
+	# lean experiment - seven controls.
+	check(main.dash_ctl_kinds == ["restart", "track", "seatup", "seatdn", "view", "side", "drop"],
+		"dash carries exactly the seven controls (%s)" % str(main.dash_ctl_kinds))
+	# Fix Pass 31: the deletion's scene-level proofs - the
+	# flask beside the vacated spot does not move, and
+	# neither the lean needle's cyan (0.2, 0.9, 1.0) nor the
+	# button's green (0.15, 0.75, 0.3) survives on any
+	# cockpit mesh (each colour belonged to exactly one).
+	check(main.flask_node != null and main.flask_node.position == main.FLASK_POS,
+		"FP31: the flask is unmoved at %s" % str(main.flask_node.position if main.flask_node != null else Vector3.ZERO))
+	var stack31: Array = [main.car_body]
+	var bad31: int = 0
+	while not stack31.is_empty():
+		var nd31: Node = stack31.pop_back()
+		for ch31: Node in nd31.get_children():
+			stack31.append(ch31)
+		if nd31 is MeshInstance3D:
+			var mo31: Material = (nd31 as MeshInstance3D).material_override
+			if mo31 is StandardMaterial3D:
+				var ac31: Color = (mo31 as StandardMaterial3D).albedo_color
+				if ac31 == Color(0.2, 0.9, 1.0) or ac31 == Color(0.15, 0.75, 0.3):
+					bad31 += 1
+	check(bad31 == 0,
+		"FP31: no lean needle cyan and no lean button green in the cockpit (%d bad meshes)" % bad31)
 	check(main.state_label.text.length() > 0, "state label is live (%s)" % main.state_label.text)
 
 	# Fix Pass 2 anchor geometry: the fallback camera sits exactly on the
