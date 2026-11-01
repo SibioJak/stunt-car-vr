@@ -884,8 +884,15 @@ func _run() -> void:
 	# 1): keep sampling past the hit - the body spring peaks AFTER
 	# the car springs by design. (The mode is read at loop exit:
 	# this landing rebounds into a hop after touchdown.)
+	# Fix Pass 32 (flagged): the car springs peak in this window
+	# too, now - the instant set is gone, so at the DRIVE-entry
+	# sample the compression is still the arriving droop and the
+	# stroke develops over the following ~0.15 s. land_peak is
+	# sampled through the same window (the claim is unchanged:
+	# the suspension travels at the touchdown, read at its peak).
 	for il2: int in 40:
 		await physics_frame
+		land_peak = maxf(land_peak, (main.c_f + main.c_r) * 0.5)
 		land_sink = maxf(land_sink, main.body_sink)
 	check(land_sink > 0.004,
 		"driver body sinks at the staged touchdown (peak sink %.3f m)" % land_sink)

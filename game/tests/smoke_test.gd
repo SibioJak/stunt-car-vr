@@ -12,6 +12,11 @@ extends SceneTree
 ## prep sequence this header used to list was
 ## deleted in Fix Pass 13 - stage 5 proves the deletion, and
 ## stage 30 stages the touchdown connection that replaced it.)
+## Fix Pass 32: stage 61 = the landing as a motion (stroke law,
+## view transmission in both A/B modes, the per-axle contact
+## thump ordering by severity); stage 2c's touchdown checks are
+## re-derived from the instant set to the stroke's PEAK (the
+## amendment is flagged in place).
 ## Fix Pass 6 stages: 2e = driver-body seat spring (sink depth,
 ## phase lag behind the car springs, ordering by impact, zero at
 ## rest); 2f = 8 m road width + the engine/skid audio state
@@ -581,18 +586,34 @@ func _run() -> void:
 	# Touchdown compression orders by landing grade, via the
 	# production _land path: a calm arrival compresses less than a
 	# rough one, and both travel well past rest.
+	# Fix Pass 32 (Item 1) RE-DERIVATION (flagged): FP5's instant
+	# set is gone - the compression AT the _land frame is now the
+	# arriving state, so the grade ordering is read off the PEAK
+	# of the stroke that develops over the following second (the
+	# same law stage 61 measures in full). What they measure moved
+	# from state to peak, and the calm margin re-derives with it:
+	# the instant law set a vy 3.0 arrival to 0.238 against its
+	# +0.08 floor; the velocity law peaks it at ~0.19, so the
+	# floor is +0.05 - the claim (travel well past rest, ordering
+	# by grade) is unchanged.
 	main.mode = main.MODE_AIR
 	main.air_vel = Vector3(0.0, -3.0, 0.0)
 	main._land(main._frame_at(main.car_s), 0.0, main.CLEARANCE)
-	var c_calm: float = (main.c_f + main.c_r) * 0.5
+	var c_calm: float = 0.0
+	for ip32: int in 90:
+		await physics_frame
+		c_calm = maxf(c_calm, (main.c_f + main.c_r) * 0.5)
 	main.mode = main.MODE_AIR
 	main.air_vel = Vector3(0.0, -8.0, 0.0)
 	main._land(main._frame_at(main.car_s), 0.0, main.CLEARANCE)
-	var c_rough: float = (main.c_f + main.c_r) * 0.5
-	check(c_calm > main.SUSP_REST + 0.08,
-		"stage2c: suspension travels at touchdown (calm avg compression %.3f m vs rest %.2f)" % [c_calm, main.SUSP_REST])
+	var c_rough: float = 0.0
+	for ip32b: int in 90:
+		await physics_frame
+		c_rough = maxf(c_rough, (main.c_f + main.c_r) * 0.5)
+	check(c_calm > main.SUSP_REST + 0.05,
+		"stage2c: suspension travels at touchdown (calm peak avg compression %.3f m vs rest %.2f)" % [c_calm, main.SUSP_REST])
 	check(c_rough > c_calm + 0.05,
-		"stage2c: compression orders by grade (rough %.3f m > calm %.3f m)" % [c_rough, c_calm])
+		"stage2c: compression orders by grade (rough peak %.3f m > calm peak %.3f m)" % [c_rough, c_calm])
 	await frames(10)
 
 	# Stage 2e (Fix Pass 6, Item 1): the driver-BODY seat spring.
@@ -2948,6 +2969,14 @@ func _run() -> void:
 		main.heave_off = 0.0
 		main.body_sink = 0.0
 		main.body_sink_v = 0.0
+		# Fix Pass 32 (flagged): the landing's impact-velocity
+		# ramp is landing state too - staged cold off the
+		# previous case's landing inside its 0.10 s delivery,
+		# the leftover velocity slammed the warped car low
+		# and the flight fizzled into a frame-1 "landing"
+		# (the 0.27 m lesson above, one layer down). Cancel
+		# the delivery with the rest of the spring state.
+		main.land_ramp_t = 9.0
 		await frames(3)
 		main.debug_pin_speed(48.0)
 		if kick != 0.0:
@@ -6673,6 +6702,86 @@ func _run() -> void:
 	main._refresh_car_visuals()
 	main.test_hand_set = false
 	main._set_track("circuit")
+
+	# Stage 61 (Fix Pass 32): THE LANDING AS A MOTION. Staged
+	# arrivals through the production _land path on the start
+	# straight (the stage 2c/2e protocol): (a) the stroke law -
+	# a vy 6.0 arrival peaks deep but off the travel clamp,
+	# with its time-to-peak inside the film band (the FP31
+	# instant law peaked in 0.011 s, a state, not a stroke);
+	# the front axle's stroke leads the rear's in depth and
+	# never trails it in time; (b) the sink reaches the camera
+	# - transmission (camera sink over the suspension's own
+	# sink excursion, rolling baseline) at/above 0.85 in BOTH
+	# view modes; (c) the contact thump fires and orders by
+	# severity - a hop's tick sits well under a flight's thump.
+	main._set_track("ribbon")
+	await frames(5)
+	var stage61_land = func(vy: float) -> Dictionary:
+		main.debug_warp_to_s(10.0)
+		main.debug_pin_speed(0.0)
+		main.test_throttle = 0.0
+		await frames(150)
+		var roll61: float = 0.0
+		for ir61: int in 14:
+			await physics_frame
+			roll61 += main.car.global_position.y + main.view_node.position.y - main.body_sink
+		roll61 /= 14.0
+		main.mode = main.MODE_AIR
+		main.air_vel = Vector3(0.0, -vy, 0.0)
+		main.air_from_release = false
+		main.air_from_rebound = false
+		main._land(main._frame_at(main.car_s), 0.0, main.CLEARANCE)
+		var pk61: float = 0.0
+		var tm61: float = 0.0
+		var pkf61: float = 0.0
+		var tf61: float = 0.0
+		var pkr61: float = 0.0
+		var tr61: float = 0.0
+		var mincam61: float = 1e9
+		var tdb61: float = -60.0
+		for i61: int in 180:
+			await physics_frame
+			var t61: float = float(i61 + 1) / 90.0
+			var mc61: float = (main.c_f + main.c_r) * 0.5
+			if mc61 > pk61:
+				pk61 = mc61
+				tm61 = t61
+			if main.c_f > pkf61:
+				pkf61 = main.c_f
+				tf61 = t61
+			if main.c_r > pkr61:
+				pkr61 = main.c_r
+				tr61 = t61
+			var cy61: float = main.car.global_position.y + main.view_node.position.y - main.body_sink
+			mincam61 = minf(mincam61, cy61)
+			tdb61 = maxf(tdb61, maxf(main.audio_thump_db(0), main.audio_thump_db(1)))
+		return {"peak": pk61, "t_peak": tm61, "peak_f": pkf61, "t_f": tf61,
+			"peak_r": pkr61, "t_r": tr61, "cam_sink": roll61 - mincam61,
+			"thump_db": tdb61}
+	var r61a: Dictionary = await stage61_land.call(6.0)
+	check(float(r61a["peak"]) > 0.22 and float(r61a["peak"]) < 0.33,
+		"stage61: the vy 6.0 stroke peaks deep but off the clamp (peak mean %.3f m)" % float(r61a["peak"]))
+	check(float(r61a["t_peak"]) >= 0.12 and float(r61a["t_peak"]) <= 0.30,
+		"stage61: the sink develops as a motion (time to peak %.3f s, film band 0.12-0.30)" % float(r61a["t_peak"]))
+	check(float(r61a["peak_f"]) > float(r61a["peak_r"]) and float(r61a["t_f"]) <= float(r61a["t_r"]),
+		"stage61: the front stroke leads (front %.3f m @ %.3f s, rear %.3f m @ %.3f s)" % [
+			float(r61a["peak_f"]), float(r61a["t_f"]), float(r61a["peak_r"]), float(r61a["t_r"])])
+	check(float(r61a["thump_db"]) > -20.0,
+		"stage61: the contact thump fires at a full-flight arrival (%.1f dB)" % float(r61a["thump_db"]))
+	var trans61a: float = float(r61a["cam_sink"]) / (float(r61a["peak"]) - main.SUSP_REST)
+	check(trans61a >= 0.85,
+		"stage61: view A transmits the sink (%.2f of the body sink)" % trans61a)
+	main.view_gain_mode = 1
+	var r61b: Dictionary = await stage61_land.call(6.0)
+	var trans61b: float = float(r61b["cam_sink"]) / (float(r61b["peak"]) - main.SUSP_REST)
+	check(trans61b >= 0.85,
+		"stage61: view B transmits the sink (%.2f of the body sink)" % trans61b)
+	main.view_gain_mode = 0
+	var r61c: Dictionary = await stage61_land.call(2.0)
+	check(float(r61c["thump_db"]) > -40.0 and float(r61c["thump_db"]) < float(r61a["thump_db"]) - 6.0,
+		"stage61: the thump orders by severity (hop tick %.1f dB, flight thump %.1f dB)" % [
+			float(r61c["thump_db"]), float(r61a["thump_db"])])
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")
