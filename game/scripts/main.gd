@@ -1231,6 +1231,8 @@ var hand_ctrl: Dictionary = {}
 var ctrl_rep: Dictionary = {}
 var xr_ok: bool = false
 var fallback_cam: Camera3D
+var stamp_label: Label3D # FP33: the build stamp on the XR camera
+var stamp_label_fb: Label3D # FP33: the build stamp on the fallback camera (null in XR mode)
 
 # grab state
 var grab_hand: String = ""
@@ -1309,6 +1311,19 @@ var last_release_s: float = -1.0
 var last_release_hdg_deg: float = 0.0
 var last_release_sec_deg: float = 0.0
 var last_release_err_deg: float = 0.0
+# Fix Pass 33: THE BUILD STAMP - the newest fix pass in
+# this build and its delivery date, in the exact form
+# "FPnn · YYYY-MM-DD". It rides BOTH cameras as a small
+# label at the lower right of the view (see
+# _make_stamp_label), so the running build is provable
+# from the seat: this clone lives in OneDrive, GitHub
+# Desktop's Discard Changes nag is a standing hazard
+# here, and a stale build already cost one false verdict
+# (run 14). STANDING RULE: every fix pass updates this
+# constant as part of its delivery, and the smoke suite
+# format-checks it (stage 62), so a forgotten stamp
+# fails loudly instead of shipping silently.
+const BUILD_STAMP: String = "FP33 · 2026-11-01"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -1407,6 +1422,31 @@ func _notification(what: int) -> void:
 		_set_audio_latched(false)
 
 
+func _make_stamp_label() -> Label3D:
+	# Fix Pass 33: the build stamp's face - small, dim
+	# neutral grey, unshaded, no outline, and drawn with
+	# no depth test so it reads at a glance from any pose.
+	# Parented to a camera, it holds the lower right of
+	# the visual field whatever the car does. NO rotation:
+	# a Label3D's readable face looks down its own -Z, the
+	# same way the camera looks, so the stamp reads
+	# correctly as built (the FP33 first capture proved
+	# the point the hard way - a Y-flip mirrored it).
+	var lab := Label3D.new()
+	lab.name = "BuildStamp"
+	lab.text = BUILD_STAMP
+	lab.font_size = 48
+	lab.pixel_size = 0.0005
+	lab.modulate = Color(0.62, 0.62, 0.65, 0.85)
+	lab.shaded = false
+	lab.no_depth_test = true
+	lab.render_priority = 10
+	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lab.position = Vector3(0.48, -0.34, -0.65)
+	return lab
+
+
 func _build_rig() -> void:
 	# Rig stack: car -> seat_offset -> ViewSpring -> BodySpring ->
 	# XROrigin3D -> camera/controllers. The seat offset carries the
@@ -1433,6 +1473,8 @@ func _build_rig() -> void:
 	body_node.add_child(origin)
 	xr_cam = XRCamera3D.new()
 	origin.add_child(xr_cam)
+	stamp_label = _make_stamp_label()
+	xr_cam.add_child(stamp_label)
 	var xr_interface: XRInterface = XRServer.find_interface("OpenXR")
 	xr_iface = xr_interface
 	if xr_interface != null and xr_interface.is_initialized():
@@ -1449,6 +1491,8 @@ func _build_rig() -> void:
 		fallback_cam.position = _eye_anchor()
 		fallback_cam.name = "FallbackCam"
 		body_node_fb.add_child(fallback_cam)
+		stamp_label_fb = _make_stamp_label()
+		fallback_cam.add_child(stamp_label_fb)
 		fallback_cam.current = true
 	for hand: String in ["L", "R"]:
 		# Tracker binding per the Duel field census on this rig (Quest 3):
