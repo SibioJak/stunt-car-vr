@@ -4661,6 +4661,77 @@ ruling. One pull note: if GitHub Desktop nags about
 discarding changes, glance at the Changes tab before
 discarding — the fingerprint check from FP31 stands.
 
+## Fix Pass 33 — The Build Stamp
+
+Base: FP32 final (2b8281b). The owner's request
+(2026-11-01): "since this particular project has this
+Discard Changes thing going, can we put build name in
+small text, lower right, so I know for sure I'm
+playing right version." This clone lives in OneDrive;
+GitHub Desktop periodically nags Discard Changes over
+per-machine Godot sidecar churn, and a stale build
+already cost one false verdict (run 14). The running
+build should be provable from the seat.
+
+### The stamp
+
+- **One constant.** `BUILD_STAMP` in main.gd, beside
+  the grab log's build tag, in the exact form
+  `FPnn · YYYY-MM-DD` — the newest fix pass in the
+  build and its delivery date. This build's stamp
+  reads **FP33 · 2026-11-01**.
+- **STANDING RULE: every fix pass updates BUILD_STAMP
+  as part of its delivery.** The rule has teeth: smoke
+  stage 62 regex-checks the format
+  (`^FP[0-9]+ · [0-9]{4}-[0-9]{2}-[0-9]{2}$` — the
+  pattern itself was probe-verified against good and
+  bad strings before the suite ran), so a forgotten
+  or sloppy stamp fails the suite loudly.
+- **Presentation.** A Label3D built once by
+  `_make_stamp_label()` and parented to BOTH cameras
+  (the XRCamera3D and the desktop fallback camera), so
+  it holds the lower right of the visual field
+  whatever the car does, in VR and on the desktop
+  alike. Small (48 px type at 0.0005 pixel size),
+  dim neutral grey, unshaded, no outline, drawn with
+  no depth test so it reads from any pose. No
+  rotation: a Label3D's readable face looks down its
+  own −Z, the way the camera looks — the first FP33
+  capture caught a Y-flip build reading
+  MIRROR-imaged, and capture 31 stands as the guard
+  that it never ships that way.
+- **Placement proof.** Render proof capture 31
+  (tests/build_stamp_view.png — the cockpit from the
+  eye anchor) projects the stamp's AABB to a screen
+  rect: fully inside the frame, centre at 77% × 84%
+  (the lower right), and clear of BOTH boards' text
+  rects — the stamp is permanent, so it may never sit
+  on text the driver reads.
+
+### Census
+
+Nothing else changes: no physics, no input. Smoke
+ALL 642 (FP32's 636 + stage 62's 6), every prior
+check line identical; API guard ALL 71. Render proof
+171/172 — the one failure is the pre-existing sandbox
+hub-reach artifact, identical on the FP31/FP32
+baseline proofs; the proof gains capture 31's 8
+checks. Every regenerated cockpit capture now
+carries the stamp in its lower right — that is the
+feature working, not drift.
+
+### What you're judging
+
+One surface: glance lower right in the headset. The
+stamp should read FP33 · 2026-11-01, small and grey —
+there when you look for it, ignorable when you don't.
+Its in-headset legibility is the device's verdict
+(the sandbox proof can only prove placement and
+orientation). And if a future build ever shows an
+older stamp than the delivery message names, the pull
+didn't take — that's the Discard Changes tell this
+was built to expose.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
