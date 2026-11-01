@@ -17,6 +17,9 @@ extends SceneTree
 ## thump ordering by severity); stage 2c's touchdown checks are
 ## re-derived from the instant set to the stroke's PEAK (the
 ## amendment is flagged in place).
+## Fix Pass 33: stage 62 = the build stamp (the BUILD_STAMP
+## constant's FPnn · YYYY-MM-DD format, and the stamp labels
+## on BOTH cameras carrying it verbatim).
 ## Fix Pass 6 stages: 2e = driver-body seat spring (sink depth,
 ## phase lag behind the car springs, ordering by impact, zero at
 ## rest); 2f = 8 m road width + the engine/skid audio state
@@ -6782,6 +6785,29 @@ func _run() -> void:
 	check(float(r61c["thump_db"]) > -40.0 and float(r61c["thump_db"]) < float(r61a["thump_db"]) - 6.0,
 		"stage61: the thump orders by severity (hop tick %.1f dB, flight thump %.1f dB)" % [
 			float(r61c["thump_db"]), float(r61a["thump_db"])])
+
+	# Stage 62 (Fix Pass 33): THE BUILD STAMP. The one
+	# constant names the newest pass in the build; the
+	# view-anchored labels on BOTH cameras must carry it
+	# verbatim, so the running build is provable from the
+	# seat (this clone's Discard Changes stale-build
+	# defence). The format check is the delivery ritual's
+	# teeth: a pass that forgets to update the stamp - or
+	# updates it sloppily - fails here, loudly.
+	var stamp62: String = String(main.BUILD_STAMP)
+	check(stamp62 != "", "stage62: the build stamp is non-empty")
+	var stamp62_re := RegEx.new()
+	stamp62_re.compile("^FP[0-9]+ · [0-9]{4}-[0-9]{2}-[0-9]{2}$")
+	check(stamp62_re.search(stamp62) != null,
+		"stage62: the stamp matches the FPnn · YYYY-MM-DD format (%s)" % stamp62)
+	check(main.stamp_label != null and main.stamp_label.get_parent() == main.xr_cam,
+		"stage62: the stamp label rides the XR camera")
+	check(main.stamp_label != null and main.stamp_label.text == stamp62,
+		"stage62: the XR camera's stamp reads the constant verbatim")
+	check(main.stamp_label_fb != null and main.stamp_label_fb.get_parent() == main.fallback_cam,
+		"stage62: the stamp label rides the fallback camera")
+	check(main.stamp_label_fb != null and main.stamp_label_fb.text == stamp62,
+		"stage62: the fallback camera's stamp reads the constant verbatim")
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")

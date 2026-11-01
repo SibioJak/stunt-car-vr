@@ -66,6 +66,11 @@ extends SceneTree
 ## and full lock, shot from the anchor like capture 26: the
 ## amber stripe's displacement against the fixed tick is
 ## asserted equal to the staged lock at each stop.
+## Fix Pass 33 adds: capture 31 = the BUILD STAMP's
+## portrait - the cockpit from the eye anchor with the
+## view-anchored stamp in frame: its screen rect must sit
+## fully inside the frame in the lower right, and must not
+## overlap either board's text rect (the FP4 projections).
 
 var failures: int = 0
 var checks: int = 0
@@ -272,6 +277,24 @@ func _label_view_check(label: Label3D, board: MeshInstance3D, cam: Camera3D, tag
 					break
 	check(blocked == 0,
 		"%s: no car geometry occludes the text (%d of %d sightlines blocked)" % [tag, blocked, samples])
+
+
+# --- Fix Pass 33: a label's screen rect (the build stamp checks) -----
+# The label's AABB corners projected through the camera into
+# viewport pixels, as one bounding Rect2. Callers ensure every
+# corner is in front of the camera (all three labels checked
+# this way face the anchored eye by construction).
+
+func _label_screen_rect(label: Label3D, cam: Camera3D) -> Rect2:
+	var ab: AABB = label.get_aabb()
+	var r := Rect2()
+	for ci: int in 8:
+		var sp: Vector2 = cam.unproject_position(label.global_transform * ab.get_endpoint(ci))
+		if ci == 0:
+			r = Rect2(sp, Vector2.ZERO)
+		else:
+			r = r.expand(sp)
+	return r
 
 
 # --- Fix Pass 25 (Item 1): the tire sightline audit --------------------
@@ -1458,6 +1481,37 @@ func _run() -> void:
 	main.wheel_angle = 0.0
 	main._refresh_car_visuals()
 	main._set_track("circuit")
+
+	# Capture 31 (Fix Pass 33): THE BUILD STAMP - the
+	# view-anchored label on the fallback camera, shot from
+	# the eye anchor in the plain driving view. Its screen
+	# rect (the FP4-style AABB projection) must sit fully
+	# inside the frame in the lower right, and it must
+	# clear BOTH boards' text rects - the stamp is
+	# permanent, so it may never sit on text the driver
+	# reads. (The boards' transforms are the same shown or
+	# hidden - the roots only toggle visibility - so the
+	# rects are measured as they stand.)
+	await snap(main.fallback_cam, "build_stamp_view.png")
+	check(main.stamp_label_fb != null and main.stamp_label_fb.get_parent() == main.fallback_cam,
+		"capture 31: the build stamp rides the fallback camera")
+	check(main.stamp_label_fb != null and main.stamp_label_fb.text == main.BUILD_STAMP,
+		"capture 31: the stamp reads the build constant verbatim (%s)" % main.BUILD_STAMP)
+	var vp31: Vector2 = Vector2(root.size)
+	var rect31: Rect2 = _label_screen_rect(main.stamp_label_fb, main.fallback_cam)
+	var cen31: Vector2 = rect31.get_center()
+	check(rect31.position.x >= 0.0 and rect31.position.y >= 0.0 \
+		and rect31.end.x <= vp31.x and rect31.end.y <= vp31.y,
+		"capture 31: the stamp's rect sits fully inside the frame (%s)" % str(rect31))
+	check(cen31.x > vp31.x * 0.55 and cen31.y > vp31.y * 0.55,
+		"capture 31: the stamp lives in the lower right (centre at %.0f%% x %.0f%% of the frame)" % [
+			cen31.x / vp31.x * 100.0, cen31.y / vp31.y * 100.0])
+	var prect31: Rect2 = _label_screen_rect(main.panel_label, main.fallback_cam)
+	var drect31: Rect2 = _label_screen_rect(main.diag_label, main.fallback_cam)
+	check(not rect31.intersects(prect31),
+		"capture 31: the stamp clears the commands panel's text rect")
+	check(not rect31.intersects(drect31),
+		"capture 31: the stamp clears the DIAG board's text rect")
 
 	print("---")
 	if failures == 0:
