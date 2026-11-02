@@ -1741,7 +1741,15 @@ func _run() -> void:
 	for sgn13: float in [1.0, -1.0]:
 		var side_name: String = "right" if sgn13 > 0.0 else "left"
 		main.debug_warp_to_s(main.track_len - 190.0)
-		main.test_throttle = 0.25 # gentle: the whole manoeuvre must fit the home straight
+		# AMENDED (FP36, FLAGGED): the stage is staged at a
+		# gentle ENGINE FORCE (2.5 m/s^2), not a throttle
+		# number - FP36's retune (engine 10 -> 16) made the
+		# old 0.25 setting worth 4.0, and at that pace the
+		# manoeuvre outran the home straight: the save leg
+		# crossed the finish line (mode DONE, s = track_len)
+		# a frame before the check. 0.15625 restores the
+		# staged 2.5 exactly (2.5 / 16).
+		main.test_throttle = 0.15625 # gentle: the whole manoeuvre must fit the home straight
 		# Settle on the centreline first - a LONG settle: the
 		# warp does not reset the springs, and the previous
 		# side's release landing can still be ringing (its
@@ -1788,7 +1796,7 @@ func _run() -> void:
 		# going over - each leg is a property of the overshoot,
 		# not of one unbroken journey, so it re-stages cleanly.
 		main.debug_warp_to_s(main.track_len - 190.0)
-		main.test_throttle = 0.25
+		main.test_throttle = 0.15625 # FP36: the staged 2.5 m/s^2, as above
 		for ir13: int in 90:
 			autopilot_steer(0.0)
 			await physics_frame
@@ -2623,7 +2631,8 @@ func _run() -> void:
 	# (b) standing start on the circuit's opening straight
 	# (381 m of low curvature from s 0): brake to zero, floor
 	# it, pursuit-steer. vmax must be the new clamp and the
-	# 0->45 time is the engine's honest run (10 / 0.10 terms).
+	# 0->45 time is the engine's honest run (16 / 0.10 terms
+	# since FP36, the launch's wheelspin tax included).
 	main._set_track("circuit")
 	await frames(3)
 	main.start_race()
@@ -2660,7 +2669,13 @@ func _run() -> void:
 			break
 	main.test_throttle = 0.0
 	check(vmax26 >= 47.9, "stage26: top speed is the new clamp (vmax %.1f m/s = %.0f km/h)" % [vmax26, vmax26 * 3.6])
-	check(t45_26 > 4.5 and t45_26 < 8.0, "stage26: 0->45 m/s in %.1f s (standing start, opening straight)" % t45_26)
+	# AMENDED (FP36, FLAGGED): the band is the powertrain's
+	# signature and the pass replaced the powertrain - the
+	# old band [4.5, 8.0] was the 10 / 0.10 engine's honest
+	# run. FP36's audit: 0-45 in 3.54 s (0-40 3.11 + the
+	# 40-45 leg at ~11.7 m/s^2); this staged run read 3.5 s.
+	# Band re-derived [3.0, 4.5] around the measured figure.
+	check(t45_26 > 3.0 and t45_26 < 4.5, "stage26: 0->45 m/s in %.1f s (standing start, opening straight)" % t45_26)
 	# (c) the circuit hump span at pin 48 (stage 20's protocol
 	# at 24): the car must keep landing - flights counted, no
 	# drone call, the span completed. Longest flight reported;
@@ -3174,8 +3189,17 @@ func _run() -> void:
 	# structure is intact; the spread compresses from below
 	# because the baseline now pays the bounce too. Floor
 	# re-derived at 1.25 (measured 1.30).
-	check(float(g_peak[0]) - float(g_clean[0]) >= 1.25,
-		"stage30: getaway spread sway-peak vs sway-zero is %.2f s (FP14 floor 1.25; FP13's 1.5 predates the clean drop's restored bounce)" % (float(g_peak[0]) - float(g_clean[0])))
+	# AMENDED (FP36, FLAGGED): the spread compresses again,
+	# to 1.03 s, and the floor follows - derivation: FP36's
+	# decoupled bleed kills the peak car's slide ~2x faster
+	# (its combined-slip cap opens sooner) and the
+	# 16 m/s^2 engine pulls every getaway down (clean
+	# 2.08 -> 1.36, seed 2.59 -> 1.61, peak 3.38 -> 2.39).
+	# The mechanic's RELATIVE size grew: the peak getaway
+	# costs +76% over clean (FP14: +63%). Floor re-derived
+	# at 0.90 under the measured 1.03.
+	check(float(g_peak[0]) - float(g_clean[0]) >= 0.90,
+		"stage30: getaway spread sway-peak vs sway-zero is %.2f s (FP36 floor 0.90; FP14's 1.25 predates the decoupled bleed and the 16 m/s^2 engine)" % (float(g_peak[0]) - float(g_clean[0])))
 
 	# ---------- stage 31: Fix Pass 13 (Item 3) - wheel in the dangle ----
 	# The wheel grabs during the dangle, dials a lock, has NO
@@ -6121,7 +6145,15 @@ func _run() -> void:
 		for wi58: int in 4:
 			d58[wi58] = int(main.wheel_air_frames[wi58]) - int(waf58[wi58])
 		print("stage58 P2 %s: corner air deltas %s (full air %s)" % [p2_names58[p2i58], str(d58), str(full_air58)])
-		check(not full_air58 and int(d58[1]) >= int(p2_floors58[p2i58]) and int(d58[3]) >= int(p2_floors58[p2i58]) and int(d58[0]) <= 1 and int(d58[2]) <= 1,
+		# AMENDED (FP36, FLAGGED): the rising-side allowance
+		# for the REAR corner goes 1 -> 2 frames at run18 -
+		# the pursuit's hotter entry (engine 16) unloads the
+		# rear-left for 2 frames over the unwind (baseline
+		# deltas [0, 4, 0, 7] -> FP36 [0, 5, 2, 8]; mild is
+		# unchanged [0, 11, 0, 14]). The front corner stays
+		# at <= 1 and the law - falling side only, never the
+		# whole car - is unchanged.
+		check(not full_air58 and int(d58[1]) >= int(p2_floors58[p2i58]) and int(d58[3]) >= int(p2_floors58[p2i58]) and int(d58[0]) <= 1 and int(d58[2]) <= 2,
 			"stage58: piece 2 (%s) - the bank unwind lifts the falling (right) wheels only, never the whole car %s" % [p2_names58[p2i58], str(d58)])
 	# ---- PIECE 3: crest launches (pin 30 per crest) ----
 	var crest_wins58: Array = [[1.25, 1.9], [1.95, 2.65], [2.95, 3.7]]
@@ -7168,6 +7200,266 @@ func _run() -> void:
 	main.origin.global_position -= lean64
 	main.xr_ok = false
 	main.test_hmd_tracking = false
+
+	# ---------- stage 65: Fix Pass 36 - THE BURNOUT PASS ----------
+	# The pass's three laws, staged: (B2) a floored launch
+	# SPINS (state + smoke), a feathered one does not, and
+	# the spin hooks up as speed rises; (C) a sliding
+	# touchdown's direction answers the wheel inside a
+	# drumbeat-length contact, and the yaw the car carried
+	# off the road survives the flight; (B3) the throttle
+	# steers the exit line through the standard corner.
+	# Floors derive from the pass's audit tables (README,
+	# FP36) with slack; the audit's own instruments are
+	# scratch, these are the standing guards.
+	main._set_track("circuit")
+	await frames(5)
+	# (B2a) floored launch on the circuit's flat window.
+	# The staged state is a SETTLED car at rest, and BOTH
+	# pedals are staged by hand: the suite's pursuit
+	# driver parks the car on test_brake = 0.7 when it
+	# overshoots a cap, and a leftover brake otherwise
+	# holds these launches at speed 0.00 with the spin
+	# state pinned at 1.00 against it (the failure this
+	# stage's first form shipped with - the audit's
+	# fixtures stage the brake without thinking, having
+	# never met the pursuit driver).
+	main.debug_warp_to_s(65.0)
+	main.speed = 0.0
+	main.vel2 = Vector2.ZERO
+	main.lat_vel = 0.0
+	main.wheel_angle = 0.0
+	main.test_brake = 0.0
+	main.test_boost = false
+	main.test_throttle = 1.0
+	var spin_peak65: float = 0.0
+	var smoke_seen65: bool = false
+	var t30_65: float = -1.0
+	var f65: int = 0
+	var spin_at_20: float = -1.0
+	while f65 < 90 * 4:
+		await physics_frame
+		f65 += 1
+		spin_peak65 = maxf(spin_peak65, main.wheelspin)
+		if main.spin_emitters.size() == 2 and (main.spin_emitters[0].emitting or main.spin_emitters[1].emitting):
+			smoke_seen65 = true
+		if spin_at_20 < 0.0 and main.speed >= 20.0:
+			spin_at_20 = main.wheelspin
+		if main.speed >= 30.0:
+			t30_65 = float(f65) / 90.0
+			break
+	main.test_throttle = 0.0
+	print("stage65: floored launch spin peak %.2f, 0-30 %.2f s, spin at 20 m/s %.2f" % [
+		spin_peak65, t30_65, spin_at_20])
+	check(spin_peak65 > 0.5,
+		"stage65: a floored launch spins the driven wheels (peak %.2f; audit 0.72)" % spin_peak65)
+	check(smoke_seen65,
+		"stage65: the spin shows - the rear smoke emitters fire while the state is up")
+	check(t30_65 > 0.0 and t30_65 < 2.8,
+		"stage65: floored 0-30 m/s in %.2f s (audit 2.31; FP35's engine needed 3.57)" % t30_65)
+	check(spin_at_20 >= 0.0 and spin_at_20 < 0.05,
+		"stage65: the spin has hooked up by 20 m/s (state %.2f)" % spin_at_20)
+	# (B2b) feathered launch: 0.65 throttle never breaks
+	# the cap - no spin, no smoke.
+	main.debug_warp_to_s(65.0)
+	main.speed = 0.0
+	main.vel2 = Vector2.ZERO
+	main.lat_vel = 0.0
+	main.wheel_angle = 0.0
+	main.test_brake = 0.0
+	main.test_throttle = 0.65
+	var spin_feather65: float = 0.0
+	for i65b: int in 90:
+		await physics_frame
+		spin_feather65 = maxf(spin_feather65, main.wheelspin)
+	main.test_throttle = 0.0
+	check(spin_feather65 < 0.1,
+		"stage65: a feathered (0.65) launch stays hooked (spin peak %.2f; audit 0.00)" % spin_feather65)
+	# (B2c) boosted launch: the 2x Crammond ratio leaps.
+	main.debug_warp_to_s(65.0)
+	main.speed = 0.0
+	main.vel2 = Vector2.ZERO
+	main.lat_vel = 0.0
+	main.wheel_angle = 0.0
+	main.test_brake = 0.0
+	main.test_boost = true
+	main.test_throttle = 1.0
+	var t30b_65: float = -1.0
+	var f65c: int = 0
+	while f65c < 90 * 3:
+		await physics_frame
+		f65c += 1
+		main.boost_meter = main.BOOST_CAPACITY
+		if main.speed >= 30.0:
+			t30b_65 = float(f65c) / 90.0
+			break
+	main.test_throttle = 0.0
+	main.test_boost = false
+	check(t30b_65 > 0.0 and t30b_65 < 1.4,
+		"stage65: boosted 0-30 m/s in %.2f s (audit 1.04; boost = 2x engine)" % t30b_65)
+	# (C1) the sliding touchdown answers: staged SCRUBBED
+	# landing (1.5 m/s in) at 24 m/s, full lock held. The
+	# incoming slide must be dead by 0.20 s and the velocity
+	# direction turned hard by a drumbeat horizon (0.30 s)
+	# and by 0.5 s. FP35's line: slide alive at 0.20 (+1.74),
+	# -1.33 deg at 0.30, -4.00 at 0.5.
+	# The staging replicates the pass's A3 audit fixture
+	# EXACTLY (the audit is the instrument these floors
+	# derive from): the ribbon's flat window (s0 = 10 by
+	# the audit's scan), staged at s0 + 60, the slide
+	# injected into the AIR velocity along the frame's
+	# side vector - NOT written into lat_vel/vel2, which
+	# the landing rebuilds from air_vel (the first form
+	# of this stage did that, landed clean, and measured
+	# a fiction). Direction is the velocity's angle in
+	# the heading convention, atan2(-x, -y) on vel2 - the
+	# audit's vel_dir() (the first form's atan2(+x, -y)
+	# read the mirror world and reported +5.58 deg).
+	main._set_track("ribbon")
+	await frames(5)
+	main.debug_stage_landing(70.0, 0.45, 24.0)
+	var fr65d: Dictionary = main._frame_at(70.0)
+	main.air_from_release = false
+	main.air_from_gap = false
+	main.air_from_rebound = false
+	main.air_vel += Vector3(fr65d["side"]) * 1.5
+	main.wheel_angle = PI
+	main.test_brake = 0.0
+	var ok65d: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 300)
+	check(ok65d, "stage65: the staged sliding landing touches down")
+	var dir0_65: float = atan2(-main.vel2.x, -main.vel2.y)
+	var vl20_65: float = 99.0
+	var ddir30_65: float = 0.0
+	var ddir50_65: float = 0.0
+	var f65d: int = 0
+	while f65d < 45:
+		main.wheel_angle = PI
+		await physics_frame
+		f65d += 1
+		if f65d == 18:
+			vl20_65 = main.lat_vel
+		if f65d == 27:
+			ddir30_65 = rad_to_deg(wrapf(atan2(-main.vel2.x, -main.vel2.y) - dir0_65, -PI, PI))
+		if f65d == 45:
+			ddir50_65 = rad_to_deg(wrapf(atan2(-main.vel2.x, -main.vel2.y) - dir0_65, -PI, PI))
+	print("stage65: sliding landing - lat_vel at 0.20 s %+.2f, ddir at 0.30 s %+.2f deg, at 0.50 s %+.2f deg" % [
+		vl20_65, ddir30_65, ddir50_65])
+	check(vl20_65 < -0.5,
+		"stage65: the incoming slide is dead by 0.20 s of contact (lat_vel %+.2f; FP35 +1.74)" % vl20_65)
+	check(ddir30_65 < -2.5,
+		"stage65: a drumbeat-length contact turns the velocity %+.2f deg (FP35 -1.33)" % ddir30_65)
+	check(ddir50_65 < -6.0,
+		"stage65: half a second of contact turns the velocity %+.2f deg (FP35 -4.00)" % ddir50_65)
+	# (C2) yaw carry: spin the car up on the flat, leave
+	# the road through the real separation entry, and the
+	# landing must hand the yaw back - the heading keeps
+	# answering after touchdown with the wheel centred.
+	main.debug_warp_to_s(20.0)
+	main.speed = 18.0
+	main.vel2 = Vector2(0.0, -18.0)
+	main.lat_vel = 0.0
+	main.test_brake = 0.0
+	for i65e: int in 27:
+		await physics_frame
+		main.debug_pin_speed(18.0)
+		main.wheel_angle = 0.45 * PI
+	var yr0_65: float = main.yaw_rate
+	main._enter_air(true, 0.0)
+	check(absf(main.air_yaw_rate - yr0_65) < 0.05,
+		"stage65: separation stores the yaw rate (carried %+.2f of %+.2f)" % [main.air_yaw_rate, yr0_65])
+	main.wheel_angle = 0.0
+	var ok65e: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 400)
+	check(ok65e, "stage65: the carried-yaw flight lands")
+	var yr_land_65: float = main.yaw_rate
+	var hdg0_65: float = main.car_heading
+	for i65f: int in 23:
+		await physics_frame
+		main.wheel_angle = 0.0
+	var dh_65: float = absf(rad_to_deg(wrapf(main.car_heading - hdg0_65, -PI, PI)))
+	print("stage65: yaw %+.2f at separation, %+.2f on the landing frame, heading answers %.1f deg in 0.25 s wheel-centred" % [
+		yr0_65, yr_land_65, dh_65])
+	check(absf(yr0_65) > 0.4 and signf(yr_land_65) == signf(yr0_65) and absf(yr_land_65) > 0.45 * absf(yr0_65),
+		"stage65: the landing hands the yaw back (%+.2f of %+.2f; FP35 zeroed it)" % [yr_land_65, yr0_65])
+	check(dh_65 > 2.0,
+		"stage65: the carried yaw steers the car after touchdown (%.1f deg in 0.25 s, wheel centred)" % dh_65)
+	# (B3) the throttle steers the line: the standard
+	# corner (the lab P2 sweeper's first 40 m), the audit's
+	# bisected wheel for this build (-0.360 rad), entry
+	# 18 m/s pinned-settled; lift vs full throttle.
+	main._set_track("lab")
+	await frames(5)
+	var corner65 = func(thr: float) -> Array:
+		main.debug_warp_to_s(624.0 - 55.0)
+		main.wheel_angle = 0.0
+		main.test_throttle = 0.0
+		var g65: int = 0
+		while main.car_s < 624.0 - 12.0 and g65 < 6000:
+			var fr65: Dictionary = main._frame_at(main.car_s)
+			var fy65: float = main._frame_yaw(fr65["tan"])
+			var slip65: float = atan2(main.lat_vel, maxf(absf(main.speed), 3.0))
+			var des65: float = fy65 + clampf(main.car_lat * 0.12, -0.14, 0.14) + slip65
+			var err65: float = wrapf(des65 - main.car_heading, -PI, PI)
+			main.wheel_angle = clampf(-err65 * 1.6, -1.0, 1.0) * PI
+			main.debug_pin_speed(18.0)
+			await physics_frame
+			g65 += 1
+		var lat65: float = -999.0
+		g65 = 0
+		while g65 < 6000:
+			main.wheel_angle = -0.360
+			main.test_throttle = thr
+			main.test_brake = 0.0
+			await physics_frame
+			g65 += 1
+			if main.car_s >= 664.0:
+				lat65 = main.car_lat
+				break
+			if main.mode != main.MODE_DRIVE:
+				break
+		main.test_throttle = 0.0
+		return [lat65, main.mode]
+	var lift65: Array = await corner65.call(0.0)
+	var full65: Array = await corner65.call(1.0)
+	var spread65: float = float(full65[0]) - float(lift65[0])
+	print("stage65: standard corner exit lat - lift %+.2f m, full %+.2f m, spread %.2f m (modes %d/%d)" % [
+		float(lift65[0]), float(full65[0]), spread65, int(lift65[1]), int(full65[1])])
+	check(int(lift65[1]) == 1 and int(full65[1]) == 1 and spread65 > 3.0,
+		"stage65: the throttle steers the exit line - full runs %.2f m wider than lift through the same corner, same wheel (audit 5.11)" % spread65)
+	# (B2d) the Drop Start launch burns rubber too: a
+	# settled release (stage 30's staging), the throttle
+	# floored the moment the car is driving. The drop is a
+	# standing start, so the spin state runs the same arc
+	# as (B2a) - the pass's texture at the one start the
+	# driver cannot feather in from a roll.
+	main._set_track("ribbon")
+	await frames(5)
+	main.start_race()
+	var dang65: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+	check(dang65, "stage65: dangling for the drop-start spin check")
+	main.dip_timer = 1000.0
+	main.carrier_vel = Vector3.ZERO
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	main.slack_t = 0.0
+	main.wheel_angle = 0.0
+	await frames(2)
+	main._do_release()
+	var ok65g: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(ok65g, "stage65: the staged drop lands for the spin check")
+	main.test_brake = 0.0
+	main.test_throttle = 1.0
+	var spin_drop65: float = 0.0
+	for i65g: int in 72:
+		await physics_frame
+		spin_drop65 = maxf(spin_drop65, main.wheelspin)
+	main.test_throttle = 0.0
+	print("stage65: drop-start launch spin peak %.2f" % spin_drop65)
+	check(spin_drop65 > 0.2,
+		"stage65: the Drop Start launch burns rubber too (spin peak %.2f)" % spin_drop65)
+	main.test_throttle = 0.0
+	main.test_boost = false
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")
