@@ -567,6 +567,26 @@ const DIP_SLACK_ACCEL: float = -5.5 # measured carrier accel (m/s^2) that slacks
 const ANCHOR_STABLE_FRAMES: int = 20
 const ANCHOR_STABLE_EPS: float = 0.01
 const ANCHOR_FALLBACK_FRAMES: int = 600
+# Fix Pass 35: the CAPTURE WINDOW. FP34 made the automatic
+# application position-only, but it still SAMPLES the head pose
+# at apply time: the stability gate above watches position
+# only, so a held lean passes it, the re-seat is computed from
+# the leaned pose, and the driver's eye stays offset by the
+# lean vector when he sits back (the owner's isolation
+# experiment: still -> no change, stretch -> no change, lean
+# -> view changes). The law now: an automatic application may
+# only land from a representative seated pose - the tracked
+# head within ANCHOR_WINDOW_M of the seat's eye anchor, in car
+# space. Radius derivation: a real lean (reaching the dash
+# buttons) moves the head 0.25-0.45 m, so the window must
+# close below 0.25; ordinary seated variation - postural sway
+# of a few cm plus the driver-body spring's whole excursion
+# stack (BODY_MAX_SINK 0.055 + the accel-sink terms, ~0.08 m
+# worst case) - must stay inside it. 0.15 m clears the stack
+# with margin and sits a full 0.10 m below the smallest real
+# lean. The measurement runs through _eye_anchor(), so the
+# window follows the driver's seat trim exactly.
+const ANCHOR_WINDOW_M: float = 0.15
 # Fix Pass 6 (Item 1) - driver-BODY seat spring, the "Star Wars
 # effect". A second, independent spring layer for the driver's body
 # in the seat, stacked ABOVE the car's ViewSpring (car ->
@@ -1146,7 +1166,9 @@ var anchor_wait_frames: int = 0
 # Fix Pass 3 anchor state (reported on the panel DIAG block):
 # NONE / PENDING / APPLIED-STABLE / APPLIED-FALLBACK. After a fallback
 # apply, anchor_reapply_watch stays set so a later stable pose triggers
-# exactly one re-apply from the real pose.
+# exactly one re-apply from the real pose. Fix Pass 35 adds
+# HELD-WINDOW: an automatic arm is ripe but the head is outside
+# the capture window - it lands when the driver sits back.
 var anchor_state: String = "NONE"
 var anchor_stable_frames: int = 0
 var anchor_last_cam_pos: Vector3 = Vector3.ZERO
@@ -1161,6 +1183,18 @@ var anchor_reapply_watch: bool = false
 # the head entered the cone) is DELETED with the cone: an
 # automatic application owes nothing, ever.
 var anchor_bake_yaw: bool = false
+# Fix Pass 35: the capture window's bookkeeping.
+# anchor_seated_once: an application has landed at least once
+# this session, so a valid seat exists. anchor_arm_boot: the
+# pending arm predates any seating (the boot arm) - the only
+# automatic arm the fallback branch may still land from an
+# out-of-window pose, and it arms the reapply watch as it does.
+var anchor_seated_once: bool = false
+var anchor_arm_boot: bool = true
+# Test hook (smoke only, same pattern as test_grip): pose a
+# tracked head for the anchor gate stages. Read ONLY under
+# test_mode; the production XR read is untouched.
+var test_hmd_tracking: bool = false
 # Fix Pass 11 (Item 1): seat trim in metres, the driver's offset
 # from EYE_ANCHOR, clamped to +-SEAT_TRIM_MAX. Persisted in
 # user://settings.cfg - NOTE: the game had NO settings/profile
@@ -1330,7 +1364,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP34 · 2026-11-01"
+const BUILD_STAMP: String = "FP35 · 2026-11-01"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -4233,6 +4267,10 @@ func _arm_anchor(explicit_bake: bool = false) -> void:
 	anchor_have_last = false
 	anchor_reapply_watch = false
 	anchor_bake_yaw = explicit_bake
+	# Fix Pass 35: classify the arm for the fallback branch -
+	# an arm made before any application has ever landed is
+	# the boot arm (no valid seat exists yet).
+	anchor_arm_boot = not explicit_bake and not anchor_seated_once
 	anchor_state = "PENDING"
 
 
@@ -4263,24 +4301,45 @@ func _process_anchor_pending() -> void:
 		anchor_have_last = false
 	if anchor_pending:
 		anchor_wait_frames += 1
-		if anchor_stable_frames >= ANCHOR_STABLE_FRAMES:
-			var bake: bool = anchor_bake_yaw
+		var bake: bool = anchor_bake_yaw
+		# Fix Pass 35: the capture window gates every automatic
+		# application - the arm may only land while the tracked
+		# head is inside the window (_anchor_in_window). The
+		# explicit recenter (bake) is the driver's deliberate
+		# act and is never window-gated: FP11 semantics kept.
+		var in_window: bool = _anchor_in_window()
+		if anchor_stable_frames >= ANCHOR_STABLE_FRAMES and (bake or in_window):
 			anchor_bake_yaw = false
 			var yawed: bool = _apply_seat_anchor(bake)
 			anchor_state = "APPLIED-STABLE" if yawed else "APPLIED-NOYAW"
 			anchor_pending = false
-		elif anchor_wait_frames > ANCHOR_FALLBACK_FRAMES:
-			# ~10 s with no stable pose: apply from whatever pose
-			# exists (graceful degradation, as before) - but keep
-			# watching: when a stable tracked pose later appears,
-			# re-apply ONCE from the real pose.
-			var bake2: bool = anchor_bake_yaw
+		elif anchor_wait_frames > ANCHOR_FALLBACK_FRAMES and (bake or anchor_arm_boot or in_window):
+			# ~10 s with no stable in-window pose: apply from
+			# whatever pose exists (graceful degradation) - but
+			# ONLY for an explicit arm, an in-window pose, or
+			# the BOOT arm, which has no valid seat to fall
+			# back on and must take one; the reapply watch is
+			# armed so the first in-window stable pose corrects
+			# it. A restart/track arm with the head out of
+			# window gets NO fallback (Fix Pass 35): it stays
+			# pending rather than bake a lean into the seat.
 			anchor_bake_yaw = false
-			var yawed2: bool = _apply_seat_anchor(bake2)
+			var yawed2: bool = _apply_seat_anchor(bake)
 			anchor_state = "APPLIED-FALLBACK" if yawed2 else "APPLIED-NOYAW"
 			anchor_pending = false
 			anchor_reapply_watch = true
-	elif anchor_reapply_watch and anchor_stable_frames >= ANCHOR_STABLE_FRAMES:
+		elif not bake and not in_window and (anchor_stable_frames >= ANCHOR_STABLE_FRAMES or anchor_wait_frames > ANCHOR_FALLBACK_FRAMES):
+			# Ripe but held by the window: say so on the DIAG
+			# line. The arm stays pending and lands the moment
+			# the driver is back in the seat.
+			anchor_state = "HELD-WINDOW"
+	elif anchor_reapply_watch and anchor_stable_frames >= ANCHOR_STABLE_FRAMES and _anchor_in_window():
+		# Fix Pass 35: the watch is an automatic correction, so
+		# the window gates it like every automatic application -
+		# it exists to re-seat from the REAL pose, and a leaned
+		# pose is not it. (After a poisoned boot seat the
+		# guaranteed correction is the driver's click, which is
+		# never gated; see the README's Fix Pass 35 section.)
 		var bake3: bool = anchor_bake_yaw
 		anchor_bake_yaw = false
 		var yawed3: bool = _apply_seat_anchor(bake3)
@@ -4299,6 +4358,10 @@ func _hmd_has_tracking_data() -> bool:
 	# every physics frame in XR mode and wedged the run). Ask the head
 	# tracker's pose directly instead; tests/api_guard in the smoke test
 	# asserts every XR API name used here against ClassDB.
+	# Fix Pass 35: the smoke poses a tracked head through the
+	# test hook (the same pattern as test_grip).
+	if test_mode and test_hmd_tracking:
+		return true
 	var head_tracker: XRTracker = XRServer.get_tracker(&"head")
 	if head_tracker == null:
 		return false
@@ -4380,6 +4443,17 @@ func _apply_seat_trim(new_trim: float) -> void:
 	_save_settings()
 
 
+func _anchor_in_window() -> bool:
+	# Fix Pass 35: is the tracked head inside the capture
+	# window - within ANCHOR_WINDOW_M of the seat's eye anchor,
+	# in car space? Measured through _eye_anchor(), so the
+	# window follows the driver's seat trim exactly. A head
+	# TURNED toward the dash barely moves the camera origin
+	# (it rotates about the neck), so looking at a button does
+	# not leave the window; only a real lean does.
+	return (_cam_in_car().origin - _eye_anchor()).length() <= ANCHOR_WINDOW_M
+
+
 func _apply_seat_anchor(force_bake: bool) -> bool:
 	# Offset the seat so the HMD lands exactly on the eye anchor in car
 	# space. The correction is rigid and sits ABOVE the XR origin, so
@@ -4405,6 +4479,9 @@ func _apply_seat_anchor(force_bake: bool) -> bool:
 	# reference - is preserved exactly (bit-for-bit in the
 	# basis), at any head angle, with nothing owed afterwards.
 	# Returns true when the yaw was applied (an explicit bake).
+	# Fix Pass 35: any landed application means a valid seat
+	# exists from here on - later arms are no longer boot arms.
+	anchor_seated_once = true
 	var cam_car: Transform3D = _cam_in_car()
 	if not force_bake:
 		var corr_t := Transform3D(Basis.IDENTITY, _eye_anchor() - cam_car.origin)
