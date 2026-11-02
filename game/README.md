@@ -4887,6 +4887,108 @@ GitHub Desktop's Changes tab before pulling: if
 there, the pull won't take cleanly and the stamp in
 the lower right will tell on it.
 
+## Fix Pass 35 — the capture window (2026-11-01)
+
+**The conviction.** FP34 ended the yaw bake, but the owner's
+isolation experiment (run on FP34, from the seat) showed the
+view still moving after dash presses — and he pinned the
+variable himself: still + centred + RESTART -> no change;
+STRETCH (arm reach, head unmoved) + TRK -> no change; LEAN
+over + either button -> view changes. The anchor's position
+re-seat was still sampling the head pose at apply time, and
+the stability gate watches position only — a held lean is
+stable enough to pass, so the re-seat was computed from the
+leaned pose and the eye stayed offset by the lean vector when
+he sat back. FP34 had closed the rotation half of the sample;
+the translation half was still poisonable.
+
+**The law.** An automatic anchor application may only land
+from a representative seated pose. `_process_anchor_pending`
+now consults the capture window — `_anchor_in_window()`: the
+tracked head within `ANCHOR_WINDOW_M` of the seat's eye
+anchor, in car space — on every application branch:
+
+- **Stable branch:** an automatic arm lands only while the
+  head is in the window. A ripe arm held by the window stays
+  pending, reports `HELD-WINDOW` on the DIAG anchor line,
+  and lands the moment the driver is back in the seat.
+- **Fallback branch (~10 s):** the timeout may still land an
+  explicit arm or an in-window pose, as before — and the
+  BOOT arm (below). A restart/track arm with the head out of
+  window gets **no** fallback: no timeout may force a
+  poisoned apply.
+- **Reapply watch:** gated identically. The watch exists to
+  re-seat from the real pose, and a leaned pose is not it.
+- **The explicit recenter (L stick click)** is the driver's
+  deliberate act and is **not** window-gated: it keeps FP11
+  semantics whole, including seating a leaned pose when he
+  asks it to. The window gates automatic arms only.
+
+**The window.** `ANCHOR_WINDOW_M = 0.15` m, measured through
+`_eye_anchor()`, so the window follows the driver's seat
+trim exactly (trim never eats the window). Derivation: a
+real lean — reaching the dash buttons — moves the head
+0.25–0.45 m, so the window must close below 0.25; ordinary
+seated variation must stay inside it: postural sway and
+breathing move the tracked head a few cm (~0.05 m worst
+case), and the driver-body spring's whole excursion stack
+is capped near 0.08 m (BODY_MAX_SINK 0.055 + the accel-sink
+terms). 0.15 m clears the ordinary stack with margin and
+sits a full 0.10 m below the smallest real lean. A head
+merely TURNED toward the dash barely moves the camera
+origin (it rotates about the neck), so looking at a button
+never leaves the window; only a real lean does — which is
+exactly the distinction the owner's stretch test drew.
+
+**The boot arm.** An arm made before any application has
+ever landed (`anchor_arm_boot`, captured in `_arm_anchor`)
+has no valid seat to preserve, so it keeps a graceful path:
+extended patience for an in-window stable pose first, and
+after the fallback timeout a first seat may be taken from
+an out-of-window pose — with the reapply watch armed, so
+the first in-window stable pose corrects it. Two honest
+limits, named rather than hidden. First, the watch keeps
+FP11's semantics — it fires on the first stable in-window
+pose — and a take puts the eye on the anchor by
+construction, so a head sitting still inside the seat it
+just took spends the watch on that pose at once; the
+watch's real corrective work is for a head still settling
+after the take, within the taken seat's window. Second, if
+a boot seat was taken from a pose more than a window's
+width from the driver's true seat, the watch cannot reach
+his true pose on its own at all — every later automatic arm
+will hold at HELD-WINDOW instead of re-poisoning, and the
+deliberate click, never gated, is the guaranteed one-press
+correction.
+
+**Proof — stage 64** drives the production gate itself
+(`_process_anchor_pending`, synchronously) behind a posed
+tracked head (`test_hmd_tracking` + origin posing — the
+test-hook pattern of stages past; xr_ok is flipped only
+around the synchronous driving): a restart arm leaned
+0.35 m forward is HELD-WINDOW with the seat correction
+bit-unchanged and lands on return (eye error 0.000 m); a
+0.10 m slouch stays inside the window; the seated control
+lands on the 21st gate call, the pre-pass timing unchanged;
+650 calls past the fallback timeout with the head leaned
+force no apply; the boot arm takes its first seat from the
+leaned pose after the timeout, the watch refuses the
+un-leaned pose (outside the taken seat's window) and
+corrects from the first in-window pose; the explicit click
+seats the leaned pose as the control. Census: every prior
+check line identical except stage 62's stamp string (FP34
+-> FP35, the standing ritual). Smoke ALL 680, API guard
+ALL 71. Render proof 172/173 (the one failure is the
+pre-existing sandbox hub-reach artifact, identical on the
+FP34 baseline).
+
+**What you're judging:** lean over and press TRK or
+RESTART — the view must not move, and the re-seat should
+land quietly a moment after you sit back. The DIAG anchor
+line will read HELD-WINDOW while a re-seat waits for you
+to sit back; that's the window telling the truth, not an
+error.
+
 ## Quest export — status
 
 The full chain is assembled and correct up to the last step:
