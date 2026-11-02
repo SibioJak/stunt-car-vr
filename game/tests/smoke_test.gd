@@ -28,6 +28,14 @@ extends SceneTree
 ## from the retired yaw cone and stage 32's two gate checks
 ## become behavioural squeeze controls - both flagged in
 ## place.
+## Fix Pass 35: stage 64 = the capture window (the production
+## anchor gate driven synchronously behind a posed tracked
+## head: a leaned restart arm is HELD-WINDOW and lands on
+## return, the seated control's timing is unchanged, the
+## fallback timeout cannot force a leaned restart arm, the
+## boot arm takes its first seat from outside the window
+## and the reapply watch corrects it only from inside, the
+## explicit click seats a leaned pose as the control).
 ## Fix Pass 6 stages: 2e = driver-body seat spring (sink depth,
 ## phase lag behind the car springs, ordering by impact, zero at
 ## rest); 2f = 8 m road width + the engine/skid audio state
@@ -6995,6 +7003,171 @@ func _run() -> void:
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 0.016)
 	main.test_hand_set = false
+
+	# Stage 64 (Fix Pass 35): THE CAPTURE WINDOW. FP34 made
+	# the automatic anchor application position-only, but it
+	# still SAMPLED the head pose at apply time - and the
+	# owner's isolation experiment convicted the sample:
+	# still + centred + RESTART -> no change; STRETCH (arm
+	# reach, head unmoved) + TRK -> no change; LEAN over +
+	# either button -> view changes. A held lean is stable
+	# enough to pass the position-only stability gate, so the
+	# re-seat was computed from the leaned pose and the eye
+	# stayed offset by the lean vector when he sat back. The
+	# law now: an automatic application lands only while the
+	# tracked head is inside the capture window
+	# (ANCHOR_WINDOW_M of the trimmed eye anchor, car space);
+	# a ripe arm held by the window stays pending and says
+	# HELD-WINDOW; no fallback timeout can force a
+	# restart/track arm from a leaned pose; the BOOT arm
+	# alone may take a first seat from outside the window,
+	# with the reapply watch armed to correct it from the
+	# first in-window stable pose; the explicit click is
+	# never gated. Unlike stages 22/63 (which drove the
+	# apply calls the gate would make), this stage drives
+	# the production GATE ITSELF - _process_anchor_pending,
+	# synchronously - with the tracked head posed through
+	# test_hmd_tracking and the origin. xr_ok is flipped on
+	# only around the synchronous driving; no frame runs
+	# under it, and no await separates an arm from its
+	# assertions (a frame under xr_ok = false would clear
+	# the arm, exactly as on the live rig's physics loop).
+	var lean64: Vector3 = main.car.global_transform.basis * Vector3(0.0, 0.0, -0.35)
+	# (a) A restart arm with the head leaned 0.35 m forward:
+	# held while leaned, lands on return.
+	main.start_race()
+	main._apply_seat_anchor(false) # precondition: a known seat (stages 22/63's pattern)
+	check(main._anchor_in_window(),
+		"stage64: precondition - the seated head is inside the window")
+	check(not main.anchor_arm_boot,
+		"stage64: a restart arm is not the boot arm (a seat exists)")
+	var nudge64: Vector3 = main.car.global_transform.basis * Vector3(0.0, 0.0, -0.10)
+	main.origin.global_position += nudge64
+	check(main._anchor_in_window(),
+		"stage64: a 0.10 m slouch stays INSIDE the window")
+	main.origin.global_position -= nudge64
+	var snap64a: Transform3D = main.seat_offset.transform
+	main.origin.global_position += lean64
+	check(not main._anchor_in_window(),
+		"stage64: a 0.35 m lean takes the head OUT of the window (dev %.3f m)" % (main._cam_in_car().origin - main._eye_anchor()).length())
+	main.xr_ok = true
+	main.test_hmd_tracking = true
+	for i64a: int in 30:
+		main._process_anchor_pending()
+	check(main.anchor_pending and main.seat_offset.transform == snap64a,
+		"stage64: leaned + stable - the restart arm does NOT apply (seat bit-unchanged, FP35)")
+	check(main.anchor_state == "HELD-WINDOW",
+		"stage64: the held arm says so on the anchor state (got %s)" % main.anchor_state)
+	main.origin.global_position -= lean64
+	for i64b: int in 25:
+		main._process_anchor_pending()
+	check(not main.anchor_pending and main.anchor_state == "APPLIED-NOYAW",
+		"stage64: back in the seat, the held arm lands (state %s)" % main.anchor_state)
+	check((main._cam_in_car().origin - main._eye_anchor()).length() < 0.01,
+		"stage64: the landed re-seat puts the eye on the anchor (err %.3f m)" % (main._cam_in_car().origin - main._eye_anchor()).length())
+	main.xr_ok = false
+	main.test_hmd_tracking = false
+	# (b) The seated control: the application timing is the
+	# pre-pass timing - the stability count, unchanged.
+	main.start_race()
+	main._apply_seat_anchor(false)
+	main.xr_ok = true
+	main.test_hmd_tracking = true
+	for i64c: int in 20:
+		main._process_anchor_pending()
+	check(main.anchor_pending,
+		"stage64: seated control - still pending at 20 gate calls (the stability count is unchanged)")
+	main._process_anchor_pending()
+	check(not main.anchor_pending and main.anchor_state == "APPLIED-NOYAW",
+		"stage64: seated control - the arm lands on the 21st call, as before the pass")
+	main.xr_ok = false
+	main.test_hmd_tracking = false
+	# (c) The fallback timeout cannot force a restart arm
+	# from a permanently leaned head.
+	main.start_race()
+	main._apply_seat_anchor(false)
+	var snap64c: Transform3D = main.seat_offset.transform
+	main.origin.global_position += lean64
+	main.xr_ok = true
+	main.test_hmd_tracking = true
+	for i64d: int in 650:
+		main._process_anchor_pending()
+	check(main.anchor_pending and main.seat_offset.transform == snap64c,
+		"stage64: 650 calls past the fallback timeout, leaned - NO poisoned apply (FP35)")
+	main.origin.global_position -= lean64
+	main.xr_ok = false
+	main.test_hmd_tracking = false
+	# (d) The BOOT arm: no seat exists, so after the same
+	# timeout the first seat IS taken from the leaned pose -
+	# and the reapply watch it arms corrects only from
+	# inside the window.
+	main.anchor_seated_once = false
+	main.start_race()
+	check(main.anchor_arm_boot,
+		"stage64: an arm made before any seating is the BOOT arm (FP35)")
+	var org64d: Vector3 = Vector3.ZERO
+	var step64d: Vector3 = main.car.global_transform.basis * Vector3(0.0, 0.0, -0.35)
+	var guard64d: int = 0
+	while (main._cam_in_car().origin - main._eye_anchor()).length() < 0.30 and guard64d < 3:
+		main.origin.global_position += step64d
+		org64d += step64d
+		guard64d += 1
+	check(not main._anchor_in_window(),
+		"stage64: boot - the head starts OUT of the window (dev %.3f m)" % (main._cam_in_car().origin - main._eye_anchor()).length())
+	var snap64d: Transform3D = main.seat_offset.transform
+	main.xr_ok = true
+	main.test_hmd_tracking = true
+	# Drive call by call and stop the moment the fallback
+	# lands: the watch it arms is spent by the very next gate
+	# call if the head is sitting still inside the seat it
+	# just took (the take puts the eye on the anchor by
+	# construction) - FP11's semantics, which the window now
+	# bounds. Catching the watch armed means leaving the
+	# taken seat's window before another call runs.
+	var calls64d: int = 0
+	while main.anchor_pending and calls64d < 700:
+		main._process_anchor_pending()
+		calls64d += 1
+	check(not main.anchor_pending and main.anchor_seated_once
+		and main.seat_offset.transform != snap64d,
+		"stage64: boot - the fallback takes the first seat from the leaned pose (grace, FP35, %d calls)" % calls64d)
+	check(main.anchor_reapply_watch,
+		"stage64: boot - the fallback armed the reapply watch")
+	var snap64d2: Transform3D = main.seat_offset.transform
+	main.origin.global_position -= org64d
+	org64d = Vector3.ZERO
+	check(not main._anchor_in_window(),
+		"stage64: boot - the un-leaned pose is outside the taken seat's window (dev %.3f m)" % (main._cam_in_car().origin - main._eye_anchor()).length())
+	for i64f: int in 30:
+		main._process_anchor_pending()
+	check(main.anchor_reapply_watch and main.seat_offset.transform == snap64d2,
+		"stage64: boot - the watch does NOT correct from outside the window (FP35's gate on the watch)")
+	var devvec64d: Vector3 = main._cam_in_car().origin - main._eye_anchor()
+	var move64d: Vector3 = main.car.global_transform.basis * (devvec64d.normalized() * 0.10 - devvec64d)
+	main.origin.global_position += move64d
+	org64d += move64d
+	for i64g: int in 25:
+		main._process_anchor_pending()
+	check(not main.anchor_reapply_watch and main.seat_offset.transform != snap64d2,
+		"stage64: boot - the first in-window stable pose corrects the seat (the watch lands, FP35)")
+	main.origin.global_position -= org64d
+	main.xr_ok = false
+	main.test_hmd_tracking = false
+	# (e) The explicit click recenter while leaned: the
+	# window does not gate a deliberate act (control).
+	main.start_race()
+	main._apply_seat_anchor(false)
+	main.origin.global_position += lean64
+	main.xr_ok = true
+	main._recenter()
+	main.test_hmd_tracking = true
+	for i64h: int in 25:
+		main._process_anchor_pending()
+	check(not main.anchor_pending and main.anchor_state == "APPLIED-STABLE",
+		"stage64: the explicit click seats the leaned pose anyway - FP11 semantics kept (state %s)" % main.anchor_state)
+	main.origin.global_position -= lean64
+	main.xr_ok = false
+	main.test_hmd_tracking = false
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")
