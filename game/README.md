@@ -127,7 +127,13 @@ automatically (window 1280×800, mouse/keyboard as above).
 # thump's severity ordering (Fix Pass 32);
 # stage 63 proves the view law: restarts re-seat position
 # only at ±20 deg of head yaw, the stick-click bake survives,
-# and a both-grips squeeze fires nothing (Fix Pass 34)
+# and a both-grips squeeze fires nothing (Fix Pass 34);
+# stage 64 proves the anchor capture window (Fix Pass 35);
+# stage 65 proves the burnout pass: the floored launch spins
+# and hooks, the feathered launch does not, the sliding
+# touchdown answers inside a drumbeat contact, the yaw
+# carries through a hop, and the throttle steers the exit
+# line (Fix Pass 36)
 # The smoke run first executes the API GUARD (reported separately):
 # every XR API method/property the game code calls by name is asserted
 # against ClassDB in the running engine. Hotfix 1 added it after
@@ -4988,6 +4994,291 @@ land quietly a moment after you sit back. The DIAG anchor
 line will read HELD-WINDOW while a re-seat waits for you
 to sit back; that's the window telling the truth, not an
 error.
+
+## Fix Pass 36 — THE BURNOUT PASS (powertrain character + hop-train authority)
+
+The owner's three notes, verbatim, are the pass's law: (1) the
+hop train — "Once you start hopping from hill to hill, player has
+basically no control over the car. The wheel can turned in an
+extreme direction and it has no real impact on the direction of
+the car when it briefly touches road." (2) the Odd Rod note —
+"we need to be burning some rubber. By that I mean, these cars
+need fast acceleration if gas is fully pressed… Speed wise, this
+thing feels like a normal car. Not an odd rod." (3) throttle is
+a line tool — "it becomes part of the steering calculation as a
+driver, screaming out of a turn and hugging our edge." Audits
+first (Part A), then the retune in the open (Part B), then the
+authority fix where the evidence pointed (Part C). The boost
+economy is NOT retuned; its repricing is reported. FP32's
+landing numbers do not move (stage 61 byte-identical).
+
+### Part A — the audits (on FP35, before any tuning)
+
+Instruments: a scratch audit driver reusing the suite's own
+staging idioms (debug warp/pin/stage-landing, the lane-PD
+driver, the stage-54 payout protocol verbatim).
+
+**A1 — powertrain baseline.** The powertrain was a single linear
+law, `accel = 10 − 0.1·v` (boosted `19 − 0.1·v`), measured on
+the circuit's flat window exactly as modelled: 9.50 m/s² at
+5 m/s falling to 5.50 at 45; 0–30 m/s in **3.57 s** (0–10 1.06,
+0–20 2.23, 0–40 5.11); top speed 48.00 (the TOP_SPEED clamp,
+not a drag equilibrium). Boosted: 0–30 in 1.72 s, same 48 top.
+A family-sedan launch curve — the audit agrees with the owner.
+
+**A2 — corner-exit baseline.** The standard corner: the first
+40 m of the Feature Lab P2 sweeper's R60 arc (s 624→664), entry
+18.0 m/s pinned-settled, the wheel bisected at quarter throttle
+(held −0.340 rad) and then FROZEN for all three runs:
+
+| throttle | exit lat | lat @ 25 m | exit speed |
+|---|---|---|---|
+| lift (0.0) | −1.39 m | −1.42 m | 12.8 m/s |
+| half (0.5) | +1.13 m | −0.43 m | 24.3 m/s |
+| full (1.0) | +2.71 m * | +0.27 m | 32.4 m/s |
+
+*the full-throttle run left the road 24.6 m into the corner; the
++2.71 is the fall-line reading, not a gate reading. Spread
+lift→full: 4.10 m at the gate (tainted), 1.69 m at the honest
+25 m gate. The throttle already talked to the line — through a
+weak engine, at the price of leaving the road to prove it.
+
+**A3 — hop-authority baseline.** Two fixtures. The controlled
+one stages landings at 24 m/s on the flat (the
+`debug_stage_landing` instrument) and reads the velocity
+direction change at full lock:
+
+| arrival | FP35: slide at 0.20 s | Δdir 0.30 s | Δdir 0.50 s |
+|---|---|---|---|
+| clean (0 m/s in) | — | −6.13° | −11.42° |
+| scrubbed (1.5 m/s in) | +1.74 m/s (alive) | −1.33° | −4.00° |
+| crossed (3.0 m/s in) | — | −0.60° | −3.48° |
+
+The wild one drives the lab's drumbeat rows at full lock: the
+first contact answers (−10.9°, a long clean contact), then the
+train goes deaf — contact 2 lands with 10.98 m/s of lateral
+velocity and the direction moves **+0.35°** while the heading
+swings −10.75°; the effective lateral grip factor through the
+contact's first 0.25 s measures **0.26**. And at every landing
+the yaw rate reads **0.00**.
+
+**The conviction.** The brief's prime suspect — FP32's load
+ramp (LAND_RAMP_BITE 0.25 over LAND_RAMP_S 0.10 s) — is
+**innocent of the lateral axis**: it shapes only the vertical
+compression velocity, and the staged clean landing above is
+bitten by it identically before and after this pass. The tax
+is FP13's **contact-transient load factor** (`_contact_load_
+factor()`: 0.10 at touchdown ramping over 0.65 s), which
+multiplied the lateral bleed in every transient — 0.18 at
+0.06 s after touchdown, still only 0.52 at 0.30 s — while the
+transient itself (priced by the old bleed law) governed the
+first ~1.4 s of a hard landing's contact. Accomplice:
+`_land()` zeroed `yaw_rate`, so every touchdown also restarted
+the 0.16 s yaw lag from standstill — the wheel's demand and
+the car's rotation both began each hop contact from zero.
+
+### Part B — the retune
+
+**B1 — the engine.** ENGINE_ACCEL 10 → **16**; BOOST_ACCEL
+9 → **16**, so boosted total is 32 = exactly 2× engine (the
+original's ratio, which FP24's 19/10 only approximated). Drag
+(0.1·v) and the 48 m/s top-speed clamp unchanged — the top end
+was never the complaint.
+
+**B2 — wheelspin.** A traction state on the driven (rear)
+wheels. The engine's applied force is tested against the
+contact patch's longitudinal capacity — the same friction
+circle the lateral law spends (SPIN_GRIP_ACCEL = GRIP_LAT_
+ACCEL = 11.0 m/s², one μ for the car), scaled by the rear
+suspension load and, inside a contact transient, by the
+contact load factor; the test cap grows with road speed
+(+0.55 per m/s — gearing: a floored launch hooks by ~9 m/s).
+Excess demand spins: the state (0..1) attacks at 10/s,
+releases at 3.5/s, and the transmitted force blends toward
+the kinetic patch (0.85× cap). The boost share is never
+tested — the flask's thrust is not wheel torque, so boosting
+off the line is the clean leap (its own 2× violence, no
+smoke tax on the meter's purchase). Feathering under the cap
+never spins (measured: a fixed 0.65 launch is spin-free).
+Surfacing, per the situational-awareness doctrine: the
+engine note flares with the state, the skid voice takes it
+as input, and two smoke emitters at the rear wheels emit in
+proportion (placeholder-grade particles, real state — the
+FP15 dust construction). The Drop Start launch goes through
+the same path: a floored drop is a scrubbed, smoking start.
+
+After (same instruments):
+
+| figure | FP35 | FP36 |
+|---|---|---|
+| accel at 15 m/s (floored) | 8.50 | 14.03 |
+| 0–10 / 0–20 / 0–30 / 0–40, floored | 1.06 / 2.23 / 3.57 / 5.11 s | **0.84 / 1.57 / 2.31 / 3.11 s** |
+| 0–30 boosted | 1.72 s | **1.04 s** |
+| launch spin peak (floored) | — | 0.72, hooked by ~9 m/s |
+| launch spin (feathered 0.65) | — | 0.00 |
+| top speed | 48.00 | 48.00 (unchanged) |
+
+**B3 — throttle-as-line, after.** Same corner, wheel
+re-bisected at the new quarter-throttle power (−0.360 rad)
+and frozen: lift **−2.08 m**, half **+1.55 m**, full
+**+3.03 m** — spread **5.11 m** at the exit gate (2.27 m at
+the 25 m gate, vs 1.69), and the full-throttle run now stays
+on the road to the gate (exit 39.9 m/s) instead of departing
+to prove the point. The throttle is a steering input with
+five metres of authority across one corner.
+
+**B4 — pace repricing (REPORT ONLY, per the owner's
+physics-first ruling; no track shaping).** The stage-54
+protocol re-flown on the suite's own driver: circuit
+payable air 7.97 → 7.94 s, income **79.7 → 79.4**; ribbon
+air identical (10.28 s) but its landing grades soften
+slightly at pace, income **100.6 → 96.4**. The lab (same
+protocol, scratch driver): payable air 31.20 → **27.27 s**
+— the lab lap takes 9,788 frames against 13,212, the car
+spends 26% less time there and its flights are a smaller
+share of a faster lap — income **312.0 → 272.7**. Payout
+per payable second is untouched everywhere (air × grade ×
+10); the longest starved stretches are unchanged (circuit
+2000 m, ribbon 250 m, lab 750 m). The economy is NOT
+broken — capacity, grades and rates all stand — but income
+per lap is down 0.4–13% at the new pace, worst where the
+flying was densest; if that ever wants correcting it is a
+pricing dial for a later pass, deliberately not touched
+here.
+
+### Part C — the authority fix
+
+Three changes, all downstream of A3's conviction:
+
+1. **The lateral bleed is decoupled from the contact load
+   factor.** The bleed now runs at the road's own load
+   (`load_grip`) in every contact state — full authority
+   from the first frame of a touchdown, modulated only by
+   how hard the road is actually pressing the car up. The
+   FP13 factor keeps its remaining job (the longitudinal
+   combined-slip ellipse cap) untouched. FP15's telegraph
+   factors follow the same decoupling.
+2. **The transient is repriced by the law that now runs.**
+   `_bleed_time` integrates the decoupled bleed at the
+   LANDING frame's own load (computed from its curvature —
+   the build's first after-run caught the estimate reading
+   the takeoff frame's stale ~0 load at a crest separation
+   and pricing a hop transient at the 3.0 s cap; the
+   landing's road, not the takeoff's, is the honest sample).
+   A hard slide now governs ~0.6–1.0 s, not ~1.4 s.
+3. **Yaw carries through flight.** Separation stores the
+   yaw rate (`air_yaw_rate`); the landing restores it,
+   damped by the flight (×0.85 per airborne second — a
+   long flight mostly forgets, a hop remembers). Crane
+   releases carry nothing (the car hangs plumb). Heading
+   still cannot change airborne (the FP8 law) — what
+   crosses the flight is the rotation the car left with,
+   handed back at touchdown.
+
+After (same fixtures): the scrubbed arrival's slide is
+**dead by 0.20 s** (lat_vel −1.65 — already the wheel's own
+turn) and the direction answers **−3.56° by 0.30 s,
+−8.92° by 0.50 s** (FP35: −1.33° / −4.00°); the crossed
+arrival reaches −6.52° by 0.50 s (−3.48°); the clean arrival
+is byte-identical (−6.13° / −11.42°) — cruise was never the
+complaint. On the drumbeat rows the comparable first contact
+is unchanged (−10.3°) and the second contact now reads:
+yaw at landing **−1.37 rad/s** (was 0.00), effective lateral
+factor through the first 0.25 s **1.03** (was 0.26),
+transient 0.97 s (was 1.39) — and the velocity still only
+concedes −3.26° there, because that contact lands with
+10.5 m/s of slide, a demand past any tire; what changed is
+that the car now visibly FIGHTS it (heading −54.9° through
+the contact) instead of sailing deaf. The headline number
+for a drumbeat-length contact on a sane arrival: **−3.6° of
+direction in 0.30 s where FP35 gave −1.3°**, with the slide
+already dead — and a carried yaw the wheel can build on
+hop after hop.
+
+### Census
+
+Full suite against the FP35 baseline log (680 checks):
+**698 checks, all passing** — stage 65 (new, 18 checks)
+guards the pass; the API guard stands at 71. The moved
+checks, each re-derived in place with its mechanism on the
+record:
+
+- **Stage 13** (the edge-straddle saves): the stage is
+  staged at a fixed engine FORCE (2.5 m/s²); its throttle
+  setting is re-derived 0.25 → 0.15625 for the new engine.
+  At the old number (now worth 4.0) the manoeuvre outran
+  the home straight and the lap ended mid-save (mode DONE
+  at s = track_len, measured standalone).
+- **Stage 26** (standing-start 0→45): the check's band is
+  the powertrain's signature and the powertrain was
+  replaced — band re-derived [4.5, 8.0] → [3.0, 4.5]
+  around the measured 3.5 s (audit 3.54).
+- **Stage 30** (Drop Start getaway spread): floor 1.25 →
+  0.90 under the measured 1.03 (clean 1.36 / seed 1.61 /
+  peak 2.39 — the peak's relative cost GREW, +63% → +76%;
+  grades and contact velocities identical).
+- **Stage 58, piece 2**: the rising-side rear corner's
+  allowance goes 1 → 2 frames at run18 (the pursuit's
+  hotter entry unloads it briefly over the unwind; deltas
+  [0, 4, 0, 7] → [0, 5, 2, 8], mild unchanged).
+- **Stage 54's prints** move with the pace (the B4 table
+  above); its checks all pass.
+- **Stage 61 (FP32's landing suite)**: the landing LAW is
+  untouched — the controlled fixture's clean landing is
+  bit-identical before/after (Part C) — but the stage's
+  staged figures move a frame or two (time-to-peak
+  0.133 → 0.122 s, inside its 0.12–0.30 film band; stroke
+  peaks within 0.02 m; view transmission 1.44 → 1.41):
+  its approach legs run the new powertrain, so the car
+  arrives at each staging a hair differently. The pass's
+  hard constraint — FP32's sink behaviour — holds.
+- **Stage 43 (the telegraph)**: the band's warning lead
+  moves 0.38 → 0.32 s at the sweeper — the FP15 factors
+  now read the axle loads through a transient (the same
+  decoupling) and the entry is faster; the check passes.
+- **Stage 62**: the stamp string, FP35 → FP36 (the
+  ritual).
+- The remaining diffs are measured values inside passing
+  check text (frame counts, drift distances, event
+  tallies — stages 8/9/11b/12/19/46/51/58-audit): the
+  pace's fingerprints, no assertion moved.
+- Everything else byte-identical.
+
+Stage 65's own staging took three attempts to make honest,
+and the record should say so: its first C1 replicated the
+A3 audit from memory instead of from the instrument —
+the slide written into lat_vel/vel2 (which the landing
+rebuilds from air_vel, discarding it) and the direction
+read in the mirror convention — and measured a fiction
+(+5.58°). Its launch fixtures never staged the BRAKE:
+the suite's pursuit driver parks the car on
+test_brake = 0.7, and the launches sat at speed 0.00
+against it, spin pinned at 1.00 (a brake-stand, faithfully
+modelled, entirely unintended). Both are fixed by staging
+exactly what the audit stages — the air-velocity slide
+injection, the heading-convention direction, and both
+pedals by hand — and the stage now reproduces the audit's
+numbers to the digit (−1.65 / −3.56° / −8.92°; 0.72 spin;
+2.31 s; 5.10 m of corner spread).
+
+### What you're judging
+
+- The launch: floored from a stop and off the Drop Start —
+  the spin, the smoke, the hook-up. Feather it and it
+  should leap clean.
+- 0–30 pace everywhere: the Odd Rod character — violent
+  standing-start acceleration, same 48 top end.
+- The hop train: drumbeat rows at the lab — the wheel
+  should talk to the direction inside each contact now,
+  and a correction built before a hop should still be
+  there after it.
+- Corner exits: lift vs floor it — the exit line should
+  move metres, on purpose.
+- NOT judged here: payout totals at the new pace (report
+  above — pricing is a later dial if you want it), track
+  shapes (deferred by your ruling), the smoke's look
+  (placeholder particles; the state is what's real).
+
 
 ## Quest export — status
 
