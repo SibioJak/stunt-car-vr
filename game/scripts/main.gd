@@ -179,6 +179,55 @@ const STEER_BLEND_LO: float = 24.0
 const STEER_BLEND_HI: float = 40.0
 const MAX_YAW_RATE: float = 1.6 # rad/s, either direction
 const YAW_TAU: float = 0.16 # s, yaw-rate lag (inertia)
+# --- Fix Pass 36: THE BURNOUT PASS (powertrain + hop authority) ---
+# The owner's notes (2026-11-02): the car was too polite in
+# both directions - it would not leap on full gas ("speed
+# wise, this thing feels like a normal car. Not an odd rod")
+# and it would not turn on the brief contacts between hops
+# ("the wheel can turned in an extreme direction and it has
+# no real impact on the direction of the car when it briefly
+# touches road"). Part A of the pass audited both (the
+# tables are in the README's FP36 section); these are the
+# retune's dials.
+const ENGINE_ACCEL: float = 16.0 # full-throttle tire force (was the literal 10.0 in _update_drive)
+const BOOST_ACCEL: float = 16.0 # the boost's added tire force (was 9.0) - boosted total is exactly 2x engine, the Crammond ratio FP24 approximated at 19/10
+# Launch wheelspin: the rear tires are the driven ones (the
+# car is a dragster - big rear slicks, the rake). The
+# ENGINE's applied force is tested against the rear tires'
+# longitudinal cap; demand past the cap breaks the tires
+# loose. The state reads the excess (SPIN_FULL_EXCESS = a
+# full burnout), and while it reads, the engine transmits
+# toward SPIN_KINETIC of the cap - a spinning tire pulls
+# LESS than a hooked one, which is what makes the launch a
+# skill: feather at the cap and you leave clean at full
+# grip; floor it and you leave in smoke, a beat slower.
+# The cap is GRIP_LAT_ACCEL (one mu for the tire), scaled
+# by the rear axle's road load and - during a contact
+# transient - by the FP13 load factor (the tire must be
+# weighted to pull). The cap TEST grows with road speed
+# (SPIN_SPEED_BLEND - gearing: the same force is a smaller
+# slip demand as the wheels turn faster), so a floored
+# launch hooks up by ~9 m/s on its own. The BOOST force is
+# never spin-tested: the flask's thrust is not wheel torque
+# in this fiction, so boosting off the line is the clean
+# leap - a real use for the ration.
+const SPIN_GRIP_ACCEL: float = 11.0 # rear longitudinal cap at rest, = GRIP_LAT_ACCEL
+const SPIN_SPEED_BLEND: float = 0.55 # cap-test growth per m/s of road speed (gearing)
+const SPIN_KINETIC: float = 0.85 # a spinning tire's pull, fraction of the cap's static part
+const SPIN_FULL_EXCESS: float = 5.0 # demand excess (accel units) that reads as full spin
+const SPIN_ATTACK: float = 10.0 # 1/s, the spin state's bite
+const SPIN_RELEASE: float = 3.5 # 1/s, its decay (also the airborne decay)
+# Yaw through flight (Part C): a car's rotation does not
+# vanish because it left the ground. The HEADING still
+# freezes airborne (FP8's law, untouched - stage 10b
+# asserts it), but the yaw RATE is now carried across the
+# flight, damped per second of air, and restored at the
+# landing. Pre-FP36, _land zeroed it: every hop contact
+# restarted the yaw lag (YAW_TAU) from standstill, so a
+# drumbeat-length contact could never spend rotation the
+# car had already built - half the hop-authority conviction
+# (the audit's yaw0 column reads 0.00 at every landing).
+const AIR_YAW_DAMP: float = 0.85 # yaw-rate survival per second of flight
 # Tire grip: the lateral velocity (velocity across the heading)
 # is bled toward zero by a lateral acceleration that is
 # proportional to the slip (GRIP_BITE_RATE per second) up to the
@@ -699,8 +748,12 @@ const CONTACT_LOAD_FLOOR: float = 0.10 # tire capacity fraction at the first con
 # (30 units = 1 s of boost at the shipped drain). The three
 # dials are the owner's tuning surface - capacity, the
 # starting stake, the air exchange rate. The drain and the
-# boost POWER (the +9.0 tire_long term in _update_drive)
-# are not economy dials and do not move in this pass.
+# boost POWER (the tire_long term in _update_drive) are
+# not economy dials and do not move in this pass. (Fix
+# Pass 36, flagged: the boost power DOES move there - the
+# +9.0 term becomes BOOST_ACCEL 16.0 - as powertrain
+# character, not economy; every economy dial here is
+# untouched and the repricing is reported, not retuned.)
 const BOOST_CAPACITY: float = 120.0 # the tank: 4.0 s of boost
 const BOOST_START_STOCK: float = 60.0 # the stake at race start: 2.0 s (the old whole ration)
 const BOOST_DRAIN_PER_S: float = 30.0 # unchanged since Test 1
@@ -1071,6 +1124,9 @@ var body_node_fb: Node3D
 # live. audio_stalled is the watchdog state (physics ticks gone
 # quiet): gains are cut while it holds, physics resuming clears it.
 var slip_state: float = 0.0
+var wheelspin: float = 0.0 # Fix Pass 36: the driven wheels' breakaway state, 0..1 (smoothed in _update_drive; audio + smoke surface it)
+var wheelspin_target: float = 0.0 # Fix Pass 36: the spin test's raw reading this frame
+var air_yaw_rate: float = 0.0 # Fix Pass 36: the yaw rate carried across a flight (set in _enter_air, restored in _land)
 var race_started: bool = false
 
 # Fix Pass 8 (Item 1) step logger: when step_log_on is set (the
@@ -1118,6 +1174,7 @@ var thump_r_player: AudioStreamPlayer # Fix Pass 32 (Item 3): rear axle's contac
 var thump_arm: Array[float] = [-1.0, -1.0] # Fix Pass 32 (Item 3): armed severity per axle (-1 = unarmed)
 var thump_age: float = 9.0 # Fix Pass 32 (Item 3): seconds since the arming landing
 var dust_emitters: Array[GPUParticles3D] = [] # per-wheel contact-patch dust (FL, FR, RL, RR)
+var spin_emitters: Array[GPUParticles3D] = [] # Fix Pass 36: wheelspin smoke at the driven (rear) patches (RL, RR)
 
 # --- nodes ---
 var car: Node3D
@@ -1364,7 +1421,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP35 · 2026-11-01"
+const BUILD_STAMP: String = "FP36 · 2026-11-02"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -2958,6 +3015,7 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 		audit_flight_open = true
 		audit_flight_s = car_s
 	air_basis0 = car.global_transform.basis # FP14 (Item 7): attitude builds from the takeoff basis
+	air_yaw_rate = yaw_rate # Fix Pass 36: the rotation the car leaves the road with (restored, damped, in _land)
 	air_from_rebound = false # FP14 (Item 1): callers that throw the car set this after entry
 	air_from_release = false # FP14 (Item 1): a road-born flight; _do_release marks its own
 	grounded_t = 0.0
@@ -3076,6 +3134,54 @@ func _build_car() -> void:
 		em.draw_pass_1 = puff
 		car_body.add_child(em)
 		dust_emitters.append(em)
+	# Fix Pass 36 (Item B2): BURNOUT SMOKE - one emitter at
+	# each DRIVEN (rear) patch, driven by the wheelspin
+	# state in _update_telegraph. Grey-white where the dust
+	# is tan, rising and trailing behind the patch: the
+	# visual half of the spin tell (the rev flare + squeal
+	# are the audible half). Placeholder-grade particles,
+	# real state - the same construction as the dust above.
+	for wi3: int in 2:
+		var wl3: Vector2 = WHEEL_LOCALS[2 + wi3]
+		var em3 := GPUParticles3D.new()
+		em3.name = "SpinSmoke%d" % wi3
+		em3.amount = 26
+		em3.lifetime = 0.9
+		em3.local_coords = false
+		em3.emitting = false
+		em3.amount_ratio = 0.0
+		em3.visibility_aabb = AABB(Vector3(-40.0, -15.0, -40.0), Vector3(80.0, 30.0, 80.0))
+		em3.position = Vector3(wl3.x, 0.05, wl3.y + 0.30)
+		var pm3 := ParticleProcessMaterial.new()
+		pm3.direction = Vector3(0.0, 0.75, 0.65)
+		pm3.spread = 26.0
+		pm3.initial_velocity_min = 1.1
+		pm3.initial_velocity_max = 2.4
+		pm3.gravity = Vector3(0.0, 0.35, 0.0)
+		pm3.damping_min = 1.0
+		pm3.damping_max = 1.8
+		pm3.scale_min = 0.16
+		pm3.scale_max = 0.36
+		var grad3 := Gradient.new()
+		grad3.set_color(0, Color(0.66, 0.66, 0.68, 0.55))
+		grad3.set_color(1, Color(0.66, 0.66, 0.68, 0.0))
+		var gtex3 := GradientTexture1D.new()
+		gtex3.gradient = grad3
+		pm3.color_ramp = gtex3
+		em3.process_material = pm3
+		var puff3 := SphereMesh.new()
+		puff3.radius = 0.18
+		puff3.height = 0.36
+		puff3.radial_segments = 6
+		puff3.rings = 3
+		var pmat3 := StandardMaterial3D.new()
+		pmat3.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		pmat3.albedo_color = Color(0.66, 0.66, 0.68)
+		pmat3.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		puff3.material = pmat3
+		em3.draw_pass_1 = puff3
+		car_body.add_child(em3)
+		spin_emitters.append(em3)
 	# Fix Pass 24 (Item 4): the Test-1 smoke-puff sphere that
 	# lived here is DELETED outright (owner's tap, 2026-10-30
 	# 09:26 CDT) - mesh, trigger and pulse, all of it. The run-15
@@ -5313,6 +5419,9 @@ func start_race() -> void:
 	thump_arm = [-1.0, -1.0] # Fix Pass 32
 	thump_age = 9.0
 	slip_state = 0.0
+	wheelspin = 0.0 # Fix Pass 36
+	wheelspin_target = 0.0
+	air_yaw_rate = 0.0
 	_reset_suspension()
 	_reset_dangle_feel()
 	drop_target_s = 2.0
@@ -5602,6 +5711,7 @@ func _do_release() -> void:
 	var f: Vector3 = fr["tan"]
 	var r: Vector3 = fr["side"]
 	# pendulum tip velocity + a little forward push: you drop swinging
+	air_yaw_rate = 0.0 # Fix Pass 36: a crane drop carries no road rotation (the FP13 drop contract); road flights set this in _enter_air
 	var tip: Vector3 = (f * (pend_om_f * cos(pend_th_f)) + r * (pend_om_l * cos(pend_th_l))) * HANG_LEN
 	# Fix Pass 5: the swing state at release IS the drop - both axes'
 	# tip velocity carries in (timing the release stays the skill),
@@ -5804,9 +5914,13 @@ func _update_drive(delta: float) -> void:
 	var vl: float = vel2.dot(Vector2(r0.x, r0.z))
 	# Longitudinal: engine / brake / boost / drag / slope gravity -
 	# the same terms the slaved model had, applied to vf.
-	var tire_long: float = in_throttle * 10.0
+	# Fix Pass 36 (Item B1): the engine and boost forces are
+	# the pass's retune (10 -> ENGINE_ACCEL 16, +9 ->
+	# BOOST_ACCEL 16 = exactly 2x engine boosted); brake and
+	# drag are untouched.
+	var tire_long: float = in_throttle * ENGINE_ACCEL
 	if in_boost and boost_meter > 0.0 and in_throttle > 0.05:
-		tire_long += 9.0
+		tire_long += BOOST_ACCEL
 		boost_meter = maxf(boost_meter - BOOST_DRAIN_PER_S * delta, 0.0)
 	# Fix Pass 13 (Item 1): COMBINED SLIP at a governed contact.
 	# One tire has one friction budget: while the contact
@@ -5820,6 +5934,32 @@ func _update_drive(delta: float) -> void:
 	var cap13: float = _contact_long_cap(vl)
 	if cap13 >= 0.0:
 		tire_long = minf(tire_long, cap13)
+	# Fix Pass 36 (Item B2): LAUNCH WHEELSPIN. The engine's
+	# applied share of the force is tested against the rear
+	# tires' cap (the constants carry the model): demand past
+	# the cap breaks the tires loose, the transmitted engine
+	# force falls toward the kinetic pull, and the smoothed
+	# wheelspin state - surfaced in the engine's rev flare,
+	# the skid voice and the rear smoke - reads the excess.
+	# The boost share of the force is never tested (it is not
+	# wheel torque) and never cut: the cut removes only the
+	# engine share's loss. At a standstill the spike of one
+	# frame at full force before the state bites is the tire
+	# biting before it breaks loose.
+	var eng_applied: float = minf(in_throttle * ENGINE_ACCEL, maxf(tire_long, 0.0))
+	var spin_cap: float = SPIN_GRIP_ACCEL * clampf(load_r, 0.0, 1.25)
+	if contact_transient_t > 0.0:
+		spin_cap *= _contact_load_factor()
+	var spin_test_cap: float = spin_cap + maxf(vf, 0.0) * SPIN_SPEED_BLEND
+	wheelspin_target = 0.0
+	if eng_applied > spin_test_cap and vf > -0.5:
+		wheelspin_target = clampf((eng_applied - spin_test_cap) / SPIN_FULL_EXCESS, 0.0, 1.0)
+	var spin_k36: float = SPIN_ATTACK if wheelspin_target > wheelspin else SPIN_RELEASE
+	wheelspin = lerpf(wheelspin, wheelspin_target, clampf(delta * spin_k36, 0.0, 1.0))
+	if wheelspin > 0.01 and eng_applied > 0.0:
+		var transmitted36: float = lerpf(eng_applied,
+			minf(eng_applied, SPIN_KINETIC * spin_cap), wheelspin)
+		tire_long -= eng_applied - transmitted36
 	var accel: float = tire_long
 	accel -= in_brake * 14.0
 	accel -= vf * 0.10
@@ -5855,20 +5995,29 @@ func _update_drive(delta: float) -> void:
 	# corners carry (load_grip, from _update_suspension). A
 	# slide across an unloading crest keeps most of its
 	# lateral velocity until the car is weighted again -
-	# the fight the film shows. During the FP13 contact
-	# transient the factor is NOT applied: the transient's
-	# own ramp already owns the load story there, and the
-	# corners read deep at a touchdown (factor > 1), which
-	# would double-count.
-	var lg5: float = load_grip if contact_transient_t <= 0.0 else 1.0
+	# the fight the film shows.
+	# Fix Pass 36 (Part C) AMENDMENT, flagged: FP14 kept the
+	# FP13 contact transient OUT of this factor and FP13
+	# multiplied the transient's bleed by the contact load
+	# factor (0.10 -> 1.0 over 0.65 s, the springs taking the
+	# car's weight). The FP36 audit convicted that second
+	# ramp as the hop-authority tax: on a sliding landing the
+	# bleed ran at factor 0.18-0.52 across the whole first
+	# 0.30 s of contact (1.00 on a clean landing), so a
+	# drumbeat-length contact at full lock bought -3.5 deg
+	# of direction where a clean contact bought -11.4 deg,
+	# and a hop train's velocity went where it was already
+	# going while the heading swung. The lateral axis now
+	# answers to ONE load story - the road's actual load,
+	# load_grip - in cruise and in the transient alike. The
+	# load factor keeps its FP13 job on the LONGITUDINAL
+	# ellipse cap only (the engine's combined-slip story in
+	# _contact_long_cap, untouched), and FP32's vertical
+	# stroke is untouched: the sink keeps its ramp, the
+	# steering no longer pays for it.
+	var lg5: float = load_grip
 	var bleed: float = clampf(-GRIP_BITE_RATE * vl * lg5,
 		-GRIP_LAT_ACCEL * lg5, GRIP_LAT_ACCEL * lg5)
-	# Fix Pass 13 (Item 1): during the contact transient the
-	# bleed itself is load-limited - a tire still taking the
-	# car's weight cannot bite at full rate yet (the same ramp
-	# that caps the engine in _contact_long_cap).
-	if contact_transient_t > 0.0:
-		bleed *= _contact_load_factor()
 	vl += bleed * delta
 	# Fix Pass 15 (Item 1): THE TELEGRAPH SIGNAL. The bleed
 	# above is the tire's capacity being spent; this ratio
@@ -5877,8 +6026,11 @@ func _update_drive(delta: float) -> void:
 	# asks the velocity to curve through (|vf * omega_target|)
 	# over the cap the bleed enforces at each axle - the same
 	# GRIP_LAT_ACCEL, with each axle's own FP14
-	# load factor (during the contact transient the bleed's cap
-	# drops the load factor, so the ratio does too - one rule).
+	# load factor. (Fix Pass 36, flagged: through FP35 the
+	# transient forced both factors to 1.0 because the bleed
+	# itself dropped the load factor there; the bleed no
+	# longer does, so the ratio reads the axle loads in
+	# every contact state - one rule again.)
 	# Per-AXLE, deliberately: FP14 tried per-corner carriers
 	# for the bleed itself and corner compression "sags under
 	# slide geometry while the true load factor stays 1.00" -
@@ -5887,11 +6039,8 @@ func _update_drive(delta: float) -> void:
 	# only speaks while the road holds the car (both axles
 	# meaningfully loaded, real speed): an unloading crest is
 	# the drumbeat's territory, not the tire song's.
-	var lgf15: float = 1.0
-	var lgr15: float = 1.0
-	if contact_transient_t <= 0.0:
-		lgf15 = clampf(pow(maxf(load_f, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
-		lgr15 = clampf(pow(maxf(load_r, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
+	var lgf15: float = clampf(pow(maxf(load_f, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
+	var lgr15: float = clampf(pow(maxf(load_r, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
 	if load_f > 0.05 and load_r > 0.05 and absf(vf) > 2.0:
 		var dem15: float = absf(vf * omega_target)
 		var rf15: float = dem15 / maxf(GRIP_LAT_ACCEL * lgf15, 0.01)
@@ -5974,6 +6123,10 @@ func _place_car_on_track(fr: Dictionary) -> void:
 
 func _update_air(delta: float) -> void:
 	air_time += delta
+	# Fix Pass 36: unloaded tires stop burning - the spin
+	# state decays at its release rate while airborne.
+	wheelspin_target = 0.0
+	wheelspin = lerpf(wheelspin, 0.0, clampf(delta * SPIN_RELEASE, 0.0, 1.0))
 	air_vel.y -= GRAV * delta
 	var pos: Vector3 = car.global_position + air_vel * delta
 	car.global_position = pos
@@ -6167,7 +6320,10 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 		vf_land = TOP_SPEED
 	speed = vf_land
 	lat_vel = vel2.dot(Vector2(r2.x, r2.z))
-	yaw_rate = 0.0
+	# Fix Pass 36 (Part C): the yaw rate the car left the
+	# road with is restored, damped by the flight's length
+	# (pre-FP36 this line zeroed it - see AIR_YAW_DAMP).
+	yaw_rate = air_yaw_rate * pow(AIR_YAW_DAMP, air_time)
 	# Fix Pass 13 (Item 1): SURFACE THE RULING - the touchdown
 	# connection, measured from the contact state itself: how
 	# much lateral velocity the tires met, and how far the car's
@@ -6198,7 +6354,7 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	# leaves after the lateral bleed, and the load ramp scales
 	# both while the springs take the car's weight. Set here,
 	# consumed in _update_drive, expired by the bleed itself.
-	contact_transient_t = _bleed_time(contact_lat_speed)
+	contact_transient_t = _bleed_time(contact_lat_speed, fr)
 	contact_load_age = 0.0
 	var pr: Array = _project_to_spine(car.global_position, air_s_est, true)
 	car_s = float(pr[0])
@@ -6254,30 +6410,39 @@ func _pay_for_landing() -> void:
 	_grab_event("PAY %.1f AIR %.2f %s" % [pay, air_time, contact_grade])
 
 
-func _bleed_time(v0: float) -> float:
+func _bleed_time(v0: float, fr_land: Dictionary) -> float:
 	# Fix Pass 13 (Item 1): how long the drive model's own
 	# lateral bleed law (proportional at GRIP_BITE_RATE, capped
 	# at GRIP_LAT_ACCEL) takes to bring a lateral velocity of
 	# v0 under 0.3 m/s - integrated at the physics step so the
 	# contact transient lasts exactly as long as the slide it
-	# governs, no longer. Zero for a clean contact. The
-	# integration applies the SAME load factor the bleed will
-	# live under (the tires are not fully weighted yet - see
-	# _contact_load_factor), so the estimate is the slide's
-	# real duration, not the fully-weighted fiction: with the
-	# shipped ramp (floor 0.10 over 0.65 s) a sway-peak slide
-	# governs for ~1 s, not the ~0.57 s the bare law gives.
-	# The constants were tuned on the staged getaways (stage
-	# 30): clean 1.82 s to 20 m/s (no transient - untouched),
-	# Drop-Start seed swing 2.61 s, sway-peak 3.42 s - a
-	# 1.60 s spread against the brief's 1.5 s floor.
+	# governs, no longer. Zero for a clean contact.
+	# Fix Pass 36 (Part C) AMENDMENT, flagged: through FP35
+	# the integration applied the same contact load factor
+	# the bleed lived under (floor 0.10 over 0.65 s), so a
+	# sway-peak slide governed for ~1 s. The bleed no longer
+	# lives under that factor (see _update_drive), so the
+	# estimate integrates the law the bleed actually runs:
+	# scaled by the load the LANDING's road carries. That
+	# load is computed from the landing frame's own
+	# curvature (the load_grip member still holds the
+	# TAKEOFF frame's value - at a crest separation ~0,
+	# which priced one staged hop landing's transient at
+	# the 3.0 s cap in the FP36 audit's first after-run).
+	# A hard slide now governs for its real, shorter life
+	# (~0.6 s at full load) - the transient's remaining
+	# jobs (the longitudinal ellipse cap, the telegraph's
+	# contact state) run for exactly that long.
 	var v: float = v0
 	var t: float = 0.0
 	var dt: float = 1.0 / 90.0
+	var kv_land: float = float(fr_land["kv"])
+	var tan_land: Vector3 = fr_land["tan"]
+	var cos_land: float = maxf(sqrt(maxf(1.0 - tan_land.y * tan_land.y, 0.0)), 0.5)
+	var load_land: float = clampf(1.0 - speed * speed * kv_land / (GRAV * cos_land), 0.0, 1.25)
+	var lg_land: float = clampf(pow(maxf(load_land, 0.0), GRIP_LOAD_EXP), GRIP_LOAD_MIN, GRIP_LOAD_MAX)
 	while v > 0.3 and t < 3.0:
-		var lf: float = clampf(CONTACT_LOAD_FLOOR + (1.0 - CONTACT_LOAD_FLOOR) \
-			* (t / CONTACT_LOAD_RAMP_S), CONTACT_LOAD_FLOOR, 1.0)
-		v -= minf(GRIP_BITE_RATE * v, GRIP_LAT_ACCEL) * lf * dt
+		v -= minf(GRIP_BITE_RATE * v, GRIP_LAT_ACCEL) * lg_land * dt
 		t += dt
 	return t
 
@@ -7643,6 +7808,11 @@ func _update_audio(delta: float) -> void:
 			+ in_throttle * 0.22
 		if in_boost and boost_meter > 0.0:
 			rpm_target += 0.35
+		# Fix Pass 36 (Item B2): the rev FLARE - a spinning
+		# tire unloads the engine the way air does, and the
+		# driver's first tell that the rears have broken
+		# loose is the note climbing free of the road speed.
+		rpm_target += wheelspin * 0.85
 		gain_target = AUDIO_ENGINE_DB
 	elif mode == MODE_AIR:
 		rpm_target = 1.05 + in_throttle * 1.45
@@ -7654,8 +7824,15 @@ func _update_audio(delta: float) -> void:
 	# Skid: fast attack (tires speak the moment they slide), fast
 	# release (unloaded tires go quiet). slip_state is already 0
 	# outside DRIVE, so the skid is silent airborne by construction.
-	var rate_k: float = 16.0 if slip_state > audio_skid_now else 22.0
-	audio_skid_now = lerpf(audio_skid_now, slip_state, clampf(delta * rate_k, 0.0, 1.0))
+	# Fix Pass 36 (Item B2): the same voice carries the
+	# wheelspin's squeal while grounded - a tire burning
+	# against the road is the same instrument as a tire
+	# sliding across it, and the driver hears the spin state
+	# in it (the rev flare above is the other half of the tell).
+	var spin_voice36: float = wheelspin if mode == MODE_DRIVE else 0.0
+	var skid_in36: float = maxf(slip_state, spin_voice36)
+	var rate_k: float = 16.0 if skid_in36 > audio_skid_now else 22.0
+	audio_skid_now = lerpf(audio_skid_now, skid_in36, clampf(delta * rate_k, 0.0, 1.0))
 	if audio_skid_now < 0.01:
 		skid_player.volume_db = -60.0
 	else:
@@ -7756,6 +7933,13 @@ func _update_telegraph(_delta: float) -> void:
 				amt = tire_band
 		em.emitting = amt > 0.02
 		em.amount_ratio = amt
+	# Fix Pass 36 (Item B2): the burnout smoke speaks the
+	# wheelspin state at the driven patches (amount IS the
+	# state) - silent whenever the tires are hooked.
+	for em36: GPUParticles3D in spin_emitters:
+		var samt: float = wheelspin if mode == MODE_DRIVE else 0.0
+		em36.emitting = samt > 0.04
+		em36.amount_ratio = samt
 	rumble_haptic_now = 0.0
 	if mode == MODE_DRIVE:
 		rumble_haptic_now = clampf((tire_ratio - TIRE_HAPTIC_EDGE) / (1.0 - TIRE_HAPTIC_EDGE), 0.0, 1.0)
