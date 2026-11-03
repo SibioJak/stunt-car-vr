@@ -766,14 +766,25 @@ func _run() -> void:
 		"stage2f: body width measured off the built meshes (%.2f m)" % body_w2f)
 	main.debug_warp_to_s(10.0)
 	main.test_throttle = 0.0
-	main.debug_pin_speed(6.0)
+	# RE-DERIVED (FP40, FLAGGED): the rev law is the gearbox's
+	# now - pitch follows gear_rev, not road speed, so the old
+	# pin pair (6 vs 26 m/s) straddled two bands and read the
+	# sawtooth backwards (1.77 -> 1.68). The honest fixtures
+	# are a climb INSIDE one gear (3 -> 10.5, both first) and
+	# the drop across the 1->2 shift (10.5 -> 12.5).
+	main.debug_pin_speed(3.0)
 	await frames(50)
 	var pitch_lo: float = main.audio_engine_pitch()
-	main.debug_pin_speed(26.0)
+	main.debug_pin_speed(10.5)
 	await frames(50)
 	var pitch_hi: float = main.audio_engine_pitch()
 	check(pitch_hi > pitch_lo + 0.3,
-		"stage2f: engine pitch tracks speed (%.2f at ~6 m/s -> %.2f at ~26 m/s)" % [pitch_lo, pitch_hi])
+		"stage2f: engine pitch climbs first gear (%.2f at ~3 m/s -> %.2f at ~10.5 m/s)" % [pitch_lo, pitch_hi])
+	main.debug_pin_speed(12.5)
+	await frames(50)
+	var pitch_shift2f: float = main.audio_engine_pitch()
+	check(pitch_shift2f < pitch_hi - 0.3,
+		"stage2f: the 1->2 shift drops the revs (%.2f at ~10.5 m/s -> %.2f at ~12.5 m/s)" % [pitch_hi, pitch_shift2f])
 	check(main.audio_skid_gain() < 0.02,
 		"stage2f: skid silent while gripping on the straight (gain %.3f)" % main.audio_skid_gain())
 	# Forced slip: the banked corner at speed - the model's real
@@ -2673,9 +2684,24 @@ func _run() -> void:
 	check(rel26, "stage26: release lands into DRIVE for the speed run")
 	main.debug_warp_to_s(2.0)
 	await frames(3)
+	# AMENDED (FP40, FLAGGED): the stop now stages BOTH
+	# pedals and waits for a GROUNDED stop. The FP40 diag
+	# run convicted the original fixture: it set the brake
+	# but never closed the throttle, so the stop depended
+	# on whatever test_throttle the autopilot stages had
+	# left behind - at FP36's pace the leftover was 0 and
+	# the stop held; at the gearbox's pace the lap stages
+	# end on a different autopilot phase, the leftover was
+	# 1.0, engine and brake fought to a ~14 m/s cruise,
+	# the loop burned its whole budget, and the "standing
+	# start" began rolling at s 141 (break at the brow,
+	# 41.4 m/s). The grounded condition stays too: `speed`
+	# freezes in the air, so a hop inside the window must
+	# not read as stopped.
+	main.test_throttle = 0.0
 	main.test_brake = 1.0
 	var bz26: int = 0
-	while main.speed > 0.01 and bz26 < 900:
+	while (main.mode != main.MODE_DRIVE or main.speed > 0.01) and bz26 < 900:
 		await physics_frame
 		bz26 += 1
 	main.test_brake = 0.0
@@ -2705,7 +2731,11 @@ func _run() -> void:
 	# run. FP36's audit: 0-45 in 3.54 s (0-40 3.11 + the
 	# 40-45 leg at ~11.7 m/s^2); this staged run read 3.5 s.
 	# Band re-derived [3.0, 4.5] around the measured figure.
-	check(t45_26 > 3.0 and t45_26 < 4.5, "stage26: 0->45 m/s in %.1f s (standing start, opening straight)" % t45_26)
+	# AMENDED (FP40, FLAGGED): the gearbox stretches the run
+	# into the event the owner asked for - the FP40 audit's
+	# clean standing run read 0-45 in 5.13 s (0-30 2.86).
+	# Band re-derived [4.6, 5.7] around the measured figure.
+	check(t45_26 > 4.6 and t45_26 < 5.7, "stage26: 0->45 m/s in %.1f s (standing start, opening straight)" % t45_26)
 	# (c) the circuit hump span at pin 48 (stage 20's protocol
 	# at 24): the car must keep landing - flights counted, no
 	# drone call, the span completed. Longest flight reported;
@@ -2771,8 +2801,14 @@ func _run() -> void:
 	# is 0.13 (reads 1.98). The pitch FORMULA and the
 	# rescale stations are untouched; the ordering assert
 	# below still binds.
-	check(absf(pitch34_26 - 2.11) < 0.18 and absf(pitch48_26 - 2.65) < 0.12 and pitch48_26 > pitch34_26 + 0.4,
-		"stage26: engine pitch rescaled (34 m/s: %.2f, 48 m/s: %.2f)" % [pitch34_26, pitch48_26])
+	# RE-DERIVED (FP40, FLAGGED): the stations are gear
+	# stations now. 34 m/s is fourth gear's band BOTTOM
+	# (gear_rev ~0.07, target ~0.92; FP40 measured 0.98) and
+	# 48 is its TOP (gear_rev 1.0, target 2.65; the follower
+	# read 2.46 inside the window). The old speed-ramp
+	# stations (2.11 / 2.65) are gone with the ramp.
+	check(absf(pitch34_26 - 0.92) < 0.25 and pitch48_26 > 2.3 and pitch48_26 > pitch34_26 + 1.2,
+		"stage26: engine pitch reads the gear band (34 m/s: %.2f, 48 m/s: %.2f)" % [pitch34_26, pitch48_26])
 
 	# ---------- stage 27: Fix Pass 12 (Item 2) - panel toggle ----
 	# The boards spawn hidden (asserted at boot). One switch -
@@ -7384,12 +7420,39 @@ func _run() -> void:
 		"stage65: a floored launch spins the driven wheels (peak %.2f; audit 0.72)" % spin_peak65)
 	check(smoke_seen65,
 		"stage65: the spin shows - the rear smoke emitters fire while the state is up")
-	check(t30_65 > 0.0 and t30_65 < 2.8,
-		"stage65: floored 0-30 m/s in %.2f s (audit 2.31; FP35's engine needed 3.57)" % t30_65)
+	# AMENDED (FP40, FLAGGED): the gearbox stretches the
+	# floored run on purpose (the owner's "2 gears" verdict) -
+	# FP40's audit and this stage both read 2.86 s. The guard
+	# now brackets the event: LONGER than FP36's 2.31 (the
+	# stretch is the design) and under 3.3.
+	check(t30_65 > 2.5 and t30_65 < 3.3,
+		"stage65: floored 0-30 m/s in %.2f s (FP36 audit 2.31; the gearbox stretches the run)" % t30_65)
 	check(spin_at_20 >= 0.0 and spin_at_20 < 0.05,
 		"stage65: the spin has hooked up by 20 m/s (state %.2f)" % spin_at_20)
-	# (B2b) feathered launch: 0.65 throttle never breaks
-	# the cap - no spin, no smoke.
+	# (B2b) feathered launch. AMENDED (FP40, FLAGGED): first
+	# gear is savage by design - its full-throttle demand is
+	# 22 against the 11.0 cap, so the under-cap feather is
+	# now 0.45 (demand 9.9): it never breaks the cap, no
+	# spin, no smoke (FP40 audit: peak 0.00). The old 0.65
+	# feather (demand 14.3) now spins at the line and hooks
+	# as the cap grows with speed - audited spin 0.07 by
+	# 8 m/s; that hook is asserted as its own case below.
+	main.debug_warp_to_s(65.0)
+	main.speed = 0.0
+	main.vel2 = Vector2.ZERO
+	main.lat_vel = 0.0
+	main.wheel_angle = 0.0
+	main.test_brake = 0.0
+	main.test_throttle = 0.45
+	var spin_feather65: float = 0.0
+	for i65b: int in 90:
+		await physics_frame
+		spin_feather65 = maxf(spin_feather65, main.wheelspin)
+	main.test_throttle = 0.0
+	check(spin_feather65 < 0.1,
+		"stage65: an under-cap feather (0.45) stays hooked (spin peak %.2f; audit 0.00)" % spin_feather65)
+	# (B2b2) the 0.65 feather in first gear: spins at the
+	# line, hooks by 8 m/s.
 	main.debug_warp_to_s(65.0)
 	main.speed = 0.0
 	main.vel2 = Vector2.ZERO
@@ -7397,13 +7460,19 @@ func _run() -> void:
 	main.wheel_angle = 0.0
 	main.test_brake = 0.0
 	main.test_throttle = 0.65
-	var spin_feather65: float = 0.0
-	for i65b: int in 90:
+	var spin_65b2: float = 0.0
+	var spin_hook65: float = -1.0
+	var f65b2: int = 0
+	while f65b2 < 270:
 		await physics_frame
-		spin_feather65 = maxf(spin_feather65, main.wheelspin)
+		f65b2 += 1
+		spin_65b2 = maxf(spin_65b2, main.wheelspin)
+		if main.speed >= 8.0:
+			spin_hook65 = main.wheelspin
+			break
 	main.test_throttle = 0.0
-	check(spin_feather65 < 0.1,
-		"stage65: a feathered (0.65) launch stays hooked (spin peak %.2f; audit 0.00)" % spin_feather65)
+	check(spin_65b2 > 0.15 and spin_hook65 >= 0.0 and spin_hook65 < 0.1,
+		"stage65: a 0.65 feather spins in first (peak %.2f) and hooks by 8 m/s (spin %.2f; audit 0.37 / 0.07)" % [spin_65b2, spin_hook65])
 	# (B2c) boosted launch: the 2x Crammond ratio leaps.
 	main.debug_warp_to_s(65.0)
 	main.speed = 0.0
@@ -8039,6 +8108,242 @@ func _run() -> void:
 		check(float(worst67.get(zi67b, 0.0)) <= 30.0 and float(worst67.get("air" + str(zi67b), 0.0)) <= 0.35,
 			"stage67: zone %d has no launch (worst flight %.0f m, %.2f s)" % [zi67b, float(worst67.get(zi67b, 0.0)), float(worst67.get("air" + str(zi67b), 0.0))])
 	print("stage67 census: feet %s | worst flights %s" % [str(footgot67), str(worst67)])
+
+	# ---------- stage 68: Fix Pass 40 - THE PHYSICS PASS ----
+	# (1) THE WARP: staged arrivals land at every survivable
+	# speed, and the micro-hop storm the audit convicted (a
+	# re-contact on a steep descent graded at the road's own
+	# fall rate - HARD slams twice a metre, the body ratchet-
+	# ing into the ribbon) is dead. (2) THE GEARBOX: four
+	# gears in order, the run to 45 stretched into an event,
+	# every shift a rev drop. (3) THE FISHTAIL: a little slip
+	# under power through the standard corner, gone on the
+	# lift. (4) LANDING COSTS: the retention curve at staged
+	# points, and the crane drop's exemption.
+	# (1a) arrivals across the sweep - flat at terminal
+	# fall, the Dive at pace, the Wall's face.
+	main._set_track("ribbon")
+	await frames(5)
+	main.test_throttle = 0.0
+	main.test_brake = 0.0
+	var arr68: Array = [
+		["ribbon", 70.0, 45.0, 24.0, "flat, 45 m fall"],
+		["circuit", 820.0, 18.0, 44.0, "the Dive at pace"],
+		["circuit", 1440.0, 12.0, 30.0, "the Wall's face"]]
+	for a68: Array in arr68:
+		if main.active_track != String(a68[0]):
+			main._set_track(String(a68[0]))
+			await frames(5)
+		main.debug_stage_landing(float(a68[1]), float(a68[2]), float(a68[3]))
+		main.air_from_release = false
+		main.air_from_gap = false
+		main.air_from_rebound = false
+		var ok68: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+		check(ok68, "stage68: %s arrival lands (no warp) - %s" % [String(a68[4]), main.last_touchdown])
+	# (1b) the storm fixture: the T13-head arrival that
+	# convicted it, then 1500 ticks floored under pursuit.
+	# The pre-fix build logged ~30 touchdowns in the first
+	# 20 m of this run, most of them HARD, and rode 0.18 m
+	# buried. Post-fix audit (probe M6): one touchdown (the
+	# staged arrival itself), heave min -0.112.
+	main._set_track("circuit")
+	await frames(5)
+	main.debug_stage_landing(3253.0, 7.0, 44.0)
+	main.air_from_release = false
+	main.air_from_gap = false
+	main.air_from_rebound = false
+	var td68: Dictionary = {}
+	var last_td68: String = ""
+	var min_heave68: float = 1e9
+	var dents0_68: int = main.dent_level
+	var tick68: int = 0
+	while tick68 < 1500:
+		await physics_frame
+		tick68 += 1
+		if main.mode == main.MODE_DRIVE:
+			var fr68: Dictionary = main._frame_at(main.car_s + clampf(main.speed * 0.55, 6.0, 22.0))
+			var tgt68: Vector3 = fr68["pos"]
+			var pos68: Vector3 = main.car.global_position
+			var des68: float = atan2(-(tgt68.x - pos68.x), -(tgt68.z - pos68.z))
+			var err68: float = wrapf(des68 - main.car_heading, -PI, PI)
+			main.wheel_angle = clampf(-err68 * 1.6, -1.0, 1.0) * PI
+			main.test_throttle = 1.0
+		elif main.mode == main.MODE_HANG:
+			main._do_release()
+		min_heave68 = minf(min_heave68, main.heave_off)
+		if main.last_touchdown != last_td68:
+			last_td68 = main.last_touchdown
+			var q68: String = last_td68.split(" ")[0]
+			td68[q68] = int(td68.get(q68, 0)) + 1
+	main.test_throttle = 0.0
+	var td_total68: int = 0
+	for q68b: String in td68:
+		td_total68 += int(td68[q68b])
+	print("stage68: storm run - touchdowns %s, min heave %.3f, dents +%d" % [
+		str(td68), min_heave68, main.dent_level - dents0_68])
+	check(int(td68.get("HARD", 0)) <= 2 and td_total68 <= 6,
+		"stage68: no micro-hop storm after the T13 arrival (%d touchdowns, %d HARD; pre-fix ~30, mostly HARD)" % [
+			td_total68, int(td68.get("HARD", 0))])
+	check(min_heave68 > -0.17,
+		"stage68: the body does not ratchet into the road (min heave %.3f; pre-fix rode at -0.18 and sank)" % min_heave68)
+	check(main.dent_level - dents0_68 <= 2,
+		"stage68: the storm's dent spam is gone (+%d dents in the run)" % [main.dent_level - dents0_68])
+	# (2) the gearbox run: stage 26's fixture (grounded
+	# stop, floored pursuit), reading the box itself.
+	main.debug_warp_to_s(2.0)
+	await frames(3)
+	# (stage 26's FP40 lesson: a staged stop closes the
+	# throttle too - a leftover throttle fights the brake)
+	main.test_throttle = 0.0
+	main.test_brake = 1.0
+	var bz68: int = 0
+	while (main.mode != main.MODE_DRIVE or main.speed > 0.01) and bz68 < 900:
+		await physics_frame
+		bz68 += 1
+	main.test_brake = 0.0
+	main.test_throttle = 1.0
+	var gears68: Array = []
+	var t45_68: float = -1.0
+	var spin_peak68: float = 0.0
+	var rev_prev68: float = 0.0
+	var rev_drop68: float = 0.0
+	var f68: int = 0
+	while f68 < 1200:
+		await physics_frame
+		f68 += 1
+		var fr68b: Dictionary = main._frame_at(main.car_s + clampf(main.speed * 0.55, 6.0, 22.0))
+		var tgt68b: Vector3 = fr68b["pos"]
+		var pos68b: Vector3 = main.car.global_position
+		var des68b: float = atan2(-(tgt68b.x - pos68b.x), -(tgt68b.z - pos68b.z))
+		var err68b: float = wrapf(des68b - main.car_heading, -PI, PI)
+		main.wheel_angle = clampf(-err68b * 1.6, -1.0, 1.0) * PI
+		if gears68.is_empty() or int(gears68[gears68.size() - 1]) != main.gear:
+			gears68.append(main.gear)
+		spin_peak68 = maxf(spin_peak68, main.wheelspin)
+		if rev_prev68 > 0.0:
+			rev_drop68 = maxf(rev_drop68, rev_prev68 - main.gear_rev)
+		rev_prev68 = main.gear_rev
+		if main.speed >= 45.0:
+			t45_68 = float(f68) / 90.0
+			break
+	main.test_throttle = 0.0
+	print("stage68: gearbox run - gears %s, 0-45 %.2f s, spin peak %.2f, biggest one-tick rev drop %.2f" % [
+		str(gears68), t45_68, spin_peak68, rev_drop68])
+	check(str(gears68) == "[1, 2, 3, 4]",
+		"stage68: the box climbs all four gears in order (%s)" % str(gears68))
+	check(t45_68 > 4.6 and t45_68 < 5.7,
+		"stage68: 0-45 m/s in %.2f s through the gears (FP36's flat engine: 3.54)" % t45_68)
+	check(spin_peak68 > 0.9,
+		"stage68: first gear burns out (spin peak %.2f; FP36's launch peaked 0.72)" % spin_peak68)
+	check(rev_drop68 > 0.5,
+		"stage68: a shift is a rev event (biggest one-tick gear_rev drop %.2f)" % rev_drop68)
+	# (3) the fishtail: stage 65's standard corner (lane-PD
+	# settle at pin 18, the wheel frozen at -0.360 from
+	# s 612), reading the slip angle the tail makes.
+	main._set_track("lab")
+	await frames(5)
+	var corner68 = func(thr: float) -> Array:
+		main.debug_warp_to_s(624.0 - 55.0)
+		main.wheel_angle = 0.0
+		main.test_throttle = 0.0
+		var g68: int = 0
+		while main.car_s < 624.0 - 12.0 and g68 < 6000:
+			var frc68: Dictionary = main._frame_at(main.car_s)
+			var fy68: float = main._frame_yaw(frc68["tan"])
+			var sl68: float = atan2(main.lat_vel, maxf(absf(main.speed), 3.0))
+			var des68c: float = fy68 + clampf(main.car_lat * 0.12, -0.14, 0.14) + sl68
+			var err68c: float = wrapf(des68c - main.car_heading, -PI, PI)
+			main.wheel_angle = clampf(-err68c * 1.6, -1.0, 1.0) * PI
+			main.debug_pin_speed(18.0)
+			await physics_frame
+			g68 += 1
+		var slip68: float = 0.0
+		var lat68: float = -999.0
+		g68 = 0
+		while g68 < 6000:
+			main.wheel_angle = -0.360
+			main.test_throttle = thr
+			main.test_brake = 0.0
+			await physics_frame
+			g68 += 1
+			if main.mode == main.MODE_DRIVE and absf(main.speed) > 2.0:
+				slip68 = maxf(slip68, rad_to_deg(atan2(absf(main.lat_vel), absf(main.speed))))
+			if main.car_s >= 664.0:
+				lat68 = main.car_lat
+				break
+			if main.mode != main.MODE_DRIVE:
+				break
+		main.test_throttle = 0.0
+		return [slip68, lat68, main.mode]
+	var lift68: Array = await corner68.call(0.0)
+	var full68: Array = await corner68.call(1.0)
+	print("stage68: corner slip - lift %.2f deg, full %.2f deg (exit lat %+.2f / %+.2f)" % [
+		float(lift68[0]), float(full68[0]), float(lift68[1]), float(full68[1])])
+	check(int(lift68[2]) == 1 and int(full68[2]) == 1,
+		"stage68: both corner runs stay on the road (modes %d/%d)" % [int(lift68[2]), int(full68[2])])
+	check(float(full68[0]) > 1.2 and float(full68[0]) < 6.5,
+		"stage68: gunning it steps the tail out A LITTLE (slip peak %.2f deg - texture, not a drift mode)" % float(full68[0]))
+	# the regulation floor is derived from the circle
+	# itself: at this corner's working demand (u ~ 0.7,
+	# second gear at 18 m/s) the taxed factor is
+	# sqrt(1 - 0.75 * 0.50) = 0.79, and the slip scales
+	# ~1/factor - the FP40 measurements bracket the
+	# shipped rate: the suite read 1.76 -> 2.05 deg at
+	# TAX 0.60 (+0.29), the probe pair read 1.84 -> 2.16
+	# at 0.75 (+0.32) and 1.84 -> 2.29 at 1.00 (+0.45);
+	# the floor sits at ~60% of the shipped rate's
+	# measured delta, convicting a dead or inverted tax
+	# (which reads ~0) with margin. (At
+	# u -> 1 - a floored launch exit - the factor reaches
+	# 0.50 and the tail runs twice as loose; stage 65's
+	# exit spread is that integral, checked there.)
+	check(float(full68[0]) > float(lift68[0]) + 0.2,
+		"stage68: the fishtail is throttle-regulated (full %.2f deg vs lift %.2f deg; lift tucks the tail back)" % [
+			float(full68[0]), float(lift68[0])])
+	# (4) landing costs: staged arrivals at four points of
+	# the curve (the stage-65 injection idiom), plus the
+	# crane drop's exemption.
+	main._set_track("ribbon")
+	await frames(5)
+	main.test_throttle = 0.0
+	main.test_brake = 0.0
+	var ret68 = func(hgt: float, fwd: float, push: float) -> Array:
+		main.debug_stage_landing(70.0, hgt, fwd)
+		main.air_from_release = false
+		main.air_from_gap = false
+		main.air_from_rebound = false
+		if push != 0.0:
+			var frr68: Dictionary = main._frame_at(70.0)
+			main.air_vel += Vector3(frr68["side"]) * push
+		var okr68: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+		return [okr68, main.land_retention, main.contact_grade]
+	var rc68: Array = await ret68.call(1.3, 24.0, 0.0)
+	check(bool(rc68[0]) and String(rc68[2]) == "CLEAN" and float(rc68[1]) >= 0.94 and float(rc68[1]) <= 1.0,
+		"stage68: a CLEAN slope-matched arrival keeps ~all its speed (retention %.3f)" % float(rc68[1]))
+	var rs68: Array = await ret68.call(3.3, 24.0, 2.0)
+	check(bool(rs68[0]) and String(rs68[2]) == "SCRUBBED" and float(rs68[1]) >= 0.66 and float(rs68[1]) <= 0.82,
+		"stage68: a SCRUBBED arrival spends a share (retention %.3f)" % float(rs68[1]))
+	var rx68: Array = await ret68.call(3.3, 24.0, 5.0)
+	check(bool(rx68[0]) and String(rx68[2]) == "CROSSED-UP" and float(rx68[1]) >= 0.50 and float(rx68[1]) <= 0.66,
+		"stage68: a CROSSED-UP arrival spends more (retention %.3f)" % float(rx68[1]))
+	var rslam68: Array = await ret68.call(12.0, 24.0, 3.5)
+	check(bool(rslam68[0]) and String(rslam68[2]) == "CROSSED-UP" and float(rslam68[1]) >= 0.28 and float(rslam68[1]) <= 0.50,
+		"stage68: the nose-first slam spends most of it (retention %.3f)" % float(rslam68[1]))
+	main.start_race()
+	var dang68: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
+	main.dip_timer = 1000.0
+	main.carrier_vel = Vector3.ZERO
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	main.slack_t = 0.0
+	main.wheel_angle = 0.0
+	await frames(2)
+	main._do_release()
+	var okd68: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(dang68 and okd68 and main.land_retention == 1.0,
+		"stage68: the crane drop is exempt from landing costs (retention %.3f - the drop's contract is FP13's)" % main.land_retention)
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")
