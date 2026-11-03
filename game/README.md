@@ -95,9 +95,11 @@ VR (Quest):
   button (Fix Pass 12 — the boards are hidden by default; B
   calls them up and puts them away. Red dash button = restart)
 - Switch track (while dangling): GRIP near the purple dash button —
-  Track 01 (default), the original test ribbon and the Feature
-  Lab; a Track 01 race is 3 laps to the finish, the ribbon is
-  point-to-point, the lab is the piece library as a practice lap
+  Track 01 (default), the original test ribbon, the Feature Lab
+  and TRK2 (the funlab); a Track 01 race is 3 laps to the finish,
+  the ribbon is point-to-point, the lab is the piece library as a
+  practice lap, TRK2 is the extremes course — loop, corkscrew
+  and barrel roll on one straight line
 - Recenter: click the left stick
 - Road-jitter experiment on/off: click the right stick (state shows
   as JIT in the DIAG block; default ON)
@@ -133,7 +135,14 @@ automatically (window 1280×800, mouse/keyboard as above).
 # and hooks, the feathered launch does not, the sliding
 # touchdown answers inside a drumbeat contact, the yaw
 # carries through a hop, and the throttle steers the exit
-# line (Fix Pass 36)
+# line (Fix Pass 36);
+# stage 66 proves TRK2, the funlab: the roster's fourth
+# track, its three elements' built shapes and boards,
+# Drop Start + crane recovery on the course, the loop's
+# measured wedge at the vertical, the corkscrew's
+# sideways loss short of inverted, the barrel roll's
+# completion with its toss, and the course's finish
+# crossed under power (Fix Pass 38)
 # The smoke run first executes the API GUARD (reported separately):
 # every XR API method/property the game code calls by name is asserted
 # against ClassDB in the running engine. Hotfix 1 added it after
@@ -5454,6 +5463,230 @@ UNVERIFIED until the owner drives it: the whole lap's
 feel — the S's new sweep, the Wall at pace, the
 Escalator's crest launch, and whether 3,493 m is the
 right lap length for a 3-lap race.
+
+## Fix Pass 38 — TRK2: THE FUNLAB (loop, corkscrew, barrel roll)
+
+The owner's order (2026-11-02): "and I still need a loop,
+barrel roll, corkscrew funlab, TRK2" — queued behind
+Track 01, which landed as FP37. TRK2 is a FOURTH track
+appended to the roster: TRK now cycles Track 01 → the
+ribbon → the Feature Lab → TRK2 → Track 01, and the dash
+panel names it TRK2. It is not a race circuit: a straight
+test course in the Feature Lab's spirit, staged in empty
+country at (-1600, 30, -1400) heading -z, Drop Start at
+the head, crane recovery throughout, each element
+separated by honest run-up and run-out so each can be
+taken repeatedly and judged alone. All three elements
+are SURFACE pieces — the road does the rolling; the car
+is never spun by code. The lab and Track 01 are
+untouched. BUILD_STAMP "FP38 · 2026-11-02".
+
+### The course (849 m, open)
+
+- Head: 110 m flat.
+- **E1 THE LOOP** (s 110–192): a full vertical loop in
+  the road, mouth on the racing line (legal under FP23's
+  tombstone: purpose-built, on-line). Built as a regular
+  82-sided polygon walked at a constant pitch rate of
+  360°/82 m — it closes EXACTLY (residual 0.0000 m,
+  verified off the built arrays): radius ≈ 13.05 m,
+  crown 26.1 m above the entry. Pitch profile off the
+  built tangents: 1.1° at the mouth → 87.8° → 180.0° at
+  mid-span → 267.8° → 358.9° at the exit.
+- 120 m flat run-out.
+- E2 run-in: 20 m pitch ramp to −6.5°, 10 m hold.
+- **E2 THE CORKSCREW** (s 342–502): the road rolls
+  continuously through 360° of bank while descending at
+  −6.5° (a helix): 10 m easing in, 140 m at full roll
+  rate, 10 m easing out; drops ≈ 18 m across the piece.
+  Bank reads 180° at mid-span and 0.00° three metres
+  past the end.
+- 20 m pitch ramp out; a climb home at +7° (15 m ramp /
+  75 m hold / 15 m out); 40 m flat.
+- **E3 THE BARREL ROLL** (s 667–719): the same 360° of
+  bank compressed into 52 m on the flat — the road
+  twists the car over in one quick motion at racing
+  pace rather than a sustained helix. Bank 180° at
+  mid-span, 0.00° past the end.
+- 130 m flat run-out to the finish.
+
+Each element gets a roadside board in the lab's style
+(post + billboarded amber name), plus a smaller
+pale-blue advisory line under it — the measured ruling
+for that piece, stated below. The course uses the lab's
+15 m section stripes (no racing paint on a test course).
+
+### The verdicts — measured, per element
+
+Staged drives (the FP38 probes, deleted before the
+commit; stage 66 re-asserts the headline outcomes):
+each element was attempted across an entry-speed sweep,
+floored (pedal down past the mouth) and pinned (speed
+held at the entry value the whole way, isolating the
+surface from the throttle), with a lane-keeping driver.
+
+**E1 THE LOOP — DOES NOT WORK, at any speed. The car
+wedges at the vertical.** All 11 probe configurations
+— floored entries 14/18/22/26/30/36/42, entries governed
+down to 11.5, a coast entry at 22 — ended the same way:
+the car climbs the front wall fully supported (corner
+loads 0.61–1.00 throughout the climb; the wall HOLDS
+it) and stops dead at road pitch φ ≈ 87.8–92.2°, about
+20 m into the 82 m piece, max height y ≈ 43.5. It never
+separates, never falls, never needs the crane to be
+called for it. The stall is exact: at entry 18 floored,
+samples every 1500 frames from t = 17 s to t = 167 s
+are bit-identical — s = 130.4, φ = 87.8°, speed 48.0
+(floored, saturated at the top-speed clamp), mode
+DRIVE, y = 43.4; ds/dt = 0. The mechanism is the DRIVE
+model itself, not grip: the car's velocity is a
+HORIZONTAL 2D vector and road progress is re-derived by
+projection onto the spine, so forward progress along
+the road goes as vf·cos φ → 0 at a vertical road — a
+singularity in the drive model. There is NO minimum
+clean entry speed; none exists. The question the piece
+was built to ask — what does ribbon-proximity support
+do at the crown? — is answered one level earlier: the
+car can never be presented to the crown in DRIVE. The
+crown, the whole back half (52 of the 82 m), is never
+touched by a driven car. It is not a soft-lock: L X
+(the crane call) extracts the wedged car, and the
+recovery drops it at s 86.4, back on the flat before
+the loop. Board: **NO CLEAN SPEED - IT WEDGES AT THE
+WALL.**
+
+**E2 THE CORKSCREW — NEVER COMPLETES. It lets go
+sideways, ~15° short of inverted.** Floored entries
+14/17/20/26/32/38/44: all failed to the crane. The
+descent accelerates the car regardless of entry
+(separation speeds 41–48), first separation at bank
+≈ 110–113° (s ≈ 393), up to a dozen air episodes,
+landings mostly crossed-up, and a fall. Held (pinned)
+entries are the honest isolation: at 20/26/32 the car
+is carried deep into the roll on a single air episode,
+separating at s ≈ 415–417, bank 164–168°. The dense
+trace at held 26 names the mechanism: corner loads
+decline steadily through the roll (1.00 at bank 6° →
+≈ 0.70 at 92° → ≈ 0.55 at 122°) — the twisting surface
+taxes the patches — but the car is still about a third
+supported when it leaves, and it does NOT leave by load
+separation (the suspension's wheel-air flags never
+fire). What fails is the LATERAL bookkeeping: the car's
+measured lateral offset walks off monotonically through
+the roll (0.07 m at bank 6° → 0.55 at 30° → 1.31 at 61°
+→ 2.57 at 92° → 4.71 at 122° → 7.14 at 153°) even with
+speed pinned and the lane-keeper steering to centre —
+past ~90° of bank the frame's "sideways" points
+increasingly at the sky, and a horizontal velocity
+vector read against a rolling frame cannot hold the
+centreline; steering corrections act in world space,
+where the error is becoming vertical. At bank ≈ 153°
+the left wheels' samples run past the rolled road's
+edge (support cut off), and at ≈ 165° the centre passes
+the fall line (lat 7.98 against the 7.17 threshold) and
+the car leaves by the lateral-exit door — air velocity
+y = −2.93, no separation bounce. The landing after is
+botched; the crane finishes it. No clean speed exists;
+the furthest line is a held ~20 (separates at bank
+167.8°). Board: **NO CLEAN LINE - HELD 20 GOES
+FURTHEST.**
+
+**E3 THE BARREL ROLL — WORKS, with a toss. It completes
+at every speed tried and is never clean.** Floored
+entries 20/26/32/38/44: all completed, exit speeds
+41.4–48.0, lateral discipline never the problem
+(max |lat| 3.0–5.7 in the probes, 6.1 in stage 66's
+own run — all well under the 7.17 fall line). Held 26: exactly ONE separation, at s 715.3,
+bank 350.6° — inside the final roll-rate ramp-down,
+~9° before flat; the car lands and drives out at its
+entry speed, max |lat| 3.0. Held 36: a mid-roll
+separation joins it (bank 90.8°) — 7 air episodes —
+still completes. The dense trace at held 26 shows the
+roll's rhythm: at bank ~15° the fast twist already
+scatters the corner loads ([0.39, 1.25, 1.03, 0.97]);
+at bank ~107° the left corners separate and return
+(the car stays — separation needs all four); at bank
+~222° the surface slams every patch to the 1.25 clamp
+(the valley phase); and the exit hop itself is the
+geometry route — all four loads hit 0.00 together in
+the final untwist and the car leaves with air velocity
+y = +0.35, the suspension route's exact signature. The
+twist costs nothing measurable in forward speed: held
+entries exit at their entry speed. Board: **ANY SPEED
+- ONE HOP AT THE EXIT.**
+
+### Proof — stage 66
+
+Stage 66 (in tests/smoke_test.gd) re-asserts the
+measured outcomes through production paths: the roster
+(funlab present, open, 849 m, three elements with the
+shipped spans), the cycle's two new links (lab →
+funlab here; stage 58 amended, below), the three
+boards' name + advisory text exact, the built shapes
+(loop inverted at mid-span, crown > 25 m over the
+entry, both rolls inverted at their middles and flat
+past their ends), every element's entry state (flat /
+−6.5° descent, unbanked), Drop Start at TRK2's head
+plus a mid-course crane recovery, the loop drive
+(floored 24 → the wedge: DRIVE throughout, max pitch
+inside 75–105°, no separation, no hang) and its crane
+extraction back onto the flat, the corkscrew at its
+held 20 (separates past bank 140°, crane finishes it —
+no clean completion), the barrel floored at 30
+(completes, at least one air episode, no crane, max
+|lat| under the fall line), and the course's finish
+crossed under power at a held 26.
+
+### Census
+
+Two amendments, each FLAGGED in place with its FP38
+note; everything else stands byte-identical, and a
+failure anywhere else would be a real regression, not
+a census item. **Stage 11a**: the second held-grip TRK
+sweep now lands on the funlab instead of the circuit
+(the roster grew a fourth stop; the stage's subject —
+the sweep firing on zone entry, exactly once — is
+untouched), and its trailing comment corrected to
+match. **Stage 58**: the roster comment's wrap check
+now asserts lab → funlab (stage 66 asserts the funlab
+→ circuit wrap that closes the cycle). The controls
+roster above and the tests blurb name TRK2.
+
+### Gates
+
+Preflight audit clean; parse warnings-as-errors
+clean; ClassDB XR guard ALL 71; full smoke **ALL 734
+CHECKS PASSED** (716 at FP37 + stage 66's 18). The
+render proof — the gate FP37's sandbox could not
+finish — RAN TO COMPLETION this pass on the current
+code: 172 of 173 checks passed, and the single failure
+is the standing hub-reach artifact (the wheel hub sits
+0.31 m below the eye, outside the proof's natural-reach
+band) — the same failure the FP31–FP36 baselines carry
+and the one FP37's partial run reached; nothing in
+this pass touches the cockpit or wheel geometry. Its
+captures in this commit are the fresh FP38 set
+(capture 31 photographs the FP38 stamp in the lower
+right). No *.uid / *.png.import in the commit.
+UNVERIFIED until the owner drives it: the wedge, the
+roll and the hop are staged findings — his hands are
+the verdict on all three.
+
+### What you're judging
+
+TRK2 itself, three pieces, one at a time — TRK cycles to
+it from the lab. The loop: drive at the wall and feel
+the wedge for yourself — it stops at the vertical and
+sits there, engine and all, until you call the crane
+(L X). The physics says no entry speed fixes that; if
+you want a loop that can be driven, that's a drive-model
+conversation, now with numbers. The corkscrew: hold
+about 20 if you can and watch how deep the roll carries
+you before it lets go sideways — the board says how far
+the staged car got (bank ~168° of 360°). The barrel
+roll is the one that works: any speed, and judge the
+hop at the exit — one toss as the road flattens, then
+it drives out.
 
 ## Quest export — status
 
