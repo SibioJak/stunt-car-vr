@@ -189,8 +189,63 @@ const YAW_TAU: float = 0.16 # s, yaw-rate lag (inertia)
 # touches road"). Part A of the pass audited both (the
 # tables are in the README's FP36 section); these are the
 # retune's dials.
-const ENGINE_ACCEL: float = 16.0 # full-throttle tire force (was the literal 10.0 in _update_drive)
 const BOOST_ACCEL: float = 16.0 # the boost's added tire force (was 9.0) - boosted total is exactly 2x engine, the Crammond ratio FP24 approximated at 19/10
+# Fix Pass 40 (Item 2): THE GEARBOX. FP36's single engine
+# force (ENGINE_ACCEL 16, deleted) read - in the owner's
+# words - "like the thing has 2 gears": one linear pull from
+# 0 to the 48 clamp. The engine now drives through a real
+# automatic box, 4 ratios, no new driver command. Each gear
+# owns a speed band; GEAR_FORCE is the engine's tire force
+# at the band's bottom, fading by GEAR_BAND_FADE across the
+# band (the power band: pull is fattest just after a shift
+# and breathless at the top, which is what makes the next
+# shift an event). A shift cuts the engine share for
+# SHIFT_GAP_S (the thrust gap) and the rev state - gear_rev,
+# the fraction through the current band - drops with the
+# ratio change, so the engine audio falls and climbs per
+# gear instead of ramping once. FIRST GEAR IS SAVAGE by
+# design: its 22.0 of demand against the FP36 spin test's
+# 11.0-at-rest cap means a floored launch spins through the
+# whole gear and into second - the burnout the owner asked
+# FP36 for and did not get. Ratios: 1st 0-11, 2nd 11-19,
+# 3rd 19-33, 4th 33-48 (the clamp). Downshifts carry
+# SHIFT_HYSTERESIS so the box never hunts at a boundary.
+# The boost share is added AFTER the box, untested by the
+# spin law as ever (flask thrust is not gearbox torque).
+const GEAR_COUNT: int = 4
+const GEAR_TOP_SPEEDS: Array = [11.0, 19.0, 33.0, 48.0] # vf at which each gear lets go (upshift point)
+const GEAR_FORCES: Array = [22.0, 19.0, 15.5, 12.0] # engine tire force at each band's bottom
+const GEAR_BAND_FADE: float = 0.25 # force fraction surrendered across a band
+const SHIFT_GAP_S: float = 0.13 # the engine's silence inside a shift
+const SHIFT_HYSTERESIS: float = 1.5 # m/s below a band's floor before the box takes the lower gear
+# Fix Pass 40 (Item 3): THE FISHTAIL. One tire, one friction
+# circle: longitudinal demand at the driven (rear) axle is
+# spent from the same budget the lateral bleed draws on.
+# rear_u (in _update_drive) is the engine's applied demand
+# over the FP36 spin test cap; the rear's lateral capacity
+# scales by sqrt(1 - FISHTAIL_TAX * u^2): at TAX 0.75 the
+# rear keeps ~0.79 of its lateral capacity at a corner's
+# working demand (u ~ 0.7) and the 0.50 sqrt floor at
+# full saturation. Gunning it out of a corner taxes the
+# bleed, the velocity lags the heading a little longer,
+# and the tail steps out a little; as the tires hook (u
+# falls with road speed) the tax lifts and the bleed
+# catches the slide - the catch-and-sway. The owner's
+# spec, twice stated, is A LITTLE: staged corner-exit
+# slip peaks in low single-digit degrees (stage 68
+# measures it). The sizing is bounded on both sides by
+# measurement: 0.60 read only +0.29 deg over the lift-off
+# run at the standard corner; 1.00 (the true circle)
+# saturated the slip state outright in the lab's
+# off-camber S at working throttle (stage 58 P5: slip
+# 0.47 -> 1.00, |lat| 1.49 -> 6.14, off the road) - past
+# "a little" and destabilising, which the brief forbids.
+# 0.75 sits between: P5 keeps its margin (probe: slip
+# 0.54, |lat| 1.63 against the 3.5 bound), the standard
+# corner reads +0.32 deg (probe pair 1.84 -> 2.16).
+# Lift off and u collapses at once: the tail tucks back
+# the same frame the throttle closes.
+const FISHTAIL_TAX: float = 0.75 # friction-circle spend of the rear's lateral capacity (see the sizing note above)
 # Launch wheelspin: the rear tires are the driven ones (the
 # car is a dragster - big rear slicks, the rake). The
 # ENGINE's applied force is tested against the rear tires'
@@ -1126,6 +1181,13 @@ var body_node_fb: Node3D
 var slip_state: float = 0.0
 var wheelspin: float = 0.0 # Fix Pass 36: the driven wheels' breakaway state, 0..1 (smoothed in _update_drive; audio + smoke surface it)
 var wheelspin_target: float = 0.0 # Fix Pass 36: the spin test's raw reading this frame
+var gear: int = 1 # Fix Pass 40 (Item 2): the automatic box's current gear, 1..GEAR_COUNT (selected in _update_drive)
+var gear_rev: float = 0.0 # Fix Pass 40 (Item 2): fraction through the current gear's band - the engine audio's rev state in DRIVE
+var shift_t: float = 0.0 # Fix Pass 40 (Item 2): the shift thrust-gap timer, seconds remaining
+var rear_u: float = 0.0 # Fix Pass 40 (Item 3): rear longitudinal utilisation (engine demand / spin test cap) - the fishtail tax's input
+var land_retention: float = 1.0 # Fix Pass 40 (Item 4): the speed fraction the last landing kept (surfaced; 1.0 = kept it all)
+var air_prev_pos: Vector3 = Vector3.ZERO # Fix Pass 40 (Item 1): last air tick's position, for the swept-contact test
+var air_prev_h: float = 1e9 # Fix Pass 40 (Item 1): last air tick's height over its frame (1e9 = no history yet)
 var air_yaw_rate: float = 0.0 # Fix Pass 36: the yaw rate carried across a flight (set in _enter_air, restored in _land)
 var race_started: bool = false
 
@@ -1421,7 +1483,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP39 · 2026-11-02"
+const BUILD_STAMP: String = "FP40 · 2026-11-03"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -3584,6 +3646,8 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 	air_yaw_rate = yaw_rate # Fix Pass 36: the rotation the car leaves the road with (restored, damped, in _land)
 	air_from_rebound = false # FP14 (Item 1): callers that throw the car set this after entry
 	air_from_release = false # FP14 (Item 1): a road-born flight; _do_release marks its own
+	air_prev_pos = car.global_position # Fix Pass 40 (Item 1): the swept-contact history starts at the entry point
+	air_prev_h = 1e9
 	grounded_t = 0.0
 	was_airborne = true
 	mode = MODE_AIR
@@ -4204,7 +4268,7 @@ func _panel_text() -> String:
 	var mode_txt: String = "XR LIVE" if xr_ok else "DESKTOP FALLBACK"
 	var lines: Array[String] = []
 	lines.append("STUNT CAR VR - TEST 1 [%s]" % mode_txt)
-	lines.append("SPD %d  BOOST %d  DENT %d  TRK %s" % [int(round(speed * 3.6)), int(round(boost_meter)), dent_level,
+	lines.append("SPD %d  BOOST %d  DENT %d  GEAR %d  TRK %s" % [int(round(speed * 3.6)), int(round(boost_meter)), dent_level, gear,
 		"CIRCUIT" if active_track == "circuit" else ("LAB" if active_track == "lab" else ("TRK2" if active_track == "funlab" else "RIBBON"))])
 	if track_closed:
 		lines.append("STATE %s  LAP %d/%d  TD %s" % [_state_name(), mini(lap_count + 1, RACE_LAPS), RACE_LAPS, last_touchdown])
@@ -5987,6 +6051,11 @@ func start_race() -> void:
 	slip_state = 0.0
 	wheelspin = 0.0 # Fix Pass 36
 	wheelspin_target = 0.0
+	gear = 1 # Fix Pass 40: the box starts every race in first
+	gear_rev = 0.0
+	shift_t = 0.0
+	rear_u = 0.0
+	land_retention = 1.0
 	air_yaw_rate = 0.0
 	_reset_suspension()
 	_reset_dangle_feel()
@@ -6298,6 +6367,8 @@ func _do_release() -> void:
 	air_exit_y = float(_frame_at(rel_s)["pos"].y)
 	air_from_gap = false
 	air_from_release = true # FP14 (Item 1): a drop is not a jump - its landing never arms the rebound gate
+	air_prev_pos = car.global_position # Fix Pass 40 (Item 1): swept-contact history starts at the release point
+	air_prev_h = 1e9
 	# Fix Pass 9: the released car flies and lands under the
 	# heading it HUNG with (see _orient_car_hang - Fix Pass 10:
 	# that heading is the spring-settled orient_yaw, which at a
@@ -6483,8 +6554,35 @@ func _update_drive(delta: float) -> void:
 	# Fix Pass 36 (Item B1): the engine and boost forces are
 	# the pass's retune (10 -> ENGINE_ACCEL 16, +9 ->
 	# BOOST_ACCEL 16 = exactly 2x engine boosted); brake and
-	# drag are untouched.
-	var tire_long: float = in_throttle * ENGINE_ACCEL
+	# drag are untouched. (Fix Pass 40, Item 2: the flat
+	# ENGINE_ACCEL is superseded by the gearbox below - the
+	# engine term is now the current gear's faded force, or
+	# zero inside a shift gap; the boost share is unchanged.)
+	# Fix Pass 40 (Item 2): THE GEARBOX. The box selects on
+	# vf: up at each band's top, down only past the
+	# hysteresis floor, and any change opens the thrust gap
+	# (the engine share reads zero while shift_t runs - the
+	# shift is a real interruption, heard in the rev drop
+	# gear_rev makes in the audio and felt as the gap).
+	# gear_rev is the band fraction the audio and the force
+	# fade both read. Reverse and standstill sit in first.
+	var gear_before40: int = gear
+	while gear < GEAR_COUNT and vf >= float(GEAR_TOP_SPEEDS[gear - 1]):
+		gear += 1
+	while gear > 1 and vf < float(GEAR_TOP_SPEEDS[gear - 2]) - SHIFT_HYSTERESIS:
+		gear -= 1
+	if gear != gear_before40:
+		shift_t = SHIFT_GAP_S
+	if shift_t > 0.0:
+		shift_t -= delta
+	var band_lo40: float = 0.0 if gear == 1 else float(GEAR_TOP_SPEEDS[gear - 2])
+	var band_hi40: float = float(GEAR_TOP_SPEEDS[gear - 1])
+	gear_rev = clampf((vf - band_lo40) / maxf(band_hi40 - band_lo40, 0.1), 0.0, 1.0)
+	var gear_force40: float = float(GEAR_FORCES[gear - 1]) * (1.0 - GEAR_BAND_FADE * gear_rev)
+	var eng_force40: float = in_throttle * gear_force40
+	if shift_t > 0.0:
+		eng_force40 = 0.0
+	var tire_long: float = eng_force40
 	if in_boost and boost_meter > 0.0 and in_throttle > 0.05:
 		tire_long += BOOST_ACCEL
 		boost_meter = maxf(boost_meter - BOOST_DRAIN_PER_S * delta, 0.0)
@@ -6512,7 +6610,7 @@ func _update_drive(delta: float) -> void:
 	# engine share's loss. At a standstill the spike of one
 	# frame at full force before the state bites is the tire
 	# biting before it breaks loose.
-	var eng_applied: float = minf(in_throttle * ENGINE_ACCEL, maxf(tire_long, 0.0))
+	var eng_applied: float = minf(eng_force40, maxf(tire_long, 0.0))
 	var spin_cap: float = SPIN_GRIP_ACCEL * clampf(load_r, 0.0, 1.25)
 	if contact_transient_t > 0.0:
 		spin_cap *= _contact_load_factor()
@@ -6526,6 +6624,11 @@ func _update_drive(delta: float) -> void:
 		var transmitted36: float = lerpf(eng_applied,
 			minf(eng_applied, SPIN_KINETIC * spin_cap), wheelspin)
 		tire_long -= eng_applied - transmitted36
+	# Fix Pass 40 (Item 3): the rear axle's longitudinal
+	# utilisation - the same demand and cap the spin test
+	# just read - kept for the lateral bleed's friction-
+	# circle tax below.
+	rear_u = clampf(eng_applied / maxf(spin_test_cap, 0.01), 0.0, 1.0) if vf > -0.5 else 0.0
 	var accel: float = tire_long
 	accel -= in_brake * 14.0
 	accel -= vf * 0.10
@@ -6582,8 +6685,24 @@ func _update_drive(delta: float) -> void:
 	# stroke is untouched: the sink keeps its ramp, the
 	# steering no longer pays for it.
 	var lg5: float = load_grip
-	var bleed: float = clampf(-GRIP_BITE_RATE * vl * lg5,
-		-GRIP_LAT_ACCEL * lg5, GRIP_LAT_ACCEL * lg5)
+	# Fix Pass 40 (Item 3): THE FISHTAIL tax. The bleed below
+	# is the whole car's lateral capacity, and the driven
+	# (rear) axle's share of it is spent by the longitudinal
+	# demand the driver is making right now: the effective
+	# factor is load_grip scaled by the friction circle's
+	# remainder, sqrt(1 - TAX * rear_u^2). At cruise demand
+	# (rear_u ~0.3) the factor is ~0.97 - the cruise model
+	# is untouched for practical purposes; floored out of a
+	# corner (rear_u -> 1) it falls to ~0.63, the velocity
+	# lags the heading a beat longer, and the tail steps out
+	# a little until the tires hook and rear_u falls. The
+	# FP36 drumbeat authority is preserved by construction:
+	# its contacts are made at closed or part throttle in
+	# the gears where demand sits under the cap (rear_u
+	# small), and stage 68 re-measures the number.
+	var lat_factor40: float = lg5 * sqrt(clampf(1.0 - FISHTAIL_TAX * rear_u * rear_u, 0.25, 1.0))
+	var bleed: float = clampf(-GRIP_BITE_RATE * vl * lat_factor40,
+		-GRIP_LAT_ACCEL * lat_factor40, GRIP_LAT_ACCEL * lat_factor40)
 	vl += bleed * delta
 	# Fix Pass 15 (Item 1): THE TELEGRAPH SIGNAL. The bleed
 	# above is the tire's capacity being spent; this ratio
@@ -6739,9 +6858,49 @@ func _update_air(delta: float) -> void:
 	# their way down, and the below-window case (h far under
 	# the ribbon) is unaffected in practice - it lands when it
 	# falls back through, a few frames later.
-	if not bool(fr["gap"]) and h <= CLEARANCE + 0.05 and h > -2.2 and absf(lat) <= HALF_WIDTH + EDGE_FALL_OVERSHOOT and air_vel.y < 0.5:
+	# Fix Pass 40 (Item 1): the bound and the grading (in
+	# _land) read the fall RELATIVE TO THE ROAD - air_vel.y
+	# less the surface's own vertical rate under the car
+	# (slope_vy, _slope_vy_at). On flat road slope_vy is 0
+	# and every number is the pre-FP40 one. On a steep
+	# descent the old world-axis reading charged every
+	# re-contact the road's own fall rate (vf * grade,
+	# ~10 m/s at pace) as impact - the micro-hop storm the
+	# audit convicted: HARD grades, spring slams and a body
+	# ratcheting into the ribbon after big landings, the
+	# owner's "landing and going warping through road".
+	var slope_vy: float = _slope_vy_at(fr, Vector2(air_vel.x, air_vel.z))
+	if not bool(fr["gap"]) and h <= CLEARANCE + 0.05 and h > -2.2 and absf(lat) <= HALF_WIDTH + EDGE_FALL_OVERSHOOT and air_vel.y - slope_vy < 0.5:
 		_land(fr, lat, h)
 		return
+	# Fix Pass 40 (Item 1): SWEPT CONTACT - the structural
+	# guard behind the relative law. If this tick's h jumped
+	# from above the landing plane to below the window floor
+	# in one step (a projection discontinuity can do what raw
+	# fall speed at 90 Hz cannot: the audit's fastest honest
+	# tick drop was 0.45 m against a 2.6 m window), the car
+	# crossed the road between frames: land it at the
+	# crossing point, interpolated along the tick's own
+	# motion, instead of letting it fall through and dwell
+	# out below the ribbon. The step is BOUNDED (1.2 m): a
+	# larger one-tick h change is a teleport (a debug
+	# staging, a warp), not a crossing - the stage-49 census
+	# convicted the unbounded form, whose stale history
+	# "rescued" forced falls placed 20 m under the road.
+	if not bool(fr["gap"]) and air_prev_h > CLEARANCE + 0.05 and h <= -2.2 \
+			and air_prev_h - h <= 1.2 \
+			and absf(lat) <= HALF_WIDTH + EDGE_FALL_OVERSHOOT and air_vel.y - slope_vy < 0.0:
+		var frac40: float = clampf((air_prev_h - (CLEARANCE + 0.02)) / maxf(air_prev_h - h, 0.001), 0.0, 1.0)
+		var cross_pos: Vector3 = air_prev_pos.lerp(pos, frac40)
+		car.global_position = cross_pos
+		var prx: Array = _project_to_spine(cross_pos, air_s_est, true)
+		air_s_est = float(prx[0])
+		var frx: Dictionary = _frame_at(air_s_est)
+		var relx: Vector3 = cross_pos - Vector3(frx["pos"])
+		_land(frx, relx.dot(Vector3(frx["side"])), CLEARANCE + 0.02)
+		return
+	air_prev_pos = pos
+	air_prev_h = h
 	# missed it so far - but the drone is called only when the
 	# car is GENUINELY LOST. Fix Pass 10 (Item 1): the recovery
 	# is charged from air_start_s - where the car LEFT the
@@ -6786,9 +6945,30 @@ func _update_air(delta: float) -> void:
 		_begin_recovery(pos, air_start_s)
 
 
+## Fix Pass 40 (Item 1): the road surface's own vertical
+## rate under a car travelling with horizontal velocity
+## vel_xz over frame fr - the tangent's rise per metre
+## travelled, times the travel rate along it. The composition
+## mirrors _enter_air's exactly (a flight's air_vel.y is born
+## as this number plus the bounce increment), so grading a
+## landing by (slope_vy - air_vel.y) charges the car only
+## for the fall it added itself. Zero on flat road.
+func _slope_vy_at(fr: Dictionary, vel_xz: Vector2) -> float:
+	var t3: Vector3 = fr["tan"]
+	var t2 := Vector2(t3.x, t3.z)
+	return vel_xz.dot(t2) * t3.y / maxf(t2.length_squared(), 0.04)
+
+
 func _land(fr: Dictionary, lat: float, h: float) -> void:
 	# coming in below the ribbon edge costs extra impact (edge-catch rule)
-	var vy: float = absf(minf(air_vel.y, 0.0)) + maxf(0.0, CLEARANCE - h) * 1.5
+	# Fix Pass 40 (Item 1): the arrival speed is RELATIVE TO
+	# THE ROAD (see _slope_vy_at): on a descent the surface
+	# falls away under the car and its rate is not impact; on
+	# a climb the surface rises to meet the car and its rate
+	# IS. Pre-FP40 this read air_vel.y in world axes, so a
+	# gentle re-contact on a steep descent graded as a ~10
+	# m/s HARD slam (the audit's micro-hop storm).
+	var vy: float = maxf(_slope_vy_at(fr, Vector2(air_vel.x, air_vel.z)) - air_vel.y, 0.0) + maxf(0.0, CLEARANCE - h) * 1.5
 	# Fix Pass 14 (Item 1): arm the energy return for THIS
 	# landing (consumed by the spring-throw route in
 	# _update_suspension). A landing that itself began as a
@@ -6911,6 +7091,37 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	if contact_label != null:
 		contact_label.text = "TOUCHDOWN %s - LAT %.1f M/S, HDG %+.1f DEG" % [
 			contact_grade, contact_lat_speed, contact_head_err]
+	# Fix Pass 40 (Item 4): LANDING COSTS. The owner's law:
+	# "smooth landing should reward, really rough landings
+	# should slow." The retention curve spends the landing's
+	# FORWARD speed by the arrival the grade system just
+	# measured - the contact grade, the road-relative arrival
+	# vy, and the pitch/body mismatch (misalign): a CLEAN
+	# slope-matched arrival keeps ~everything, a SCRUBBED one
+	# spends a fifth to a third, a CROSSED-UP arrival or a
+	# nose-first face-slam keeps as little as 30%. SPEED
+	# ONLY - no damage (the carnage build owns that); the
+	# boost payout below is untouched and reads the same
+	# grade it always did. Crane drops are exempt (the
+	# drop's contract is FP13's: the timed release IS the
+	# start). Applied to the forward component only, after
+	# the minimum-forward guarantee, so a slammed car still
+	# rolls away - slowly. The lateral component is the
+	# bleed's business, unchanged.
+	land_retention = 1.0
+	if not air_from_release and vf_land > 0.0:
+		match contact_grade:
+			"CLEAN":
+				land_retention = clampf(1.02 - vy * 0.006, 0.90, 1.0)
+			"SCRUBBED":
+				land_retention = clampf(0.92 - vy * 0.020, 0.62, 0.88)
+			_:
+				land_retention = clampf(0.78 - vy * 0.022, 0.30, 0.62)
+		land_retention *= clampf(1.05 - misalign * 0.006, 0.75, 1.0)
+		if land_retention < 1.0:
+			vel2 -= Vector2(f2.x, f2.z) * vf_land * (1.0 - land_retention)
+			vf_land *= land_retention
+			speed = vf_land
 	_pay_for_landing() # Fix Pass 24 (Item 1): the air exchange (crane drops refused inside)
 	# The contact TRANSIENT: for as long as this touchdown's
 	# own slide takes to bleed (the model's bleed law integrated
@@ -8370,7 +8581,13 @@ func _update_audio(delta: float) -> void:
 	var rpm_target: float = 0.8
 	var gain_target: float = AUDIO_ENGINE_IDLE_DB
 	if mode == MODE_DRIVE or mode == MODE_DONE:
-		rpm_target = 0.8 + clampf(speed / TOP_SPEED, 0.0, 1.0) * 1.85 \
+		# Fix Pass 40 (Item 2): the revs read the GEARBOX now -
+		# gear_rev climbs each band and drops at every shift,
+		# so the engine note sawtooths its way to top speed
+		# instead of ramping once. (Pre-FP40: a single ramp
+		# off speed/TOP_SPEED - the audio half of the owner's
+		# "2 gears" verdict.)
+		rpm_target = 0.8 + gear_rev * 1.85 \
 			+ in_throttle * 0.22
 		if in_boost and boost_meter > 0.0:
 			rpm_target += 0.35
@@ -8631,6 +8848,8 @@ func debug_force_fall_at(s: float) -> void:
 	# hang, the release - is production.
 	var frf: Dictionary = _frame_at(s)
 	mode = MODE_AIR
+	air_prev_pos = car.global_position # Fix Pass 40: direct AIR entries reset the swept-contact history (a staged teleport is not a crossing)
+	air_prev_h = 1e9
 	air_from_gap = false
 	air_from_release = false
 	air_from_rebound = false
@@ -8724,6 +8943,8 @@ func debug_stage_landing(s: float, height: float, fwd_speed: float) -> void:
 	# align it to the frame so the staged landing grades as before.
 	var fr: Dictionary = _frame_at(s)
 	mode = MODE_AIR
+	air_prev_pos = car.global_position # Fix Pass 40: direct AIR entries reset the swept-contact history
+	air_prev_h = 1e9
 	air_from_gap = false
 	air_time = 0.0
 	air_s_est = s
