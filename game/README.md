@@ -5714,3 +5714,190 @@ app on Quest — it is deliberately **not** shipped.
 
 On a normal desktop: open the project, confirm the Android preset,
 Export → "Android Quest" → `builds/stunt-car-test1.apk`.
+
+## Fix Pass 39 — Track 01 rework: fair hills
+
+BUILD_STAMP "FP39 · 2026-11-02". The owner's conviction from the seat
+(2026-11-02, after his first Track 01 field runs): "the part that feel
+frustrating and probably unfair is consistent: coming out a turn
+straight into a tall hill. A: You're probably not gonna be straight, so
+you're guaranteed to go flying off the track. B. You don't get any
+sense what's on the other side of the hill because between the turn
+and the hill, your view is pretty much blocked."
+
+Both halves were already law in the FP37 brief (lateral velocity
+survives a short link; no blind launches). The layout broke them. This
+pass audits every turn-exit -> climb join on Track 01 with the staged
+driver and a geometric sightline check, fixes the guilty joins by
+layout surgery, and re-proves with the same instruments.
+
+### Instruments and verdicts
+
+A: at the climb's foot, the staged driver's |lat_vel| (the FP36 bleed
+law's quantity) must be <= 0.5 m/s, with no road departure through the
+join and peak |car_lat| <= 4.0 m through the climb.
+B: if the staged drive separates at the crest, the landing must be
+readable at the commit point — B1, the first road visible past the lip
+from the turn-exit eye (cockpit eye height 1.26 m), within the
+measured flight distance + 10 m. For grounded joins there is no launch
+to be blind about; B2 (the first eye position with any far-side
+visibility) is published as context.
+
+One geometry result shaped everything: from a lower eye, a far-side
+point past a convex lip is visible only if the far side rises back
+above the lip's sightline (the chasm's rising exit is the pattern).
+Falling or flat far sides — the Dive, Drumbeat Ridge, the Long Right —
+can never satisfy B1 for a launch, at any link length. So every
+turn-fed launch on the lap was GROUNDED, not re-sighted: the pitches
+stay (the hills stay tall — the Wall is still +20 deg x 170 m), and
+their sheds stretch until v^2.kv < g at the fastest honest arrival.
+
+The fastest honest arrival turned out to be the pass's real subject.
+On a sustained grade the smoothed kv is ~0 mid-face, so nothing caps
+the speed: a floored car — the staged driver, and the owner — storms
+the whole climb toward the 48 m/s clamp, and the early shed is still a
+climb, so it keeps accelerating along the shed and separates wherever
+v^2.kv crosses g. Measured along the way: a 0.010 brow separated at
+the clamp (a 147 m flight over the whole Edge Run); 0.006 sheds
+separated mid-shed at 36-40 m/s; even 0.0042 separated at 47.6-48.0
+(the smoothed kv runs a few percent over nominal). ONE BROW LAW: every
+convex shed on Track 01 runs at 0.0032/m — v^2.kv = 7.4 m/s^2 at the
+clamp, no crossing at any speed. The only exception is the Last Hump's
+back at 0.007, whose arrival is curvature-capped by the sweeper
+itself. Concave transitions (pitch rising) keep their fast rates —
+settles and run-outs are not sheds.
+
+### Pre-fix audit (FP37 geometry, staged driver, 2 laps)
+
+| join | arc-exit slide | foot lat_vel @ speed | peak \|lat\| | crest flight | sightline |
+|---|---|---|---|---|---|
+| Flair -> First Crest | +0.16 | -0.06 @ 28.6 | 0.14 | sep 625.8 @ 23.9, 39 m flight (+45 m rebound off the Dive hump) | B1 none; reveal 7 m before lip |
+| S -> The Wall | +3.81 | +0.39 @ 35.9 | 1.21 | sep 1299.4 @ 48.0 (the clamp), 147 m flight over the whole Edge Run | B1 none; reveal 17 m before lip |
+| Hairpin -> Crest Launches 1 | +0.51 | -0.23 @ 23.9 | 0.23 | sep 1802.4 @ 24.0, 50 m flight | B1 none; reveal 9 m before lip |
+| Crest 2 (fed by crest 1) | airborne | airborne | — | sep 1907.4 @ 23.8, 65 m flight to Drumbeat's doorstep | B1 none; reveal 6 m before lip |
+| Long Right -> Last Hump | -0.09 | (staging error; see note) | 3.46 | sep 2813.3 @ 23.9, 26 m flight | B1 none; reveal 9 m before lip |
+| Staircase -> Escalator | descent-fed | -0.00 @ 33.7 | 0.07 | sep 2536.3 @ 24.8, 31 m flight | B1 none; reveal 9 m before lip |
+
+Every join was blind from the turn exit (B1 = none at all six), and
+five of the six launched the staged driver. The S -> Wall join also
+carried the S's exit slide (+3.81 m/s at the arc's end, +0.39 still
+live at the foot) — the FP37 conviction's join exactly. (J4's first
+foot sample was a probe staging error — it read mid-corner; the
+post-fix table carries the corrected staging.)
+
+### The surgery (per join)
+
+- Flair -> First Crest: the unwind/settle link grows 20 -> 35 m; the
+  crest's back stretches to 131 m at the brow law (was ~35 m at 0.030).
+  The +12 deg face is untouched.
+- The Dive (the First Crest's far side): -18 deg now runs 282 m (was
+  170), opening with a 35 m brow-rate entry ramp — a grounded car now
+  arrives at the descent at ~44 m/s, and the shipped 0.010 entry
+  pitch-on would itself have thrown it (v^2.kv ~19). The hump, flatten
+  and settle are as shipped.
+- S -> The Wall: the trailing link grows 18 -> 60 m. The slide was
+  measured at +3.8 m/s at the arc exit; the bleed trace across the new
+  link shows it crossing zero ~19 m in, the rest of the link being the
+  staged driver's own correction ripple dying out — foot reads
+  -0.17 m/s at 46 m/s. The climb (+20 deg x 170 m) is untouched; its
+  crest flatten becomes a 115 m brow at 0.0032 (was 45 m at 0.008).
+- Hairpin -> the crests: T9 CREST LAUNCHES is renamed THE TWIN
+  CRESTS. Crest 1's back stretches to 153 m at the brow law (was ~52 m
+  at 0.030); crest 2's back to 185 m at the brow law to -14 deg (was
+  ~47 m), with a 40 m glide at -14 deg paying elevation before the
+  run-out. Faces (+14 / +20 deg) untouched.
+- Escalator: the 100 m +17 deg climb is untouched; its 30 m crest-off
+  at 0.030 becomes a 93 m brow at 0.0032. The settle after it is
+  restored to 40 m (see T13 below).
+- Long Right -> Last Hump: the hump's back gentles 0.021 -> 0.007 over
+  30 m — its arrival is curvature-capped at ~24 m/s by the sweeper
+  itself, so the brow law's rate is not needed; what it needed was a
+  back that does not throw a 24 m/s car (v^2.kv was 12.1).
+- Compensation, honestly booked: the Dive pays most of the growth
+  (170 -> 282 m at -18 deg), the Edge Run trims 110 -> 90 m, and the
+  Long Right's grade deepens -9 -> -15 deg as an elevation-budget trim
+  (the FP37 precedent; -16 deg was tried with a shortened Escalator
+  settle and the staged driver fell in the arc — the pair was restored
+  together, settle 40 m and grade -15). A chasm exit trim (55 -> 30 m)
+  made during the closure search was REVERTED: stage 35's rebound
+  census convicted it (at 48 m/s the gap flight ate the whole
+  shortened exit and the rebound off the rising ground — that piece's
+  second act — never happened inside the stage's window; on the
+  restored geometry the rebound reads 0.64x, in its film band). The
+  tail solver closes at lr 238 m,
+  phi_h -0.02 deg, R_e 99 m, residual 0.003 m. Lap 4,066 m (was
+  3,493 m); elevation -27.2 to +94.4 m; the Wall's climb-span gain
+  still 52.4 m; stage 18's dip measure reads 96.3 m.
+
+New sector table: T1 THE OPENING [0,285] · T2 THE FLAIR [285,610] ·
+T2b FIRST CREST [610,771] · T3 THE DIVE [771,1173] · T4 OFF-CAMBER S
+[1173,1378] · T5 THE WALL [1378,1663] · T6 THE EDGE RUN [1663,1753] ·
+T7 THE CHASM [1753,1916] · T8 WEST HAIRPIN [1916,2062] · T9 THE TWIN
+CRESTS [2062,2559] · T10 DRUMBEAT RIDGE [2559,2804] · T11
+COMPRESSION-REBOUND [2804,2926] · T12 STAIRCASE + ESCALATOR
+[2926,3250] · T13 THE LONG RIGHT HOME [3250,3428] · T14 THE LAST HUMP
+[3428,3514] · T15 THE TAIL [3514,4066].
+
+### Post-fix audit (same instruments, staged driver, 2 laps, zero falls)
+
+| join | foot lat_vel @ speed | peak \|lat\| | separations in zone | far side readable |
+|---|---|---|---|---|
+| Flair -> First Crest | -0.08 @ 28.6 | 0.12 | none | reveal 26 m before lip |
+| S -> The Wall | -0.17 @ 45.9 | 0.22 | none | reveal 27 m before lip |
+| Hairpin -> Twin Crest 1 | -0.23 @ 24.1 | 0.22 | none | reveal 26 m before lip |
+| Twin Crest 2 | -0.00 @ 24.3 | 0.11 | none | reveal 26 m before lip |
+| Long Right -> Last Hump | +0.21 @ 24.1 | 0.36 | none | reveal 17 m before lip |
+| Staircase -> Escalator | -0.00 @ 33.5 | 0.51 | none | reveal 27 m before lip |
+
+Every foot is inside the 0.5 m/s threshold (worst: 0.23), no join
+launches the staged driver at all, and every far side shows itself
+17-27 m before its lip to a grounded eye. The only air left in the
+audited windows is the Long Right arc's pre-existing wheel-flicker
+pair (≈2.5 m hops, texture, unchanged). Feasibility re-proven by
+stage 19 (3 laps, zero falls) on the new geometry.
+
+### Repriced economy (stage 54's reference lap)
+
+Payable air 17.48 s per lap (FP37: 30.63 s); projected income
+174.8 units per lap (FP37: 259.1); longest starved stretch 500 m
+(FP37: 250 m).
+
+The blind flights were income: grounding them removed 13.2 s of the
+lap's payable air and a third of its income. The starved stretch is
+the price of the grounded Wall complex and the Escalator brow
+standing back to back with their neighbours. Per the owner's standing
+note (2026-11-02), the boost economy is revisited whole when he calls
+it — this pass reports the repricing and does not retune it.
+
+### New stage and census
+
+- Stage 67 (new): the FP39 audit as standing proof — lap band and
+  sector census, kv guards on every reworked shed (First Crest back,
+  both Twin Crest backs <= 0.0055; Wall and Escalator brows
+  <= 0.0045; Last Hump back <= 0.0085), the B2 reveal checks, and a
+  one-lap drive audit staging all six feet, zone flights and falls.
+- AMENDED (FP39, FLAGGED): stage 18 — lap band only (3,998 -> 4,066 m
+  class); the Wall's gain, the dip, the curves census stand.
+- AMENDED (FP39, FLAGGED): stage 29 — the climb-top launch case's
+  band re-derived: a launch staged at the Wall's top now lands ON
+  THE BROW (206 frames, 2.29 s) instead of flying to the Edge Run;
+  the case's point (a real flight lands, no snatch) stands.
+- AMENDED (FP39, FLAGGED): stage 49 — the fall-census stations
+  re-derived from the reworked spans; "crest launches" reads "twin
+  crests." No ribbon/lab/TRK2 stage moved; stage 35's conviction is
+  what restored the chasm exit (above), not an amendment — its checks
+  stand as written and pass on the restored geometry.
+- Gates: smoke ALL 761 · ClassDB XR guard ALL 71 · render proof
+  172/173 (the one miss is the standing sandbox hub-reach artifact,
+  unchanged from FP38; the proof ran under Xvfb after the sandbox's
+  headless draw path stopped firing frame_post_draw mid-pass — an
+  environment fault, reproduced with a minimal script, not a build
+  fault) · preflight inference audit clean on the two changed files.
+  Two of stage 67's own kv windows and one zone tail were corrected
+  in-pass (each had sampled a neighbouring piece — the corrections
+  are flagged in the stage's comments; the geometry never moved).
+
+🟨 **You're judging:** Track 01 in the headset — whether coming out of
+the turns now reads fair: straight at the climbs' feet, and the far
+side visible before you commit. The numbers above are Hal-side; the
+verdict is your hands.
