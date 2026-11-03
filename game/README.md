@@ -75,6 +75,21 @@ VR (Quest):
   tank (120 units = 4 s, 60 dealt at the start) that racing
   air refills at graded landings; the dash-face bar in the
   button cluster's row is its meter
+- **The gearbox is AUTOMATIC (Fix Pass 40) — there is no shift
+  command, and the cockpit list above stays complete.** Four
+  ratios shift themselves on road speed: each shift is a real
+  event (the engine note drops and climbs per gear, the thrust
+  gaps for a beat), each gear pulls hardest just after its
+  shift and fades toward the next, and first gear is savage —
+  floor it from a stop and the rear tires burn until they
+  hook. The DIAG SPD line shows the live gear. Car feel that
+  comes with it, also command-free: gunning it out of a corner
+  steps the tail out a little until the tires catch (lift and
+  it tucks back), and landings are priced in speed — a clean,
+  slope-matched touchdown keeps ~all of it, a scrubbed one
+  spends a share, a crossed-up arrival or a nose-first slam
+  into a hill face spends most of it (speed only; damage is a
+  later build's business)
 - **Release:** press the DROP BUTTON on the dash face (while
   dangling) — a big red button at the old lever's spot; GRIP
   near it. It answers in every phase: at the dangle it drops
@@ -5901,3 +5916,242 @@ it — this pass reports the repricing and does not retune it.
 the turns now reads fair: straight at the climbs' feet, and the far
 side visible before you commit. The numbers above are Hal-side; the
 verdict is your hands.
+
+## Fix Pass 40 — THE PHYSICS PASS (warp fix, gearbox, fishtail, landing costs)
+
+Four items from the owner's post-FP36/FP39 notes: a warp bug on
+the biggest landings ("landing and going warping through
+road… on especially high jumps"), a powertrain verdict ("hits
+top speed too quickly, like the thing has 2 gears"; the launch
+still not a burnout), a texture note ("a little fishtailing in
+the rear when gunning it, until the tires finally catch"),
+and a fairness note ("slamming into the side of hill nose
+first" should cost speed; smooth landings should keep it).
+Audits first, as ever — and the audit this time REFUTED the
+brief's prime mechanism before convicting a subtler one.
+
+### Item 1 — the warp: audit, conviction, fix
+
+**What the audit staged.** Ballistic arrivals across a
+vertical-speed sweep (ribbon flat: falls to 45 m, arrival vy
+to −38 m/s; circuit: the Wall's face, the Twin Crests, the
+Dive at −33 m/s, the Escalator, the First Crest, the Last
+Hump) — and full-send driven runs over every jump sector.
+**Pure frame-step tunnelling is REFUTED**: at 90 ticks/s the
+landing window is 2.6 m tall, the fastest honest tick drop
+measured was 0.45 m (at a −38 m/s arrival), and every staged
+arrival — all sites, all speeds — landed. No warp there.
+
+**Where it lives.** The driven runs found it on the first
+sector they floored: after the circuit's biggest flight (the
+Escalator's crest-off, 3.73 s, vy −20.9) lands at the head of
+T13 — the long right home, −15° grade, −26° bank — the car
+enters a **micro-hop storm**: it separates and re-lands every
+~0.5 m, each re-contact graded HARD with the touchdown
+readout climbing vy 4 → 10, the springs slamming to their
+stops twice a metre, and the measured height over the road
+ratcheting 0.43 → 0.16 m before saturating at the compression
+clamp — the car riding visibly buried in the ribbon, hopping,
+dent counter spinning. From the seat: you land from a big
+jump and go warping through the road. It is layout-indepen-
+dent (any steep, fast descent or crest train does it), which
+matches the owner's "on original track as well".
+
+**The mechanism.** `_land` graded the arrival by `air_vel.y`
+in WORLD axes. A flight's vertical velocity is born (in
+`_enter_air`) as the velocity's slope-following component —
+on a −15° descent at 44 m/s that is ≈ −11 m/s of the road's
+own fall rate. Every gentle re-contact was therefore graded
+as a ~10 m/s HARD slam: full compression-velocity slam
+(FP32's cv), rebound gate armed, dent, thump — and the next
+separation (the road genuinely falls away at that pace)
+started the cycle again, each slam driving the body lower
+than the last. The landing law was charging the car for the
+road's motion.
+
+**The fix, two parts.** (a) **Road-relative arrival**: the
+landing test's velocity bound and `_land`'s severity now read
+the fall relative to the surface — `slope_vy − air_vel.y`,
+where slope_vy is the surface's own vertical rate under the
+car (the exact composition `_enter_air` builds a flight's vy
+from, factored out as `_slope_vy_at`). On flat road slope_vy
+is 0 and every number is the pre-FP40 one (stage 61's FP32
+stroke proof is bit-identical: peak 0.298 m, time-to-peak
+0.122 s). On a descent a re-contact now grades at the ~0.3 m/s
+it actually closed at; into a rising face it grades HARDER
+than the world reading (the staged Wall-face arrival and a
+45 m fall onto the ribbon's climb face both read vy ≈ 31
+relative against ~25 world — the face-slam is a face-slam).
+(b) **Swept contact**: `_update_air` keeps the previous tick's
+height, and a one-tick jump from above the landing plane to
+below the window floor lands the car at the interpolated
+crossing point — the structural guard so no projection
+discontinuity can ever skip the window. The step is BOUNDED
+at 1.2 m: the first, unbounded form convicted itself in
+staging, "rescuing" debug-forced falls teleported 20 m under
+the road (stage 49's census caught it — five recoveries
+landed on the road instead of reaching the crane); the
+debug AIR entries now also reset the sweep history, as
+`_enter_air` and `_do_release` already did.
+
+**Proof.** The staged sweep re-run: every arrival lands
+(flat 45 m, Dive, Wall face — stage 68 holds them). The storm
+fixture (stage 68): the same T13-head arrival + 1,500 floored
+ticks now logs ONE touchdown and NO hard grade, min heave
++0.077 (the body never even dips to its rest offset, let
+alone ratchets under the road), +0 dents. FP36's hop
+authority is untouched (stage 65: drumbeat contact still
+turns the velocity −3.61° in 0.30 s; the fishtail tax is
+throttle-driven and that fixture runs at closed throttle).
+
+### Item 2 — the gearbox
+
+A real automatic box, 4 ratios, no new driver command.
+
+| gear | band (m/s) | force at band bottom | at band top (×0.75 fade) |
+|---|---|---|---|
+| 1st | 0–11 | 22.0 | 16.5 |
+| 2nd | 11–19 | 19.0 | 14.3 |
+| 3rd | 19–33 | 15.5 | 11.6 |
+| 4th | 33–48 (clamp) | 12.0 | 9.0 |
+
+Force fades GEAR_BAND_FADE (0.25) across each band — the
+power band: fattest just after a shift, breathless at the
+top. A shift cuts the engine share for 0.13 s (the thrust
+gap) and drops gear_rev (the band fraction), so the engine
+audio — which now reads gear_rev instead of road speed —
+sawtooths: measured pitch stations 0.98 at 34 m/s (4th's
+bottom) vs 2.46 at 48 (its top), and stage 2f now proves a
+climb inside first gear plus the drop across the 1→2 shift.
+Downshifts carry 1.5 m/s of hysteresis. **First gear is
+savage**: 22.0 of demand against the FP36 spin test's 11.0
+cap — a floored launch now spins at peak **1.00** (FP36:
+0.72), still spinning 0.84 at 8 m/s, hooked by 20 (0.02);
+the Drop Start launch burns too (peak 0.83, was 0.34). The
+under-cap feather moved: 0.45 (demand 9.9 < cap) never spins;
+0.65 now spins at the line and hooks by 8 m/s (0.07) — both
+are stage 65's standing cases now. Boost is unchanged (+16
+after the box, never spin-tested): boosted 0–30 in 1.21 s.
+
+**The run stretches into an event** (circuit opening,
+standing start, audit instruments):
+
+| figure | FP36 (flat 16) | FP40 (gearbox) |
+|---|---|---|
+| 0–10 / 0–20 | 0.84 / 1.57 s | 0.96 / 1.97 s |
+| 0–30 | 2.31 s | **2.86 s** |
+| 0–40 / 0–45 | 3.11 / 3.54 s | 4.28 / **5.13 s** |
+| 0–48 | ~4.4 s | 5.76 s |
+| top speed | 48.00 | 48.00 (unchanged) |
+
+**The corner law survives**: stage 65's standard corner,
+same frozen wheel — lift −2.06 m, full +2.56 m, spread
+**4.62 m** (FP36: 5.11), both runs on the road. The throttle
+still steers the line; third gear's slightly softer pull at
+corner pace costs half a metre of spread, reported not
+compensated.
+
+**Fixture conviction (stage 26)**: the pass's first suite
+runs failed the standing-start run (vmax 41.4, twice, to the
+tenth) — an instrumented copy caught the cause: the fixture's
+brake-stop set the brake but never closed the throttle, so
+the stop silently depended on the test_throttle the autopilot
+lap stages happened to leave behind. At FP36's pace the
+leftover was 0 and the stop held; at the gearbox's pace the
+laps end on a different autopilot phase, the leftover was
+1.0, engine and brake fought to a ~14 m/s cruise (the diag
+printed it holding 13.1 → 14.2 for the loop's whole 900
+frames), and the "standing start" began rolling at s 141,
+meeting the brow at 41.4. The fixture now stages both pedals
+and requires a GROUNDED stop (mode DRIVE and speed ~0 —
+`speed` freezes airborne, so a hop in the window must not
+read as stopped either). Stage 68's gearbox stop carries the
+same staging. Under the honest fixture the run reads exactly
+the audit's numbers (top 48.0, 0–45 in 5.13 s, gears
+[1, 2, 3, 4]).
+
+### Item 3 — the fishtail
+
+The rear axle's lateral capacity is taxed by its longitudi-
+nal demand (one friction circle): the bleed's effective load
+factor is multiplied by sqrt(1 − 0.75 · rear_u²), where
+rear_u is the engine's applied demand over the FP36 spin
+test cap — the same two numbers the wheelspin law already
+reads. At cruise demand the factor is ~0.95 (the cruise
+model is untouched for practical purposes); at a corner's
+working demand (u ≈ 0.7) ~0.79; at full saturation 0.50.
+The velocity lags the heading a beat longer under power and
+the tail steps out; as the tires hook rear_u falls and the
+bleed catches the slide — the catch-and-sway. Lift off and
+the tax vanishes the same frame: the tail tucks back. The
+rate was sized by measurement on both sides: 0.60 read only
++0.29° of slip over the lift-off run at the standard corner;
+1.00 (the true circle) saturated the slip state outright in
+the lab's off-camber S at working throttle (stage 58 P5:
+slip 0.47 → 1.00, |lat| 1.49 → 6.14 — off the road), past
+"a little" and destabilising, which the brief forbids. At
+0.75: P5 keeps its margin (probe: slip 0.54, |lat| 1.63
+against the 3.5 bound) and the standard corner reads
+lift 1.76° → full 2.09° (stage 68 holds the pair). The
+owner's spec was "a little", twice — this is texture, not a
+drift mode, and stage 65's spread (above) and drumbeat
+authority (−3.61°) both hold with it live.
+
+### Item 4 — landing costs
+
+A speed-retention curve inside `_land`, keyed to the arrival
+the grade system already measures — contact grade, the
+road-relative vy, and the body mismatch (misalign). Applied
+to the forward component only, after the minimum-forward
+guarantee; crane drops exempt (the drop's contract is
+FP13's). Staged points (audit + stage 68):
+
+| arrival (stage 68's staged set) | grade | retention |
+|---|---|---|
+| slope-matched, vy ~6 | CLEAN | 0.962 |
+| vy ~9, lat 2.0 in | SCRUBBED | 0.694 |
+| vy ~9, lat 5.0 in | CROSSED-UP | 0.544 |
+| 12 m drop, side-pushed, into the face | CROSSED-UP | 0.338 |
+| the crane drop | (exempt) | 1.000 |
+
+(The audit's own staged points agree: CLEAN vy 5.8 → 0.985,
+SCRUBBED/CROSSED vy 9.3 → 0.734/0.575, and a CLEAN vy 21.4
+arrival under 34° of body tilt → 0.761 — the mismatch term
+biting exactly as priced.)
+
+The payout dials are UNTOUCHED (the owner's ruling: the
+whole economy is revisited after the physics settles). The
+repricing the curve + relative law cause, reported per that
+ruling: stage 54's reference lap — circuit income 174.8 →
+**185.1** units/lap (the managed driver keeps more speed
+through its landings, so it flies more: lap air 18.51 s),
+ribbon 104.2; longest starved stretch unchanged at 500 m.
+
+### Census and gates
+
+Full smoke suite on the shipped tree: **ALL 781 checks**,
+ClassDB XR guard **ALL 71**; preflight (engine import +
+quit-after) clean. Render proof: part-ran in the sandbox
+(43 checks in ~25 minutes under neighbour load; the only
+failure the standing wheel-hub reach reading, 0.31 m below
+the eye — an llvmpipe capture artifact unchanged since
+FP31, and FP40 touched no seat or wheel geometry). Its
+captures in this commit remain the FP39 set, as FP37 did
+before; the sandbox cannot settle colour or reach anyway —
+the headset can.
+Re-derived, each
+flagged in place: stage 2f (rev law is the gearbox's:
+within-gear climb + shift drop replace the speed pins),
+stage 26 (the stop stages both pedals and waits for a
+grounded stop; 0–45 band [4.6, 5.7]; pitch stations are
+4th gear's band ends), stage 65 (0–30 band brackets the
+stretch [2.5, 3.3]; the feather cases re-based at the
+under-cap 0.45 + the 0.65 hook case). New: stage 68, this
+pass's standing proof (18 checks — the arrival sweep, the
+storm fixture, the gearbox run, the fishtail pair, the
+retention curve and the drop exemption).
+Unmoved: FP32's stroke (stage 61, bit-identical), FP36's
+hop authority and yaw carry (stage 65), the funlab verdicts
+(stage 66), the fair-hills census (stage 67), stage 49's
+heading census (its five FP40-caught cases now drop at the
+baseline's own stations: 100 / 1664 / 2202 / 3016 / 3560).
