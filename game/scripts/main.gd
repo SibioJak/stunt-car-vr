@@ -1421,7 +1421,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP37 · 2026-11-02"
+const BUILD_STAMP: String = "FP38 · 2026-11-02"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -1495,6 +1495,7 @@ func _ready() -> void:
 	track_data["ribbon"] = _build_ribbon()
 	track_data["circuit"] = _build_circuit()
 	track_data["lab"] = _build_lab() # Fix Pass 28: the feature lab
+	track_data["funlab"] = _build_funlab() # Fix Pass 38: TRK2, the extremes lab
 	_build_car()
 	_build_crane()
 	_build_rig()
@@ -2487,6 +2488,171 @@ func _build_lab_furniture(root: Node3D, pieces: Array) -> void:
 		_box(root, Vector3(0.55, 0.6, 0.55), pos_m, _mat_unshaded(Color(1.0, 0.72, 0.10)), "SlalomMarker%d" % mk)
 
 
+func _build_funlab() -> Dictionary:
+	# Fix Pass 38: TRK2 - THE FUNLAB. The owner's order
+	# (2026-11-02): "and I still need a loop, barrel roll,
+	# corkscrew funlab, TRK2." A fourth track appended to
+	# the cycle (Track 01 -> ribbon -> lab -> TRK2), in the
+	# Feature Lab's spirit: NOT a race circuit - a straight
+	# test course stringing THREE extreme surface elements,
+	# each approached from an honest flat run-up and left
+	# by an honest run-out so each can be taken repeatedly
+	# and judged alone. All three are SURFACE pieces - the
+	# road does the rolling:
+	#   E1 THE LOOP - the road pitches through a full
+	#     360 deg (see the walk below). The FP23 tombstone's
+	#     legal return: purpose-built, mouth on the racing
+	#     line. What the support model does at the crown is
+	#     the experiment this track exists to run - the
+	#     measured verdict is in the README, not assumed
+	#     here.
+	#   E2 THE CORKSCREW - the road banks through a full
+	#     360 deg over 160 m while descending at -6.5 deg:
+	#     a sustained helix, the world turning around the
+	#     car while the car stays on the surface.
+	#   E3 THE BARREL ROLL - the road banks through
+	#     360 deg over 52 m of flat: one quick twist at
+	#     racing pace, distinct from the corkscrew's
+	#     sustained roll.
+	# Element spans land in features["elements"] as
+	# [name, s0, s1, entry_speed, advisory] - stage 66
+	# drives and audits against them, the boards carry the
+	# advisories, and the README's outcome table is
+	# printed from the same numbers. Track 01 and the lab
+	# are untouched; their censuses must not move.
+	var root := Node3D.new()
+	root.name = "TrackFunlab"
+	add_child(root)
+	b_pts = []
+	b_tan = []
+	b_bank = []
+	b_curv = []
+	b_gap = []
+	_gen_pos = Vector3(-1600.0, 30.0, -1400.0)
+	_gen_yaw = 0.0
+	_gen_phi = 0.0
+	_gen_bank = 0.0
+	_gen_append(false, 0.0)
+	var elements: Array = []
+	# HEAD: the Drop Start flat (the station is s 2 on
+	# every track) - 110 m of runup and settle.
+	_walk(110, 0.0, 0.0, 0.0, false)
+	# --- E1: THE LOOP ------------------------------------
+	# phi walks 0 -> 360 deg at a constant TAU/82 per
+	# metre: a regular 82-gon, which closes EXACTLY (the
+	# 82 step vectors are roots of unity - they sum to
+	# zero; modelled before it was built, residual
+	# 0.0000 m), radius 1/(2 sin(pi/82)) ~ 13.05 m, crown
+	# 26.1 m over the entry. phi's target is exactly TAU
+	# so the exit tangent is exactly level; _gen_phi then
+	# resets to 0 (the same angle, unwound) so the walks
+	# that follow target level honestly.
+	var e1_s0: float = float(b_pts.size() - 1)
+	_walk(82, 0.0, TAU, 0.0, false, TAU / 82.0)
+	_gen_phi = 0.0
+	elements.append(["E1 THE LOOP", e1_s0, float(b_pts.size() - 1), 24.0, "NO CLEAN SPEED - IT WEDGES AT THE WALL"])
+	# Run-out: 120 m of flat - a failed loop needs room to
+	# land, be craned, and be re-taken.
+	_walk(120, 0.0, 0.0, 0.0, false)
+	# --- E2: THE CORKSCREW -------------------------------
+	# Run-in: pitch ramps to -6.5 deg over 20 m and holds
+	# 10 m, so the roll is entered already descending and
+	# settled. The roll: bank 0 -> 360 deg over 160 m -
+	# 10 m at half rate (TAU/300 per m), 140 m at full
+	# rate (TAU/150 per m), 10 m at half rate, targets
+	# cumulative with the last exactly TAU, so the bank
+	# lands exactly flat. The roll drops ~18 m on its
+	# descent. _gen_bank resets to 0 (the same angle,
+	# unwound).
+	_walk(20, 0.0, deg_to_rad(-6.5), 0.0, false, deg_to_rad(6.5) / 20.0)
+	_walk(10, 0.0, deg_to_rad(-6.5), 0.0, false)
+	var e2_s0: float = float(b_pts.size() - 1)
+	_walk(10, 0.0, deg_to_rad(-6.5), deg_to_rad(12.0), false, 0.006, TAU / 300.0)
+	_walk(140, 0.0, deg_to_rad(-6.5), deg_to_rad(348.0), false, 0.006, TAU / 150.0)
+	_walk(10, 0.0, deg_to_rad(-6.5), TAU, false, 0.006, TAU / 300.0)
+	_gen_bank = 0.0
+	elements.append(["E2 THE CORKSCREW", e2_s0, float(b_pts.size() - 1), 20.0, "NO CLEAN LINE - HELD 20 GOES FURTHEST"])
+	_walk(20, 0.0, 0.0, 0.0, false, deg_to_rad(6.5) / 20.0)
+	# The climb home: +7 deg (15 m ramp, 75 m hold, 15 m
+	# out) - the barrel roll is judged on the flat.
+	_walk(15, 0.0, deg_to_rad(7.0), 0.0, false, deg_to_rad(7.0) / 15.0)
+	_walk(75, 0.0, deg_to_rad(7.0), 0.0, false)
+	_walk(15, 0.0, 0.0, 0.0, false, deg_to_rad(7.0) / 15.0)
+	_walk(40, 0.0, 0.0, 0.0, false)
+	# --- E3: THE BARREL ROLL -----------------------------
+	# Bank 0 -> 360 deg over 52 m of flat, the roll rate
+	# shaped 0.055 -> 0.11 -> 0.155 (peak) -> 0.11 ->
+	# 0.055 rad/m so the twist bites progressively rather
+	# than stepping; cumulative targets, the last exactly
+	# TAU. _gen_bank resets to 0.
+	var e3_s0: float = float(b_pts.size() - 1)
+	_walk(6, 0.0, 0.0, 0.33, false, 0.006, 0.055)
+	_walk(6, 0.0, 0.0, 0.99, false, 0.006, 0.11)
+	_walk(28, 0.0, 0.0, 5.33, false, 0.006, 0.155)
+	_walk(6, 0.0, 0.0, 5.99, false, 0.006, 0.11)
+	_walk(6, 0.0, 0.0, TAU, false, 0.006, 0.055)
+	_gen_bank = 0.0
+	elements.append(["E3 THE BARREL ROLL", e3_s0, float(b_pts.size() - 1), 30.0, "ANY SPEED - ONE HOP AT THE EXIT"])
+	_walk(130, 0.0, 0.0, 0.0, false)
+	var feats: Dictionary = {
+		"gap_s0": -1.0, "gap_s1": -1.0,
+		"gap2_s0": -1.0, "gap2_s1": -1.0,
+		"ext_s0": -1.0, "sweeper_s0": -1.0, "sweeper_s1": -1.0,
+		"stairs_s0": -1.0, "stairs_s1": -1.0,
+		"elements": elements}
+	var d: Dictionary = _finalize_track(false, feats)
+	d["root"] = root
+	d["sections"] = true
+	_activate_track(d)
+	_build_track_meshes(d)
+	_build_funlab_furniture(root, elements)
+	return d
+
+
+func _build_funlab_furniture(root: Node3D, elements: Array) -> void:
+	# Fix Pass 38: TRK2's boards - one per element at its
+	# entry, in the lab's furniture language (a post and a
+	# billboarded amber label on the RIGHT at
+	# +(HALF_WIDTH + 1.7), readable from the seat at any
+	# approach angle), carrying the element's name and,
+	# on a second smaller line, its MEASURED approach
+	# advisory: the ruling visible at the roadside, in
+	# the lab's spirit. Runs with TRK2 ACTIVE (the
+	# builder's order), so _frame_at reads TRK2's spine.
+	for ei: int in elements.size():
+		var el: Array = elements[ei]
+		var s_b: float = float(el[1]) - 2.0
+		var frb: Dictionary = _frame_at(s_b)
+		var base: Vector3 = Vector3(frb["pos"]) + Vector3(frb["side"]) * (HALF_WIDTH + 1.7)
+		var up: Vector3 = frb["up"]
+		var bnode := Node3D.new()
+		bnode.name = "ElementBoard%d" % (ei + 1)
+		root.add_child(bnode)
+		_box(bnode, Vector3(0.22, 3.2, 0.22), base + up * 1.6, _mat(Color(0.2, 0.2, 0.22)))
+		var lab := Label3D.new()
+		lab.name = "ElementLabel"
+		lab.text = String(el[0])
+		lab.font_size = 96
+		lab.pixel_size = 0.0075
+		lab.modulate = Color(1.0, 0.85, 0.2)
+		lab.outline_size = 12
+		lab.outline_modulate = Color(0.05, 0.05, 0.06)
+		lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		lab.position = base + up * 3.7
+		bnode.add_child(lab)
+		var adv := Label3D.new()
+		adv.name = "AdvisoryLabel"
+		adv.text = String(el[4])
+		adv.font_size = 56
+		adv.pixel_size = 0.0075
+		adv.modulate = Color(0.85, 0.9, 1.0)
+		adv.outline_size = 10
+		adv.outline_modulate = Color(0.05, 0.05, 0.06)
+		adv.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		adv.position = base + up * 2.85
+		bnode.add_child(adv)
+
+
 func _project_wide_s(pos: Vector3) -> float:
 	# Whole-track nearest sample (coarse then refined) - used
 	# when the crane needs a main-track fall origin with no
@@ -2694,7 +2860,9 @@ func _cycle_track() -> void:
 	# Fix Pass 28: the purple button / V key cycles the full
 	# roster - circuit -> ribbon -> lab -> circuit (FP10's
 	# two-way toggle, extended for the feature lab).
-	var order: Array[String] = ["circuit", "ribbon", "lab"]
+	# Fix Pass 38: TRK2 (the funlab) appends to the roster -
+	# circuit -> ribbon -> lab -> funlab -> circuit.
+	var order: Array[String] = ["circuit", "ribbon", "lab", "funlab"]
 	_set_track(order[(order.find(active_track) + 1) % order.size()])
 
 
@@ -3849,7 +4017,7 @@ func _panel_text() -> String:
 	var lines: Array[String] = []
 	lines.append("STUNT CAR VR - TEST 1 [%s]" % mode_txt)
 	lines.append("SPD %d  BOOST %d  DENT %d  TRK %s" % [int(round(speed * 3.6)), int(round(boost_meter)), dent_level,
-		"CIRCUIT" if active_track == "circuit" else ("LAB" if active_track == "lab" else "RIBBON")])
+		"CIRCUIT" if active_track == "circuit" else ("LAB" if active_track == "lab" else ("TRK2" if active_track == "funlab" else "RIBBON"))])
 	if track_closed:
 		lines.append("STATE %s  LAP %d/%d  TD %s" % [_state_name(), mini(lap_count + 1, RACE_LAPS), RACE_LAPS, last_touchdown])
 	else:
