@@ -6045,8 +6045,8 @@ standing start, audit instruments):
 | top speed | 48.00 | 48.00 (unchanged) |
 
 **The corner law survives**: stage 65's standard corner,
-same frozen wheel — lift −2.06 m, full +2.56 m, spread
-**4.62 m** (FP36: 5.11), both runs on the road. The throttle
+same frozen wheel — lift −2.06 m, full +2.58 m, spread
+**4.65 m** (FP36: 5.11), both runs on the road. The throttle
 still steers the line; third gear's slightly softer pull at
 corner pace costs half a metre of spread, reported not
 compensated.
