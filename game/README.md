@@ -6429,3 +6429,170 @@ by the real _enter_air at every takeoff, so no shipped
 behaviour carries it; fixing the helper re-derives
 every staged landing in the suite and is its own pass,
 not a stowaway in this one.
+
+## Fix Pass 42 — THE MORE PASS (gearbox, fishtail, landing costs, the body-pitch channel)
+
+Ordered on the owner's FP40 verdict: "everything is so
+subtle as far as changes. more of everything is needed" —
+warping confirmed gone from the seat. FP40's deltas were
+honest on paper and timid in the car; this pass turns
+every FP40 dial up until the seat can feel it, and adds
+the amplifier the owner specified from his film study of
+the original: "tilting forward, backward on shifting and
+launch will help sell it."
+
+### Item 1 — gearbox, MORE
+
+First gear stretches ([11, 19, 33, 48] → [12.5, 19, 33,
+48]) so the burnout lives in first a beat longer and
+hooks just before the shift — bite, then shift, two
+events. The top gears pull harder ([22, 19, 15.5, 12] →
+[22, 19, 16.5, 12.5]). The shift gap lengthens 0.13 →
+0.22 s. SPIN_KINETIC 0.85 → 0.72: a spinning tire pulls
+less, so the burn lasts longer in time and the hook
+contrasts harder. And the ear gets its share: inside the
+gap the rev fall rate is 9.0/s (the standing smoothing
+was 1.6/s), so the note sags with the gap and climbs the
+new band — the one-tick audio-rpm drop at a shift goes
+0.028 → 0.164. Staged floored launch, FP40 → FP42: spin
+peak 1.00 → 1.00; spin at 8 m/s 0.84 → 0.87; last frame
+over 0.5 spin 0.99 s → 1.19 s; hook 1.76 s → 1.93 s;
+0–30 2.86 → 3.14 s; 0–45 5.13 → 5.40 s; time-to-top
+5.77 → 5.98 s; top speed 48.00 unchanged; shifts at
+12.55 / 19.05 / 33.03 m/s; biggest one-tick gear_rev
+drop 0.99 (already full-size on paper — it was the ear
+that couldn't hear it). The under-cap feather law is
+untouched by construction (0.45 × 22 = 9.9 < the 11.0
+cap): feathers 0.45 → spin peak 0.00; 0.65 → 0.38, 0.08
+at 8 m/s. Drop Start launch spin 0.83 — the smoking
+start stays.
+
+### Item 2 — fishtail, MORE
+
+FISHTAIL_TAX 0.75 → 2.00 (twice the true friction
+circle), factor floor 0.16 → 0.0625. FP40's ceiling was
+set by the staged driver leaving the lab's off-camber S
+at TAX 1.00; the owner's hands asked past it, so the tax
+no longer works alone — the CATCH: when the driver's
+foot comes off (in_throttle falling > 0.05), a 0.30 s
+window restores the bleed toward the tire's loaded
+ceiling (× 1.35 peak, clamped at GRIP_LOAD_MAX 1.15,
+never past it). The trigger is the foot, not the demand:
+the first form armed on any rear_u fall and probe
+measurement caught it armed 31% of frames in a
+HELD-throttle corner (shift gaps and load noise),
+diluting the tax it protected; on the foot trigger it
+arms 0% of held-corner frames, and the S driver's
+modulation still arms it — which is what he catches on.
+A catch armed before a flight does not carry across it.
+Measured, standard corner: lift slip 1.76° (unchanged —
+lift restores full bleed the same frame); under full
+power FP40 read 1.99–2.09° and that was all of it; FP42
+sustains 2.09° (late-corner mean; lift's is 0.37) and
+peaks 3.59° — the sustained angle is the new attitude,
+the peak is the step-out the driver sees. Exit spread
+lift-vs-full 4.65 → 5.14 m, full exit lat +2.81 against
+the 7.17 fall line. The S keeps its margin at the new
+setting (slip_state 0.47, |lat| 1.43 — its FP40 margins
+against the 3.5 bound): more tail and the same S
+survival coexist, no trade to report.
+
+### Item 3 — landing costs, spread wide
+
+Retention of the forward component in _land; payout
+dials untouched (economy ruling). CLEAN:
+clampf(1.02 − vy·0.003, 0.96, 1.0) — a slope-matched
+arrival keeps essentially everything (staged ~1.000;
+FP40 0.962–0.985). SCRUBBED: clampf(0.87 − vy·0.024,
+0.45, 0.78) — staged ~0.60 (FP40 0.694). CROSSED-UP:
+clampf(0.68 − vy·0.024, 0.24, 0.52) — staged ~0.41
+(FP40 0.544); the nose-first slam (12 m, side-pushed)
+~0.22 (FP40 0.338) — almost nothing kept. Misalignment
+multiplier floor 0.75 → 0.70. Crane drops stay exempt
+at 1.000. Repricing, reported not compensated: the
+offer's dials are unchanged and stage 54's identity
+holds; the audit lap's projected offer moves only with
+its pace — circuit 185.1 → 181.3 units/lap (payable air
+18.51 → 18.13 s), ribbon 104.2 → 104.5, longest starved
+stretches unchanged (circuit 500 m, ribbon 250 m). What
+retention reprices is realized speed, not boost.
+
+### Item 4 — the body-pitch channel
+
+One honest force-driven channel, not scripted animation
+— the Crammond law from the owner's film study: pitch
+is a load gauge. A damped oscillator (LOAD_PITCH_K
+0.0055 rad per m/s², spring 48.0, damping 5.8, clamp
+0.11 rad ≈ 6.3°) targets −K × the filtered longitudinal
+acceleration in DRIVE and settles to 0 out of it; it
+adds over the suspension sink in the view spring. The
+old one-sided brake term (a clamped 0.0016 rad per unit,
+positive-only) is deleted — the channel covers both
+signs at full strength. DIAG's SPD line appends PITCH
+%+.1f degrees: the channel is surfaced, per the rule
+that what the driver judges gets shown. FP40's channel
+read launch −0.01..+0.46° and braking 0.73° — a rumor.
+FP42 measures: launch squat −4.48°; a 3.37–3.68° swing
+at the first shift (squat through the gear, dip forward
+as thrust cuts in the gap, squat again as the next gear
+bites); full-brake dive +4.44°. Touchdown sink timing
+unmoved — stage 61's FP32 numbers (peak 0.298 m,
+time-to-peak 0.122 s) are bit-identical; the channel is
+additive over the sink, not in its path.
+
+### Census
+
+- **Stage 9 (flagged in place)**: the outside-staircase
+  GEOMETRY height tier 0.014 → 0.022. The step is the
+  FP8 mechanism — sweeper-exit bank unwind acting
+  through the car's lateral offset — and Item 2's tax
+  makes the staged car run a genuinely wider powered
+  line through that exit (lat +5.03 at s 165 vs FP41's
+  +1.8). One-variable proof (probe42b): FP42 tree reads
+  0.0174 solo / 0.0180 in-suite; the same tree with ONLY
+  the tax and floor reverted to FP40's 0.75 / 0.16 reads
+  0.0090 with lat tucked at +0.8 — FP41's line, FP41's
+  step. The car stays on the road (edge 6.0, fall line
+  7.17), the lap completes, and the wider line is the
+  item working as ordered. Pitch tier (0.205° read) and
+  staircase tier (0.0124 m) unmoved.
+- **Stage 68 (flagged in place)**: the corner fixture
+  returns sustained slip; new checks pin the sustained
+  delta (full > lift + 1.0, full > 1.5) from the probe
+  table; retention bands re-derived for Item 3's curve
+  (SCRUBBED [0.66, 0.82] → [0.52, 0.68], CROSSED-UP
+  [0.50, 0.66] → [0.34, 0.48], slam [0.28, 0.50] →
+  [0.15, 0.29]; CLEAN [0.94, 1.0] kept).
+- **Stage 70 new**: launch squat and shift swing from a
+  settled floored start (reads −4.48° / 3.37°), brake
+  dive (+4.44°), DIAG PITCH surfacing, and the tuck.
+  The tuck's staging was amended in-pass (flagged in
+  place): the first form held the wheel pinned past the
+  cut and could never pass — at 32 m/s and full lock the
+  corner's own slip floor is ~1.1° on any bleed setting,
+  and the lock walks the car off the road at +140 frames
+  (probe42c). Restaged as the driver's real input pair,
+  lift + unwind: slip 2.20° at the cut dies under 0.6°
+  at ~+17 frames, lat_vel reversed by +30. A/B with the
+  catch gain zeroed crosses at ~+20 frames — the tax
+  restoration on lift is the dominant term, the catch is
+  margin on top, and the check guards the pair as
+  shipped.
+- Everything else in the FP41 census holds: the tangent
+  model's laws, the loop's clean window and crown,
+  funlab rulings, the FP39 storm law, FP32 landing
+  timing, the economy identity.
+
+Gates: preflight audit clean; parse clean; SMOKE ALL
+803, API GUARD ALL 71; render proof 172/173 (the
+standing wheel-hub reach artifact only — 0.31 m below
+the eye, identical on every baseline since FP31; this
+pass touched no seat or wheel geometry).
+
+Stamp: FP42 · 2026-11-03. What the seat still owes: the
+verdict. A burnout you manage, a tail you can see, a
+slam that costs you the run's speed, and a body that
+leans on its springs when the box changes its mind —
+all of it is tuned past the staged ceilings on the
+owner's word, and only his hands can say whether MORE
+was the right amount.

@@ -212,11 +212,28 @@ const BOOST_ACCEL: float = 16.0 # the boost's added tire force (was 9.0) - boost
 # SHIFT_HYSTERESIS so the box never hunts at a boundary.
 # The boost share is added AFTER the box, untested by the
 # spin law as ever (flask thrust is not gearbox torque).
+# Fix Pass 42 (Item 1): MORE. The owner's FP40 verdict -
+# "everything is so subtle... more of everything is
+# needed" - turns this box up. First gear's band stretches
+# (11 -> 12.5) so the burnout lives in first a beat longer
+# and hooks just before the shift (the bite, then the
+# shift: two events); the top gears pull harder after
+# each change (19 / 16.5 / 12.5); and the shift gap more
+# than half-doubles (0.13 -> 0.22 s) so a change reads in
+# the seat as lost thrust and in the ear as a rev sag (the
+# audio's fall rate inside the gap is its own line, in
+# _update_audio). SPIN_KINETIC (below) drops 0.85 ->
+# 0.78: a spinning tire pulls less, so the burn lasts
+# longer in TIME and the hook, when it comes, contrasts
+# harder - the launch as a managed event, not a chirp.
+# The under-cap feather law is untouched by construction:
+# 0.45 of first gear's 22 is still 9.9 against the 11.0
+# cap, so a gentle launch still hooks clean.
 const GEAR_COUNT: int = 4
-const GEAR_TOP_SPEEDS: Array = [11.0, 19.0, 33.0, 48.0] # vf at which each gear lets go (upshift point)
-const GEAR_FORCES: Array = [22.0, 19.0, 15.5, 12.0] # engine tire force at each band's bottom
+const GEAR_TOP_SPEEDS: Array = [12.5, 19.0, 33.0, 48.0] # vf at which each gear lets go (upshift point)
+const GEAR_FORCES: Array = [22.0, 19.0, 16.5, 12.5] # engine tire force at each band's bottom
 const GEAR_BAND_FADE: float = 0.25 # force fraction surrendered across a band
-const SHIFT_GAP_S: float = 0.13 # the engine's silence inside a shift
+const SHIFT_GAP_S: float = 0.22 # the engine's silence inside a shift (FP42: was 0.13)
 const SHIFT_HYSTERESIS: float = 1.5 # m/s below a band's floor before the box takes the lower gear
 # Fix Pass 40 (Item 3): THE FISHTAIL. One tire, one friction
 # circle: longitudinal demand at the driven (rear) axle is
@@ -245,7 +262,39 @@ const SHIFT_HYSTERESIS: float = 1.5 # m/s below a band's floor before the box ta
 # corner reads +0.32 deg (probe pair 1.84 -> 2.16).
 # Lift off and u collapses at once: the tail tucks back
 # the same frame the throttle closes.
-const FISHTAIL_TAX: float = 0.75 # friction-circle spend of the rear's lateral capacity (see the sizing note above)
+# Fix Pass 42 (Item 2): MORE, past the FP40 ceiling. The
+# owner's hands asked for a tail he can SEE, and FP40's
+# sizing bound was a STAGED driver's limit, not his.
+# The tax goes to 2.00 - twice the true circle's 1.00.
+# The probe sized it: at TAX 1.50 the standard corner's
+# sustained slip (the mean past the entry bite) read
+# 1.93 deg against the lift run's 0.37, peak 2.70 - the
+# response runs through the mid-demand range, where
+# the deeper tax still bites after the floor lets go
+# of the peaks. The true circle alone (1.00) reads
+# ~2.6 deg at the peak and under 1 sustained. The price
+# is paid knowingly at the lab's off-camber S, whose
+# pursuit demand peaks HIGHER than the corner's (u 0.84
+# measured): there the factor sits on the FISHTAIL_FLOOR
+# at peak demand - and the S is kept by THE CATCH, the
+# new second half of the model: whenever the DRIVER
+# lifts (the pursuit's modulation is a lift every
+# time it backs off), the bleed runs
+# FISHTAIL_CATCH_GAIN stronger for FISHTAIL_CATCH_S -
+# the tire re-biting as the load comes back - so
+# excursions the tax lets build are eaten between
+# demand peaks instead of integrating into the exit
+# the 1.00 tax took in FP40's staging. The trigger is
+# the throttle's own fall, never rear_u's (see
+# _update_drive: ratio noise arms nothing).
+# The corner fixture holds the throttle open, so the
+# catch never fires there: the full MORE slip is what
+# stage 68 reads. Lift still collapses u the same
+# frame; the catch is what the tuck lands on.
+const FISHTAIL_TAX: float = 2.00 # friction-circle spend of the rear's lateral capacity (FP42: was 0.75; sized by probe - see the note above)
+const FISHTAIL_FLOOR: float = 0.0625 # the tax factor's floor, squared (factor never under 0.25)
+const FISHTAIL_CATCH_S: float = 0.30 # seconds the catch boost runs after demand falls
+const FISHTAIL_CATCH_GAIN: float = 0.35 # bleed boost at the catch's peak (decays linearly)
 # Launch wheelspin: the rear tires are the driven ones (the
 # car is a dragster - big rear slicks, the rake). The
 # ENGINE's applied force is tested against the rear tires'
@@ -268,7 +317,7 @@ const FISHTAIL_TAX: float = 0.75 # friction-circle spend of the rear's lateral c
 # leap - a real use for the ration.
 const SPIN_GRIP_ACCEL: float = 11.0 # rear longitudinal cap at rest, = GRIP_LAT_ACCEL
 const SPIN_SPEED_BLEND: float = 0.55 # cap-test growth per m/s of road speed (gearing)
-const SPIN_KINETIC: float = 0.85 # a spinning tire's pull, fraction of the cap's static part
+const SPIN_KINETIC: float = 0.72 # a spinning tire's pull, fraction of the cap's static part (FP42: was 0.85 - a lazier burn, a harder bite)
 const SPIN_FULL_EXCESS: float = 5.0 # demand excess (accel units) that reads as full spin
 const SPIN_ATTACK: float = 10.0 # 1/s, the spin state's bite
 const SPIN_RELEASE: float = 3.5 # 1/s, its decay (also the airborne decay)
@@ -708,7 +757,32 @@ const BODY_K: float = 100.0 # body spring rate (1/s^2) - softer than SUSP_K
 const BODY_DAMP: float = 5.2 # underdamped: sink, overshoot, settle late
 const BODY_MAX_SINK: float = 0.055 # depth cap, m (a few cm at a hard landing)
 const BODY_PITCH_K: float = 0.35 # body pitch per unit of sink travel
-const BODY_BRAKE_PITCH_K: float = 0.0016 # forward body pitch per m/s^2 of braking
+# Fix Pass 42 (Item 4): THE LOAD-PITCH CHANNEL. FP6's
+# pitch half of the body layer was a rumour: a one-sided
+# brake term capped at 0.016 rad, and the probe's before
+# table reads the whole channel at -0.01..+0.46 deg
+# across a floored launch and 0.73 deg under full
+# braking - the owner's Crammond note ("tilts back on
+# acceleration... tilting forward, backward on shifting
+# and launch will help sell it") names what was missing.
+# This is a dedicated oscillator in the body layer,
+# driven by ONE honest signal - long_accel_f, the same
+# filtered longitudinal load the suspension's weight
+# transfer reads - through its own spring: pitch BACK
+# under launch squat and hard acceleration, FORWARD
+# (dip) through the shift gap as thrust cuts, squat
+# again as the next gear bites, dive under braking.
+# Pitch is a load gauge, not per-event animation: the
+# shift dip is not scripted, it is what the load does
+# when the gap opens. The spring is the body family's:
+# slower than the car's springs, underdamped enough to
+# overshoot a little and settle. BODY_BRAKE_PITCH_K is
+# deleted with the term it fed - this channel covers
+# braking at full strength, both signs, one rule.
+const LOAD_PITCH_K: float = 0.0055 # rad of body pitch per m/s^2 of longitudinal load
+const LOAD_PITCH_SPRING: float = 48.0 # the channel's spring rate (omega ~6.9 rad/s)
+const LOAD_PITCH_DAMP: float = 5.8 # zeta ~0.42: overshoot a little, settle
+const LOAD_PITCH_MAX: float = 0.11 # the target's cap, rad (~6.3 deg)
 const BODY_ACCEL_SINK_K: float = 0.0022 # seat press per m/s^2 of longitudinal accel
 const BODY_CATCH_IMPULSE: float = 0.16 # line-catch thump into the seat, m/s
 # Fix Pass 32 (Item 1): the landing drive of this spring is a
@@ -1236,6 +1310,10 @@ var gear: int = 1 # Fix Pass 40 (Item 2): the automatic box's current gear, 1..G
 var gear_rev: float = 0.0 # Fix Pass 40 (Item 2): fraction through the current gear's band - the engine audio's rev state in DRIVE
 var shift_t: float = 0.0 # Fix Pass 40 (Item 2): the shift thrust-gap timer, seconds remaining
 var rear_u: float = 0.0 # Fix Pass 40 (Item 3): rear longitudinal utilisation (engine demand / spin test cap) - the fishtail tax's input
+var throttle_prev: float = 0.0 # Fix Pass 42 (Item 2): last DRIVE frame's throttle - the catch arms on the driver's lift
+var tail_catch_t: float = 0.0 # Fix Pass 42 (Item 2): seconds of catch boost remaining
+var load_pitch: float = 0.0 # Fix Pass 42 (Item 4): the body load-pitch channel, rad (negative = nose up under power)
+var load_pitch_v: float = 0.0 # Fix Pass 42 (Item 4): the load-pitch spring's velocity
 var land_retention: float = 1.0 # Fix Pass 40 (Item 4): the speed fraction the last landing kept (surfaced; 1.0 = kept it all)
 var air_prev_pos: Vector3 = Vector3.ZERO # Fix Pass 40 (Item 1): last air tick's position, for the swept-contact test
 var air_prev_h: float = 1e9 # Fix Pass 40 (Item 1): last air tick's height over its frame (1e9 = no history yet)
@@ -1534,7 +1612,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP41 · 2026-11-03"
+const BUILD_STAMP: String = "FP42 · 2026-11-03"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -4489,8 +4567,8 @@ func _panel_text() -> String:
 	var mode_txt: String = "XR LIVE" if xr_ok else "DESKTOP FALLBACK"
 	var lines: Array[String] = []
 	lines.append("STUNT CAR VR - TEST 1 [%s]" % mode_txt)
-	lines.append("SPD %d  BOOST %d  DENT %d  GEAR %d  TRK %s" % [int(round(speed * 3.6)), int(round(boost_meter)), dent_level, gear,
-		"CIRCUIT" if active_track == "circuit" else ("LAB" if active_track == "lab" else ("TRK2" if active_track == "funlab" else "RIBBON"))])
+	lines.append("SPD %d  BOOST %d  DENT %d  GEAR %d  TRK %s  PITCH %+.1f" % [int(round(speed * 3.6)), int(round(boost_meter)), dent_level, gear,
+		"CIRCUIT" if active_track == "circuit" else ("LAB" if active_track == "lab" else ("TRK2" if active_track == "funlab" else "RIBBON")), rad_to_deg(load_pitch)])
 	if track_closed:
 		lines.append("STATE %s  LAP %d/%d  TD %s" % [_state_name(), mini(lap_count + 1, RACE_LAPS), RACE_LAPS, last_touchdown])
 	else:
@@ -6291,6 +6369,10 @@ func start_race() -> void:
 	gear_rev = 0.0
 	shift_t = 0.0
 	rear_u = 0.0
+	throttle_prev = 0.0 # Fix Pass 42
+	tail_catch_t = 0.0 # Fix Pass 42
+	load_pitch = 0.0 # Fix Pass 42
+	load_pitch_v = 0.0 # Fix Pass 42
 	land_retention = 1.0
 	air_yaw_rate = 0.0
 	_reset_suspension()
@@ -6943,6 +7025,23 @@ func _update_drive(delta: float) -> void:
 	# just read - kept for the lateral bleed's friction-
 	# circle tax below.
 	rear_u = clampf(eng_applied / maxf(spin_test_cap, 0.01), 0.0, 1.0) if vf > -0.5 else 0.0
+	# Fix Pass 42 (Item 2): THE CATCH's arming. The tax
+	# below spends the rear's lateral capacity while
+	# demand stands; the catch is the other half of the
+	# tire's story - when the DRIVER lifts, the load
+	# comes back onto the patch and the tire re-bites
+	# harder than the taxed state it is leaving. The
+	# trigger is the throttle itself, not rear_u: the
+	# probe's first form armed on any rear_u fall and
+	# the shift gaps' force cuts plus load noise kept
+	# it armed 31% of a HELD-throttle corner, diluting
+	# the tax it was meant to protect. A lift is the
+	# foot moving; nothing else arms it. The boost is
+	# consumed at the bleed below.
+	tail_catch_t = maxf(tail_catch_t - delta, 0.0)
+	if in_throttle < throttle_prev - 0.05:
+		tail_catch_t = FISHTAIL_CATCH_S
+	throttle_prev = in_throttle
 	var accel: float = tire_long
 	accel -= in_brake * 14.0
 	accel -= vf * 0.10
@@ -7042,7 +7141,16 @@ func _update_drive(delta: float) -> void:
 	# its contacts are made at closed or part throttle in
 	# the gears where demand sits under the cap (rear_u
 	# small), and stage 68 re-measures the number.
-	var lat_factor40: float = lg5 * sqrt(clampf(1.0 - FISHTAIL_TAX * rear_u * rear_u, 0.25, 1.0))
+	# Fix Pass 42 (Item 2): the tax at 1.50 with its
+	# floor, and the catch's boost on top while it runs
+	# (see the constants for the sizing argument). The
+	# product stays under the tire's own load ceiling:
+	# the catch can restore the bleed up to GRIP_LOAD_MAX,
+	# never past it - it is a re-bite, not new grip.
+	var tax_factor42: float = sqrt(clampf(1.0 - FISHTAIL_TAX * rear_u * rear_u, FISHTAIL_FLOOR, 1.0))
+	if tail_catch_t > 0.0:
+		tax_factor42 *= 1.0 + FISHTAIL_CATCH_GAIN * (tail_catch_t / FISHTAIL_CATCH_S)
+	var lat_factor40: float = minf(lg5 * tax_factor42, GRIP_LOAD_MAX)
 	var bleed: float = clampf(-GRIP_BITE_RATE * vl * lat_factor40,
 		-GRIP_LAT_ACCEL * lat_factor40, GRIP_LAT_ACCEL * lat_factor40)
 	vl += bleed * delta
@@ -7331,6 +7439,13 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	# gentle re-contact on a steep descent graded as a ~10
 	# m/s HARD slam (the audit's micro-hop storm).
 	var vy: float = maxf(_slope_vy_at(fr, Vector2(air_vel.x, air_vel.z)) - air_vel.y, 0.0) + maxf(0.0, CLEARANCE - h) * 1.5
+	# Fix Pass 42 (Item 2): a touchdown is a fresh
+	# contact - a catch armed before the flight does
+	# not carry across it. (throttle_prev deliberately
+	# keeps its pre-flight value: a driver who lifted
+	# mid-flight arms the re-bite on the first DRIVE
+	# frame, which is the catch working as designed.)
+	tail_catch_t = 0.0
 	# Fix Pass 14 (Item 1): arm the energy return for THIS
 	# landing (consumed by the spring-throw route in
 	# _update_suspension). A landing that itself began as a
@@ -7492,16 +7607,28 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	# the minimum-forward guarantee, so a slammed car still
 	# rolls away - slowly. The lateral component is the
 	# bleed's business, unchanged.
+	# Fix Pass 42 (Item 3): SPREAD WIDE. FP40's curve
+	# read honestly on paper and timidly in the car
+	# (the owner's "more of everything"): CLEAN 0.962 /
+	# SCRUBBED 0.694 / CROSSED-UP 0.544 / slam 0.338.
+	# The widened curve makes the ends mean it - a CLEAN
+	# slope-matched arrival keeps essentially everything
+	# (the reward for landing well IS your speed), the
+	# nose-first slam keeps almost nothing, and the mid
+	# grades spread between. The misalignment spend
+	# steepens with it (0.006 -> 0.007 per degree, floor
+	# 0.75 -> 0.70). The payout below still reads the
+	# same grade it always did; only the speed is spent.
 	land_retention = 1.0
 	if not air_from_release and vf_land > 0.0:
 		match contact_grade:
 			"CLEAN":
-				land_retention = clampf(1.02 - vy * 0.006, 0.90, 1.0)
+				land_retention = clampf(1.02 - vy * 0.003, 0.96, 1.0)
 			"SCRUBBED":
-				land_retention = clampf(0.92 - vy * 0.020, 0.62, 0.88)
+				land_retention = clampf(0.87 - vy * 0.024, 0.45, 0.78)
 			_:
-				land_retention = clampf(0.78 - vy * 0.022, 0.30, 0.62)
-		land_retention *= clampf(1.05 - misalign * 0.006, 0.75, 1.0)
+				land_retention = clampf(0.68 - vy * 0.024, 0.24, 0.52)
+		land_retention *= clampf(1.05 - misalign * 0.007, 0.70, 1.0)
 		if land_retention < 1.0:
 			vel3 -= d41 * vf_land * (1.0 - land_retention)
 			vf_land *= land_retention
@@ -8623,8 +8750,11 @@ func _update_view_spring() -> void:
 	# motion - the eyes sink INTO the seat on the body spring's own
 	# phase (see _update_body_spring). The fallback camera, parented
 	# to its mirror BodySpring node, gets the identical offsets.
-	var b_pitch: float = body_sink * BODY_PITCH_K \
-		+ clampf(-long_accel_f * BODY_BRAKE_PITCH_K, 0.0, 0.016)
+	# Fix Pass 42 (Item 4): the pitch half is the sink's
+	# own tilt plus the load-pitch channel (FP6's
+	# one-sided brake term is deleted - the channel
+	# covers both signs at full strength).
+	var b_pitch: float = body_sink * BODY_PITCH_K + load_pitch
 	if body_node != null:
 		body_node.position = Vector3(0.0, -body_sink, 0.0)
 		body_node.rotation = Vector3(b_pitch, 0.0, 0.0)
@@ -8673,6 +8803,25 @@ func _update_body_spring(delta: float) -> void:
 	var acc: float = (rest_off - body_sink) * BODY_K - BODY_DAMP * body_sink_v
 	body_sink_v += acc * delta
 	body_sink = clampf(body_sink + body_sink_v * delta, -0.02, BODY_MAX_SINK)
+	# Fix Pass 42 (Item 4): THE LOAD-PITCH CHANNEL - a
+	# second oscillator in this layer, on the load
+	# itself. Its target is the filtered longitudinal
+	# acceleration (long_accel_f, the suspension's own
+	# weight-transfer signal) through LOAD_PITCH_K, so
+	# every longitudinal event speaks in its own voice:
+	# the launch's squat (accel at the +12 clamp), the
+	# shift gap's dip (thrust cut, the load swings
+	# forward), the next gear's bite (squat again), the
+	# brake dive. Airborne and hanging the load signal
+	# stops updating, so the target is zero and the
+	# channel settles - the landing's own story stays
+	# with FP32's sink follow above, untouched.
+	var lp_target: float = 0.0
+	if mode == MODE_DRIVE:
+		lp_target = clampf(-LOAD_PITCH_K * long_accel_f, -LOAD_PITCH_MAX, LOAD_PITCH_MAX)
+	var lp_acc: float = (lp_target - load_pitch) * LOAD_PITCH_SPRING - LOAD_PITCH_DAMP * load_pitch_v
+	load_pitch_v += lp_acc * delta
+	load_pitch = clampf(load_pitch + load_pitch_v * delta, -LOAD_PITCH_MAX * 1.3, LOAD_PITCH_MAX * 1.3)
 
 
 func denti_clamp() -> int:
@@ -9038,8 +9187,16 @@ func _update_audio(delta: float) -> void:
 	elif mode == MODE_AIR:
 		rpm_target = 1.05 + in_throttle * 1.45
 		gain_target = AUDIO_ENGINE_DB
+	# Fix Pass 42 (Item 1): inside the shift gap the revs
+	# SAG at their own rate - pre-FP42 the standing fall
+	# rate (1.6/s) smeared gear_rev's drop across half a
+	# second and the ear barely heard a shift happen
+	# (probe: 0.028 of pitch per tick through a change).
+	# The gap is the engine unloaded; the note falls
+	# with it, then climbs the new band.
+	var rpm_rate42: float = 9.0 if shift_t > 0.0 else (3.2 if rpm_target > audio_rpm else 1.6)
 	audio_rpm = lerpf(audio_rpm, rpm_target,
-		clampf(delta * (3.2 if rpm_target > audio_rpm else 1.6), 0.0, 1.0))
+		clampf(delta * rpm_rate42, 0.0, 1.0))
 	engine_player.pitch_scale = audio_rpm
 	engine_player.volume_db = gain_target
 	# Skid: fast attack (tires speak the moment they slide), fast

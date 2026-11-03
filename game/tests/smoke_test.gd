@@ -1347,8 +1347,23 @@ func _run() -> void:
 			max_sp9 = maxf(max_sp9, float(e9f[0]))
 		else:
 			max_gp9 = maxf(max_gp9, float(e9f[0]))
-	check(max_gv9 < 0.014,
-		"stage9: worst GEOMETRY height step outside the staircase is %.4f m (bound 0.014)" % max_gv9)
+	# FP42 AMENDMENT (flagged): the outside-staircase height tier
+	# moves 0.014 -> 0.022. The step is the sweeper-exit bank
+	# unwind acting through the car's lateral offset (the FP8
+	# mechanism named above), and FP42's fishtail tax (2.00,
+	# floor 0.0625) makes the staged car run a genuinely wider
+	# powered line through that exit: lat peaks +5.03 at s 165
+	# where FP41 held +1.8. One-variable proof (probe42b):
+	# FP42 tree reads 0.0174 solo / 0.0180 in-suite; the same
+	# tree with ONLY the tax and floor reverted to FP40's
+	# 0.75 / 0.16 reads 0.0090 with lat tucked at +0.8 - the
+	# FP41 line and the FP41 step. The car stays on the road
+	# (edge 6.0, fall line 7.17) and the lap completes; the
+	# wider line IS Item 2 working as ordered. New bound =
+	# worst observed 0.0180 with ~20% headroom; pitch tier and
+	# staircase tier unmoved (0.205 deg / 0.0124 m on FP42).
+	check(max_gv9 < 0.022,
+		"stage9: worst GEOMETRY height step outside the staircase is %.4f m (bound 0.022, FP42 tier)" % max_gv9)
 	check(max_gp9 < 0.35,
 		"stage9: worst GEOMETRY pitch step outside the staircase is %.3f deg (bound 0.35)" % max_gp9)
 	check(max_sv9 < 0.032,
@@ -8206,6 +8221,17 @@ func _run() -> void:
 	# under power through the standard corner, gone on the
 	# lift. (4) LANDING COSTS: the retention curve at staged
 	# points, and the crane drop's exemption.
+	# AMENDED (FP42, FLAGGED): the MORE pass retuned all
+	# four dials on the owner's "everything is so subtle"
+	# verdict. (2) The gearbox bands stand (0-45 reads
+	# 5.40 s on the FP42 probe; first gear's band is now
+	# 12.5 and the shift gap 0.22 s - the checks below
+	# bracket both builds). (3) The fishtail fixture now
+	# also reads the SUSTAINED slip (the mean past the
+	# entry bite) and its floor derivation is FP42's (see
+	# the comment at the checks). (4) The retention bands
+	# are re-derived for the widened curve: CLEAN ~1.00,
+	# SCRUBBED ~0.60, CROSSED-UP ~0.41, slam ~0.22.
 	# (1a) arrivals across the sweep - flat at terminal
 	# fall, the Dive at pace, the Wall's face.
 	main._set_track("ribbon")
@@ -8369,6 +8395,8 @@ func _run() -> void:
 			g68 += 1
 		var slip68: float = 0.0
 		var lat68: float = -999.0
+		var sus68: float = 0.0
+		var susn68: int = 0
 		g68 = 0
 		while g68 < 6000:
 			main.wheel_angle = -0.360
@@ -8377,38 +8405,42 @@ func _run() -> void:
 			await physics_frame
 			g68 += 1
 			if main.mode == main.MODE_DRIVE and absf(main.speed) > 2.0:
-				slip68 = maxf(slip68, rad_to_deg(atan2(absf(main.lat_vel), absf(main.speed))))
+				var sl68b: float = rad_to_deg(atan2(absf(main.lat_vel), absf(main.speed)))
+				slip68 = maxf(slip68, sl68b)
+				if main.car_s >= 645.0:
+					sus68 += sl68b
+					susn68 += 1
 			if main.car_s >= 664.0:
 				lat68 = main.car_lat
 				break
 			if main.mode != main.MODE_DRIVE:
 				break
 		main.test_throttle = 0.0
-		return [slip68, lat68, main.mode]
+		return [slip68, lat68, main.mode, sus68 / maxf(float(susn68), 1.0)]
 	var lift68: Array = await corner68.call(0.0)
 	var full68: Array = await corner68.call(1.0)
-	print("stage68: corner slip - lift %.2f deg, full %.2f deg (exit lat %+.2f / %+.2f)" % [
-		float(lift68[0]), float(full68[0]), float(lift68[1]), float(full68[1])])
+	print("stage68: corner slip - lift %.2f deg, full %.2f deg (exit lat %+.2f / %+.2f); sustained lift %.2f, full %.2f" % [
+		float(lift68[0]), float(full68[0]), float(lift68[1]), float(full68[1]), float(lift68[3]), float(full68[3])])
 	check(int(lift68[2]) == 1 and int(full68[2]) == 1,
 		"stage68: both corner runs stay on the road (modes %d/%d)" % [int(lift68[2]), int(full68[2])])
 	check(float(full68[0]) > 1.2 and float(full68[0]) < 6.5,
-		"stage68: gunning it steps the tail out A LITTLE (slip peak %.2f deg - texture, not a drift mode)" % float(full68[0]))
-	# the regulation floor is derived from the circle
-	# itself: at this corner's working demand (u ~ 0.7,
-	# second gear at 18 m/s) the taxed factor is
-	# sqrt(1 - 0.75 * 0.50) = 0.79, and the slip scales
-	# ~1/factor - the FP40 measurements bracket the
-	# shipped rate: the suite read 1.76 -> 2.05 deg at
-	# TAX 0.60 (+0.29), the probe pair read 1.84 -> 2.16
-	# at 0.75 (+0.32) and 1.84 -> 2.29 at 1.00 (+0.45);
-	# the floor sits at ~60% of the shipped rate's
-	# measured delta, convicting a dead or inverted tax
-	# (which reads ~0) with margin. (At
-	# u -> 1 - a floored launch exit - the factor reaches
-	# 0.50 and the tail runs twice as loose; stage 65's
-	# exit spread is that integral, checked there.)
+		"stage68: gunning it steps the tail out (slip peak %.2f deg - a step-out, not a drift mode)" % float(full68[0]))
+	# AMENDED (FP42, FLAGGED): the regulation law is now
+	# read on the SUSTAINED slip - the mean past the entry
+	# bite (s >= 645), where the car sits under sustained
+	# power. FP40's peak-based floor convicted a dead tax
+	# at +0.2 deg; FP42's probe table (lift sustained
+	# 0.37, full sustained 2.09, full peak 3.59 at TAX
+	# 2.00) puts the sustained floor at +1.0 with the
+	# peak check kept as the excursion guard. A dead or
+	# inverted tax reads ~0 on the sustained delta; the
+	# catch (stage 70) never fires in this fixture -
+	# the throttle never falls.
+	check(float(full68[3]) > float(lift68[3]) + 1.0 and float(full68[3]) > 1.5,
+		"stage68: the fishtail is throttle-regulated - sustained slip %.2f deg under power vs %.2f on the lift (the tail sits out, it does not just bite)" % [
+			float(full68[3]), float(lift68[3])])
 	check(float(full68[0]) > float(lift68[0]) + 0.2,
-		"stage68: the fishtail is throttle-regulated (full %.2f deg vs lift %.2f deg; lift tucks the tail back)" % [
+		"stage68: the fishtail peak follows the throttle too (full %.2f deg vs lift %.2f deg)" % [
 			float(full68[0]), float(lift68[0])])
 	# (4) landing costs: staged arrivals at four points of
 	# the curve (the stage-65 injection idiom), plus the
@@ -8431,14 +8463,14 @@ func _run() -> void:
 	check(bool(rc68[0]) and String(rc68[2]) == "CLEAN" and float(rc68[1]) >= 0.94 and float(rc68[1]) <= 1.0,
 		"stage68: a CLEAN slope-matched arrival keeps ~all its speed (retention %.3f)" % float(rc68[1]))
 	var rs68: Array = await ret68.call(3.3, 24.0, 2.0)
-	check(bool(rs68[0]) and String(rs68[2]) == "SCRUBBED" and float(rs68[1]) >= 0.66 and float(rs68[1]) <= 0.82,
-		"stage68: a SCRUBBED arrival spends a share (retention %.3f)" % float(rs68[1]))
+	check(bool(rs68[0]) and String(rs68[2]) == "SCRUBBED" and float(rs68[1]) >= 0.52 and float(rs68[1]) <= 0.68,
+		"stage68: a SCRUBBED arrival spends a real share (retention %.3f; FP40 read 0.694)" % float(rs68[1]))
 	var rx68: Array = await ret68.call(3.3, 24.0, 5.0)
-	check(bool(rx68[0]) and String(rx68[2]) == "CROSSED-UP" and float(rx68[1]) >= 0.50 and float(rx68[1]) <= 0.66,
-		"stage68: a CROSSED-UP arrival spends more (retention %.3f)" % float(rx68[1]))
+	check(bool(rx68[0]) and String(rx68[2]) == "CROSSED-UP" and float(rx68[1]) >= 0.34 and float(rx68[1]) <= 0.48,
+		"stage68: a CROSSED-UP arrival spends most of it (retention %.3f; FP40 read 0.544)" % float(rx68[1]))
 	var rslam68: Array = await ret68.call(12.0, 24.0, 3.5)
-	check(bool(rslam68[0]) and String(rslam68[2]) == "CROSSED-UP" and float(rslam68[1]) >= 0.28 and float(rslam68[1]) <= 0.50,
-		"stage68: the nose-first slam spends most of it (retention %.3f)" % float(rslam68[1]))
+	check(bool(rslam68[0]) and String(rslam68[2]) == "CROSSED-UP" and float(rslam68[1]) >= 0.15 and float(rslam68[1]) <= 0.29,
+		"stage68: the nose-first slam keeps almost nothing (retention %.3f; FP40 read 0.338)" % float(rslam68[1]))
 	main.start_race()
 	var dang68: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
 	main.dip_timer = 1000.0
@@ -8569,6 +8601,145 @@ func _run() -> void:
 	main._goto_element(0)
 	check(main.mode == mode69,
 		"stage69: the element controls are inert off the funlab")
+
+	# ---------- stage 70: Fix Pass 42 - THE MORE PASS ----
+	# The body-pitch channel (Item 4) staged as excursions:
+	# a floored launch squats the body, a shift swings it
+	# forward through the gap, a full brake dives it. The
+	# FP40 before-table (probe, the old one-sided formula):
+	# launch -0.01..+0.46 deg, braking 0.73 deg - the
+	# channel existed in name only. FP42's probe reads:
+	# squat -4.48 deg, first-shift swing 3.68 deg, brake
+	# dive +4.50 deg. Floors sit ~60% under the readings.
+	# Plus the fishtail's TUCK (Item 2's catch): floored
+	# through the standard corner to s 650, then lift -
+	# the established slip must die fast on the catch.
+	main._set_track("circuit")
+	await frames(5)
+	main.debug_warp_to_s(65.0)
+	main.speed = 0.0
+	main.vel3 = Vector3.ZERO
+	main.lat_vel = 0.0
+	main.wheel_angle = 0.0
+	main.test_brake = 1.0
+	main.test_throttle = 0.0
+	var bz70: int = 0
+	while (main.mode != main.MODE_DRIVE or main.speed > 0.01) and bz70 < 900:
+		await physics_frame
+		bz70 += 1
+	var w70: int = 0
+	while main.contact_transient_t > 0.0 and w70 < 600:
+		await physics_frame
+		w70 += 1
+	main.test_brake = 0.0
+	main.test_throttle = 1.0
+	var lp_min70: float = 0.0
+	var gear_prev70: int = 1
+	var lp_at_shift70: float = 0.0
+	var lp_post70: float = -9.0
+	var lp_watch70: int = 0
+	var swing70: float = 0.0
+	var f70: int = 0
+	while f70 < 400 and main.speed < 30.0:
+		await physics_frame
+		f70 += 1
+		lp_min70 = minf(lp_min70, main.load_pitch)
+		if main.gear != gear_prev70:
+			gear_prev70 = main.gear
+			lp_at_shift70 = main.load_pitch
+			lp_post70 = main.load_pitch
+			lp_watch70 = 27
+		elif lp_watch70 > 0:
+			lp_watch70 -= 1
+			lp_post70 = maxf(lp_post70, main.load_pitch)
+			swing70 = maxf(swing70, lp_post70 - lp_at_shift70)
+	main.test_throttle = 0.0
+	print("stage70: launch squat %.2f deg, shift swing %.2f deg" % [rad_to_deg(lp_min70), rad_to_deg(swing70)])
+	check(lp_min70 < -0.052,
+		"stage70: the launch squats the body (load pitch %.2f deg; the FP40 channel read -0.01)" % rad_to_deg(lp_min70))
+	check(swing70 > 0.035,
+		"stage70: a shift swings the body forward through the gap (%.2f deg squat-to-dip)" % rad_to_deg(swing70))
+	# the brake dive: pin 40 on the flat window, settle,
+	# then stand on the brake to a stop.
+	main.debug_warp_to_s(65.0)
+	main.wheel_angle = 0.0
+	main.test_throttle = 0.0
+	main.test_brake = 0.0
+	main.debug_pin_speed(40.0)
+	await frames(30)
+	main.test_brake = 1.0
+	var lp_brake70: float = 0.0
+	var f70b: int = 0
+	while f70b < 400 and main.speed > 0.05:
+		await physics_frame
+		f70b += 1
+		main.debug_pin_speed(main.speed)
+		lp_brake70 = maxf(lp_brake70, main.load_pitch)
+	main.test_brake = 0.0
+	check(lp_brake70 > 0.052,
+		"stage70: a full brake dives the body (load pitch %+.2f deg; the FP40 channel read +0.73)" % rad_to_deg(lp_brake70))
+	# the DIAG names the channel (the panel's SPD line).
+	main.load_pitch = 0.05
+	var panel70: String = main._panel_text()
+	main.load_pitch = 0.0
+	check(panel70.contains("PITCH +2.9"),
+		"stage70: DIAG surfaces the load pitch (PITCH %+.1f on the panel)" % rad_to_deg(0.05))
+	# the tuck: floored through the standard corner, lift
+	# at s 650 AND unwind the wheel (the driver's input pair),
+	# and the slip must die on the restored bleed + catch.
+	# FP42 AMENDMENT (flagged, probe42c): the first staging
+	# held the wheel pinned at -0.360 past the cut and read
+	# -1 (never tucked). Convicted by probe: at 32 m/s and
+	# full lock the CORNER's own slip floor is ~1.1 deg on any
+	# bleed setting, and the pinned lock walks the car off
+	# the road at +140 frames - the check demanded the
+	# impossible of any catch. Restaged with the unwind: the
+	# shipped tree crosses under 0.6 deg at ~+17 frames
+	# (lat_vel 1.19 -> 0.25 in 20 frames, sign reversed by
+	# +30 - the tail comes back past centre). A/B with
+	# FISHTAIL_CATCH_GAIN zeroed crosses at ~+20 frames
+	# (lat_vel 0.33 at +20): the dominant term is the tax
+	# factor restoring to 1.0 on lift, the catch is margin
+	# on top - this check guards the pair, as shipped.
+	main._set_track("lab")
+	await frames(5)
+	main.debug_warp_to_s(624.0 - 55.0)
+	main.wheel_angle = 0.0
+	main.test_throttle = 0.0
+	var g70: int = 0
+	while main.car_s < 624.0 - 12.0 and g70 < 6000:
+		var fr70: Dictionary = main._frame_at(main.car_s)
+		var fy70: float = main._frame_yaw(fr70["tan"])
+		var sl70: float = atan2(main.lat_vel, maxf(absf(main.speed), 3.0))
+		var des70: float = fy70 + clampf(main.car_lat * 0.12, -0.14, 0.14) + sl70
+		var err70: float = wrapf(des70 - main.car_heading, -PI, PI)
+		main.wheel_angle = clampf(-err70 * 1.6, -1.0, 1.0) * PI
+		main.debug_pin_speed(18.0)
+		await physics_frame
+		g70 += 1
+	main.test_throttle = 1.0
+	var slip_cut70: float = 0.0
+	g70 = 0
+	while g70 < 6000 and main.car_s < 650.0:
+		main.wheel_angle = -0.360
+		await physics_frame
+		g70 += 1
+		if main.mode == main.MODE_DRIVE and absf(main.speed) > 2.0:
+			slip_cut70 = rad_to_deg(atan2(absf(main.lat_vel), absf(main.speed)))
+	main.test_throttle = 0.0
+	var tuck70: int = -1
+	g70 = 0
+	while g70 < 200:
+		main.wheel_angle = 0.0
+		await physics_frame
+		g70 += 1
+		if main.mode == main.MODE_DRIVE and absf(main.speed) > 2.0:
+			if rad_to_deg(atan2(absf(main.lat_vel), absf(main.speed))) < 0.6:
+				tuck70 = g70
+				break
+	print("stage70: slip at the lift %.2f deg, tucked in %d frames" % [slip_cut70, tuck70])
+	check(slip_cut70 >= 1.5 and tuck70 > 0 and tuck70 <= 45,
+		"stage70: the lift tucks the tail on the catch (slip %.2f deg dies under 0.6 in %d frames)" % [slip_cut70, tuck70])
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")
