@@ -1505,6 +1505,12 @@ func _run() -> void:
 	# so the sweep releases, re-grips on the (moved) track
 	# button, and fires again, landing on the circuit as
 	# this stage's evidence expects.
+	# Fix Pass 38 (FLAGGED amendment): the roster grew a
+	# FOURTH track (TRK2, the funlab), so the second firing
+	# now lands on the funlab, one stop short of the
+	# circuit. The stage's subject - the held-grip sweep
+	# firing on zone entry, exactly once per entry - is
+	# unchanged; only the roster's geography moved.
 	check(main.active_track == "lab",
 		"stage11a: the cycle's middle stop is the lab (track %s)" % main.active_track)
 	main.test_grip["R"] = 0.0
@@ -1514,9 +1520,9 @@ func _run() -> void:
 	main.test_grip["R"] = 1.0
 	for ih3a2: int in 2:
 		main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	check(main.active_track == "circuit",
+	check(main.active_track == "funlab",
 		"stage11a: held-grip sweep fires the next control on entry (track %s)" % main.active_track)
-	# The track switch restarted the race on the circuit -
+	# The track switch restarted the race on TRK2 -
 	# the car hangs at a new world pose, so the sweep back
 	# re-reads the VIEW segment from the live car.
 	var view_seg_a2: Array[Vector3] = main._dash_ctl_segment(view_ctl_a)
@@ -1533,10 +1539,11 @@ func _run() -> void:
 		"stage11a: a parked held grip does not re-fire")
 	main.test_grip["R"] = 0.0
 	main._poll_grab("R", main.hand_ctrl["R"], 1.0 / 90.0)
-	# The sweep switched the live track to the circuit; the
-	# rest of this stage (and stage 12+) was authored on the
-	# ribbon - restore it (a track switch restarts the race
-	# into a fresh Drop Start dangle on the ribbon).
+	# The sweep switched the live track onward (FP38: to
+	# TRK2); the rest of this stage (and stage 12+) was
+	# authored on the ribbon - restore it (a track switch
+	# restarts the race into a fresh Drop Start dangle on
+	# the ribbon).
 	# Fix Pass 13 (Item 6): the restart now opens with the
 	# pickup transport; this stage's subject is the fall, so
 	# it takes the setup shortcut to the station dangle.
@@ -6070,9 +6077,13 @@ func _run() -> void:
 	check(absf(main.gap_s0 - float(pieces58[3][1])) <= 1.5 and absf(main.gap_s1 - main.gap_s0 - 28.0) <= 1.5,
 		"stage58: the lab's one gap is piece 4's chasm (%.0f..%.0f)" % [main.gap_s0, main.gap_s1])
 	# The roster cycles circuit -> ribbon -> lab -> circuit.
+	# Fix Pass 38 (FLAGGED amendment): TRK2 appends to the
+	# roster, so the cycle now runs lab -> funlab -> circuit;
+	# the wrap check asserts the new next stop, and stage 66
+	# asserts the funlab -> circuit wrap that closes it.
 	main._cycle_track()
-	check(main.active_track == "circuit",
-		"stage58: the cycle wraps lab -> circuit (track %s)" % main.active_track)
+	check(main.active_track == "funlab",
+		"stage58: the cycle runs lab -> funlab (track %s)" % main.active_track)
 	main._set_track("lab")
 	# Roadside boards: one per piece, text exact.
 	var lab_root58: Node3D = lab58["root"]
@@ -7560,6 +7571,268 @@ func _run() -> void:
 	print("stage65: drop-start launch spin peak %.2f" % spin_drop65)
 	check(spin_drop65 > 0.2,
 		"stage65: the Drop Start launch burns rubber too (spin peak %.2f)" % spin_drop65)
+	main.test_throttle = 0.0
+	main.test_boost = false
+
+	# ---------- stage 66: Fix Pass 38 - TRK2, THE FUNLAB ----
+	# The extremes lab (owner's order, 2026-11-02): a fourth
+	# track appended to the roster - three SURFACE elements
+	# (the loop, the corkscrew, the barrel roll) strung on a
+	# straight test course in the Feature Lab's spirit. Every
+	# expectation below was MEASURED in-pass (the FP38
+	# probes, deleted before the commit) - and where the
+	# physics verdict is that an element does not work, the
+	# stage asserts the measured failure, not a hoped-for
+	# success. The funlab exists to learn exactly this.
+	main._set_track("funlab")
+	main.test_brake = 0.0
+	var fun66: Dictionary = main.track_data["funlab"]
+	var elems66: Array = fun66["features"]["elements"]
+	check(not bool(fun66["closed"]) and elems66.size() == 3,
+		"stage66: TRK2 is an open test course carrying three elements (len %.0f m)" % float(fun66["len"]))
+	# The roster: lab -> funlab -> circuit (stage 58's wrap
+	# check and stage 11a's sweep were amended for the
+	# fourth track, flagged in place).
+	main._set_track("lab")
+	main._cycle_track()
+	check(main.active_track == "funlab",
+		"stage66: the cycle runs lab -> funlab (track %s)" % main.active_track)
+	main._cycle_track()
+	check(main.active_track == "circuit",
+		"stage66: the cycle wraps funlab -> circuit (track %s)" % main.active_track)
+	main._set_track("funlab")
+	# Roadside boards: element name + measured advisory,
+	# text exact against the builder's table.
+	var froot66: Node3D = fun66["root"]
+	var boards_ok66: bool = true
+	for bi66: int in 3:
+		var b66: Node = froot66.get_node_or_null("ElementBoard%d" % (bi66 + 1))
+		if b66 == null:
+			boards_ok66 = false
+			continue
+		var nm66: String = ""
+		var ad66: String = ""
+		for ch66: Node in b66.get_children():
+			if ch66 is Label3D:
+				if (ch66 as Label3D).name == "ElementLabel":
+					nm66 = (ch66 as Label3D).text
+				elif (ch66 as Label3D).name == "AdvisoryLabel":
+					ad66 = (ch66 as Label3D).text
+		if nm66 != String(elems66[bi66][0]) or ad66 != String(elems66[bi66][4]):
+			boards_ok66 = false
+	check(boards_ok66,
+		"stage66: three roadside boards carry the element names and their measured advisories")
+	# The built shape, read off the shipped arrays: the
+	# loop's unwrapped pitch (from the tangents) passes
+	# 180 deg at mid-span and the crown stands ~26 m over
+	# the entry; both rolls are upside down at their
+	# middles and flat again 3 m past their ends.
+	var tan66: Array = fun66["tan"]
+	var phi66: Array = []
+	var prev66: float = 0.0
+	var acc66: float = 0.0
+	for i66: int in tan66.size():
+		var t66: Vector3 = tan66[i66]
+		var a66: float = atan2(t66.y, -t66.z)
+		if i66 == 0:
+			acc66 = a66
+		else:
+			acc66 += wrapf(a66 - prev66, -PI, PI)
+		prev66 = a66
+		phi66.append(rad_to_deg(acc66))
+	var e1_66: Array = elems66[0]
+	var mid1_66: int = int(round((float(e1_66[1]) + float(e1_66[2])) * 0.5))
+	check(absf(float(phi66[mid1_66]) - 180.0) < 6.0,
+		"stage66: the loop's road is inverted at mid-span (pitch %.0f deg)" % float(phi66[mid1_66]))
+	var crown66: float = -1e9
+	for ci66: int in range(int(e1_66[1]), int(e1_66[2]) + 1):
+		crown66 = maxf(crown66, (fun66["pts"][ci66] as Vector3).y)
+	var entry_y66: float = float(main._frame_at(float(e1_66[1]))["pos"].y)
+	check(crown66 - entry_y66 > 25.0,
+		"stage66: the loop's crown stands %.1f m over its entry" % (crown66 - entry_y66))
+	var rolls_ok66: bool = true
+	for ei66: int in [1, 2]:
+		var frm66: Dictionary = main._frame_at((float(elems66[ei66][1]) + float(elems66[ei66][2])) * 0.5)
+		var fre66: Dictionary = main._frame_at(float(elems66[ei66][2]) + 3.0)
+		if absf(absf(rad_to_deg(float(frm66["bank"]))) - 180.0) > 8.0 or absf(rad_to_deg(float(fre66["bank"]))) > 1.0:
+			rolls_ok66 = false
+	check(rolls_ok66,
+		"stage66: both rolls are upside down at their middles and flat past their ends")
+	# Entry states: E1 and E3 from the flat; E2 from its
+	# -6.5 deg descent, unbanked - each element's pinned
+	# state, sampled 5 m before its span.
+	var ent_ok66: bool = true
+	for ei66b: int in 3:
+		var fr_e66: Dictionary = main._frame_at(float(elems66[ei66b][1]) - 5.0)
+		var sl_e66: float = rad_to_deg(asin(clampf((fr_e66["tan"] as Vector3).y, -1.0, 1.0)))
+		var want66: float = -6.5 if ei66b == 1 else 0.0
+		if absf(sl_e66 - want66) > 0.8 or absf(rad_to_deg(float(fr_e66["bank"]))) > 0.5:
+			ent_ok66 = false
+	check(ent_ok66,
+		"stage66: every element is entered from its pinned state (flat / -6.5 deg descent, unbanked)")
+	# Drop Start at TRK2's head and crane recovery mid-
+	# course (stage 58's protocol, on this course).
+	main.debug_set_hang_dangle()
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	check(main.mode == main.MODE_HANG and main.drop_target_s == 2.0,
+		"stage66: Drop Start hangs at TRK2's head (target s %.1f)" % main.drop_target_s)
+	await frames(3)
+	main._do_release()
+	var drop_ok66: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 240)
+	check(drop_ok66, "stage66: TRK2's Drop Start releases into a drive")
+	main.debug_warp_to_s(float(elems66[1][1]) + 10.0)
+	main.debug_force_fall_at(float(elems66[1][1]) + 30.0)
+	var hang_ok66: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 400)
+	check(hang_ok66, "stage66: a mid-course fall is recovered by the crane (mode=%d)" % main.mode)
+	main.debug_set_hang_dangle()
+	await frames(30)
+	main._do_release()
+	var rec_ok66: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 240)
+	check(rec_ok66, "stage66: the recovery releases back into a drive")
+	# ---- the element-drive recorder (probe-faithful) ----
+	# policy: "floor" (pedal down past the mouth), "pin"
+	# (speed held at the entry value the whole way - the
+	# surface isolated from the throttle).
+	var drive66: Callable = func(el: Array, entry_v: float, policy: String, max_frames: int) -> Dictionary:
+		var s0: float = float(el[1])
+		var s1: float = float(el[2])
+		main._set_track("funlab")
+		main.test_brake = 0.0
+		main.test_throttle = 0.0
+		main.test_boost = false
+		main.debug_warp_to_s(maxf(s0 - 60.0, 5.0))
+		var r: Dictionary = {"sep": false, "sep_bank": -1.0, "hung": false,
+			"max_phi": -1.0, "max_bank": -1.0, "max_lat": 0.0, "max_s": -1.0,
+			"exit_v": -1.0, "airs": 0, "done": false, "wedged": false}
+		var prev_mode66: int = main.mode
+		var stall_s66: float = -1.0
+		var stall_n66: int = 0
+		var g66: int = 0
+		while g66 < max_frames:
+			if main.car_s < s0 - 2.0:
+				autopilot_steer(0.0)
+				main.debug_pin_speed(entry_v)
+			else:
+				var fr_q66: Dictionary = main._frame_at(main.car_s)
+				var fold66: float = absf(rad_to_deg(asin(clampf((fr_q66["tan"] as Vector3).y, -1.0, 1.0))))
+				if fold66 < 75.0:
+					autopilot_steer(0.0)
+				else:
+					main.wheel_angle = 0.0
+				if policy == "floor":
+					main.test_throttle = 1.0
+				elif policy == "pin":
+					main.debug_pin_speed(entry_v)
+			await physics_frame
+			g66 += 1
+			var in_span66: bool = main.car_s >= s0 - 1.0 and main.car_s <= s1 + 45.0
+			if in_span66:
+				r["max_s"] = maxf(float(r["max_s"]), main.car_s)
+				r["max_lat"] = maxf(float(r["max_lat"]), absf(main.car_lat))
+				if main.mode == main.MODE_DRIVE:
+					var idx66: int = clampi(int(round(main.car_s)), 0, phi66.size() - 1)
+					r["max_phi"] = maxf(float(r["max_phi"]), float(phi66[idx66]))
+					var fr_b66: Dictionary = main._frame_at(main.car_s)
+					r["max_bank"] = maxf(float(r["max_bank"]), absf(rad_to_deg(float(fr_b66["bank"]))))
+			if main.mode == main.MODE_AIR and prev_mode66 == main.MODE_DRIVE:
+				r["airs"] = int(r["airs"]) + 1
+				if not bool(r["sep"]) and main.car_s >= s0 - 1.0 and main.car_s <= s1 + 1.0:
+					r["sep"] = true
+					var fr_s66: Dictionary = main._frame_at(main.car_s)
+					r["sep_bank"] = rad_to_deg(float(fr_s66["bank"]))
+			if main.mode == main.MODE_HANG:
+				r["hung"] = true
+				break
+			if main.mode == main.MODE_DONE:
+				r["done"] = true
+				break
+			if main.mode == main.MODE_DRIVE and float(r["exit_v"]) < 0.0 and main.car_s > s1:
+				r["exit_v"] = main.speed
+			if main.car_s > s1 + 45.0 and main.mode == main.MODE_DRIVE:
+				break
+			# the wedge detector: in DRIVE, inside the span,
+			# and the car's s has not moved in 300 frames
+			if main.mode == main.MODE_DRIVE and main.car_s >= s0 and main.car_s <= s1:
+				if stall_s66 < 0.0 or absf(main.car_s - stall_s66) > 0.5:
+					stall_s66 = main.car_s
+					stall_n66 = 0
+				else:
+					stall_n66 += 1
+					if stall_n66 >= 300:
+						r["wedged"] = true
+						break
+			else:
+				stall_s66 = -1.0
+				stall_n66 = 0
+			prev_mode66 = main.mode
+		main.test_throttle = 0.0
+		return r
+	# ---- E1: THE LOOP - the measured verdict is a wedge.
+	# Floored at 24 the car climbs the front wall fully
+	# supported and stops dead at the vertical point
+	# (phi ~88 deg, ~20 m in), in DRIVE, at every entry
+	# speed the probes tried (14-42, floored/governed/
+	# coast). It never separates and never falls - the
+	# DRIVE model's horizontal velocity cannot advance
+	# along a vertical road. The assertions encode the
+	# wedge, and the crane extraction that answers it.
+	var r_loop66: Dictionary = await drive66.call(elems66[0], 24.0, "floor", 2400)
+	print("stage66 loop: wedged=%s max_phi=%.1f max_s=%.1f airs=%d hung=%s" % [
+		str(bool(r_loop66["wedged"])), float(r_loop66["max_phi"]), float(r_loop66["max_s"]),
+		int(r_loop66["airs"]), str(bool(r_loop66["hung"]))])
+	check(bool(r_loop66["wedged"]) and not bool(r_loop66["sep"]) and not bool(r_loop66["hung"])
+			and float(r_loop66["max_phi"]) > 75.0 and float(r_loop66["max_phi"]) < 105.0,
+		"stage66: E1 the loop - the car wedges at the vertical (phi %.0f deg), still in DRIVE, never separated" % float(r_loop66["max_phi"]))
+	main._call_crane()
+	var whang66: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 900)
+	check(whang66, "stage66: E1 the loop - the crane extracts the wedged car (no soft-lock)")
+	main.debug_set_hang_dangle()
+	main.pend_th_f = 0.0
+	main.pend_th_l = 0.0
+	main.pend_om_f = 0.0
+	main.pend_om_l = 0.0
+	await frames(3)
+	main._do_release()
+	var wrel66: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 400)
+	check(wrel66 and main.car_s < float(elems66[0][1]),
+		"stage66: E1 the loop - the extraction drops the car back on the flat (s %.0f)" % main.car_s)
+	# ---- E2: THE CORKSCREW - supported deep into the
+	# roll, lost sideways ~15 deg short of inverted.
+	# Held at its 20 pin (the furthest line the probes
+	# measured) the car separates at bank ~165-168 and
+	# the crane finishes it; the assertions leave the
+	# measured band room on both sides.
+	var r_cork66: Dictionary = await drive66.call(elems66[1], 20.0, "pin", 4000)
+	print("stage66 corkscrew: sep=%s sep_bank=%.1f max_bank=%.1f hung=%s exit_v=%.1f" % [
+		str(bool(r_cork66["sep"])), float(r_cork66["sep_bank"]), float(r_cork66["max_bank"]),
+		str(bool(r_cork66["hung"])), float(r_cork66["exit_v"])])
+	check(bool(r_cork66["sep"]) and bool(r_cork66["hung"]) and float(r_cork66["sep_bank"]) > 140.0
+			and float(r_cork66["max_bank"]) > 150.0,
+		"stage66: E2 the corkscrew - held at 20 it is carried to bank %.0f deg and lost sideways short of inverted (the crane finishes it)" % float(r_cork66["sep_bank"]))
+	# ---- E3: THE BARREL ROLL - completes, with its toss.
+	# Floored at 30 (the probes' band ran 20-48, all
+	# completing): at least one air episode (the exit
+	# untwist unloads every patch together), no crane,
+	# and an exit under power.
+	var r_bar66: Dictionary = await drive66.call(elems66[2], 30.0, "floor", 3000)
+	print("stage66 barrel: sep=%s airs=%d max_lat=%.1f hung=%s exit_v=%.1f" % [
+		str(bool(r_bar66["sep"])), int(r_bar66["airs"]), float(r_bar66["max_lat"]),
+		str(bool(r_bar66["hung"])), float(r_bar66["exit_v"])])
+	check(not bool(r_bar66["hung"]) and float(r_bar66["exit_v"]) > 0.0 and int(r_bar66["airs"]) >= 1
+			and float(r_bar66["max_lat"]) < 6.9,
+		"stage66: E3 the barrel roll - completes floored at 30 with its toss, never near the 7.17 fall line (airs %d, exit %.0f m/s, max lat %.1f m)" % [
+			int(r_bar66["airs"]), float(r_bar66["exit_v"]), float(r_bar66["max_lat"])])
+	# ---- the finish: the last element's run-out crosses
+	# the course's end under power (pinned 26, the held
+	# line) and the race completes on TRK2. (The recorder
+	# is aimed at the track's end, not the element's.)
+	var fin66: Array = ["FINISH", elems66[2][1], float(fun66["len"]) - 1.0, 26.0, ""]
+	var r_fin66: Dictionary = await drive66.call(fin66, 26.0, "pin", 4000)
+	check(bool(r_fin66["done"]),
+		"stage66: TRK2's finish - the barrel run-out crosses the course end and the race completes")
 	main.test_throttle = 0.0
 	main.test_boost = false
 
