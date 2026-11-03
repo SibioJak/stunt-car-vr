@@ -1421,7 +1421,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP36 · 2026-11-02"
+const BUILD_STAMP: String = "FP37 · 2026-11-02"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -1919,20 +1919,34 @@ var _cir_start: Vector3 = Vector3.ZERO
 
 
 func _build_circuit() -> Dictionary:
-	# Fix Pass 10 (Item 3): THE MOUNTAIN CIRCUIT. A closed loop
-	# built from the same generator vocabulary as the ribbon,
-	# to the owner's geography: "huge tall ramps, massive dips,
-	# big swinging curves, some straightaways." One signature
-	# climb (+70 m), one massive dip (~50 m down to a valley and
-	# back out), four long banked swinging curves (radii
-	# 100-140 m, both directions), two straightaways >= 350 m,
-	# the 14 m gap and the five-hump row carried over at their
-	# FP7/FP8 shapes. Total heading change is exactly 360 deg
-	# by construction (each curve's yaw rate is its total angle
-	# over its step count); elevation and plan closure are
-	# SOLVED on the tail (return-straight length / pitch and
-	# the last curve's radius are continuous variables trimmed
-	# by a Newton iteration, see _solve_circuit_tail).
+	# Fix Pass 37: TRACK 01 - THE FIRST REAL CIRCUIT. The
+	# FP10 mountain circuit is REPLACED in slot 1 (the
+	# owner's order, 2026-11-02): a closed desert circuit
+	# assembled from the proven stock per the prototype-
+	# first method - every sector is a Feature Lab /
+	# ribbon / old-circuit piece that has already been
+	# driven - plus the owner's explicit additions built
+	# as first-class pieces: STEEP CLIMBS and STEEP
+	# DESCENTS at genuine grades (THE WALL +20 deg, THE
+	# DIVE -18 deg, THE ESCALATOR +17 deg, the staircase
+	# at -22 deg). Standing track law holds: NO REST
+	# SECTIONS (the straights are taxed - a hump in the
+	# opening, edge markers + bank sway on the Edge Run,
+	# bank sway + a hump on the tail's return), honest
+	# sightlines, and the lab's sequencing law (a piece's
+	# touchdown, rebound and settled run complete before
+	# the next piece begins - the valley hump's rebound
+	# used to land inside the S; the Dive's 55 m settle
+	# is that fix). Closure is SOLVED on the tail exactly
+	# as FP10 did it (return-straight length / hold pitch
+	# / closing-hairpin radius are the continuous
+	# variables); the head layout was iterated against a
+	# replica of this generator until the solver landed
+	# mid-range on all three (lr ~228 m, phi_h ~-0.4 deg,
+	# R_e ~118 m, residual ~0.003 m). Sector spans land
+	# in features["sectors"] as [name, s0, s1] - the
+	# README's sector table and the stage-49 census are
+	# derived from the same numbers.
 	var root := Node3D.new()
 	root.name = "TrackCircuit"
 	add_child(root)
@@ -1949,84 +1963,251 @@ func _build_circuit() -> Dictionary:
 	_gen_append(false, 0.0)
 	var feats: Dictionary = {}
 	var curves: Array = []
-	# S1: home straight
-	_walk(380, 0.0, 0.0, 0.0, false)
-	feats["home_len"] = 380.0
-	# S2: curve A - left, the long opening sweeper (R~244),
-	# tipping the lap westward and gently down toward the dip
-	var a_s0: float = float(b_pts.size() - 1)
-	_walk(340, deg_to_rad(80.0) / 340.0, deg_to_rad(-2.0), deg_to_rad(26.0), false)
-	_walk(3, 0.0, deg_to_rad(-2.0), 0.0, false, 0.006, 0.03)
-	_walk(17, 0.0, deg_to_rad(-2.0), 0.0, false, 0.006, 0.075)
-	curves.append([a_s0, float(b_pts.size() - 1), 1.0, 340.0 / deg_to_rad(80.0)])
-	# S3-S4: THE DIP - a long descent to a valley floor, then flat
-	var dip_s0: float = float(b_pts.size() - 1)
-	_walk(180, 0.0, deg_to_rad(-16.0), 0.0, false)
-	_walk(90, 0.0, 0.0, 0.0, false)
-	feats["dip_s0"] = dip_s0
+	var sectors: Array = []
+	var s_mark: float = 0.0
+	# T1: THE OPENING - the Drop Start flat, one FP8
+	# hump at s 220 (the launch straight is taxed from
+	# the first lap: at audit pace it flies ~1 s), a
+	# short flat to the first corner. The flat windows
+	# the suite's launch fixtures stage on are s 2..~150.
+	# The opening's length is also the layout's depth
+	# trim: it sets the tail's return-straight length.
+	_walk(220, 0.0, 0.0, 0.0, false)
+	_walk(13, 0.0, deg_to_rad(11.0), 0.0, false, 0.016)
+	_walk(19, 0.0, deg_to_rad(-11.0), 0.0, false, 0.021)
+	_walk(13, 0.0, 0.0, 0.0, false, 0.016)
+	_walk(20, 0.0, 0.0, 0.0, false)
+	sectors.append(["T1 THE OPENING", 0.0, float(b_pts.size() - 1)])
+	feats["open_len"] = 285.0
+	# T2: THE FLAIR - left sweeper R~185 at the old
+	# circuit's bank (26 deg) with the house shaped
+	# unwind at the exit: the falling (right) side
+	# catches air across the unwind (stage 51 stages
+	# the flair here now).
+	s_mark = float(b_pts.size() - 1)
+	_walk(290, deg_to_rad(90.0) / 290.0, 0.0, deg_to_rad(26.0), false)
+	curves.append([s_mark, float(b_pts.size() - 1), 1.0, 290.0 / deg_to_rad(90.0)])
+	_walk(3, 0.0, 0.0, 0.0, false, 0.006, 0.03)
+	_walk(17, 0.0, 0.0, 0.0, false, 0.006, 0.075)
+	sectors.append(["T2 THE FLAIR", s_mark, float(b_pts.size() - 1)])
+	# T2b: FIRST CREST - a +12 deg launch (the lab P3
+	# shape at its gentlest, slope-matched).
+	s_mark = float(b_pts.size() - 1)
+	_walk(30, 0.0, deg_to_rad(12.0), 0.0, false, 0.030)
+	_walk(30, 0.0, deg_to_rad(-12.0), 0.0, false, 0.045)
+	_walk(20, 0.0, 0.0, 0.0, false, 0.020)
+	sectors.append(["T2b FIRST CREST", s_mark, float(b_pts.size() - 1)])
+	# T3: THE DIVE - a STEEP DESCENT: -18 deg sustained
+	# for 170 m (~55 m given back to the valley floor),
+	# a flatten, one FP8 hump on the floor, and a LONG
+	# settle (55 m) so the hump's touchdown + rebound +
+	# settled run all complete on the flat before the
+	# S begins (the lab's sequencing law).
+	s_mark = float(b_pts.size() - 1)
+	feats["dip_s0"] = s_mark
+	_walk(170, 0.0, deg_to_rad(-18.0), 0.0, false, 0.010)
+	_walk(20, 0.0, 0.0, 0.0, false, 0.010)
 	feats["dip_s1"] = float(b_pts.size() - 1)
-	# S5: climb out of the valley
-	_walk(140, 0.0, deg_to_rad(13.0), 0.0, false)
-	# S6: mid straight (second >= 350 m straightaway)
-	_walk(350, 0.0, deg_to_rad(2.0), 0.0, false)
-	feats["mid_len"] = 350.0
-	# S7: curve B - left HAIRPIN (R~108): the lap turns back
-	# east for the climb side
-	var b_s0: float = float(b_pts.size() - 1)
-	_walk(340, deg_to_rad(180.0) / 340.0, deg_to_rad(3.0), deg_to_rad(26.0), false)
-	_walk(3, 0.0, deg_to_rad(3.0), 0.0, false, 0.006, 0.03)
-	_walk(17, 0.0, deg_to_rad(3.0), 0.0, false, 0.006, 0.075)
-	curves.append([b_s0, float(b_pts.size() - 1), 1.0, 340.0 / deg_to_rad(180.0)])
-	# S8: link
-	_walk(35, 0.0, 0.0, 0.0, false)
-	# S9: THE SIGNATURE CLIMB - 240 m at up to +17.5 deg (~+70 m)
-	feats["climb_s0"] = float(b_pts.size() - 1)
-	_walk(235, 0.0, deg_to_rad(17.5), 0.0, false)
+	_walk(13, 0.0, deg_to_rad(11.0), 0.0, false, 0.016)
+	_walk(19, 0.0, deg_to_rad(-11.0), 0.0, false, 0.021)
+	_walk(13, 0.0, 0.0, 0.0, false, 0.016)
+	_walk(55, 0.0, 0.0, 0.0, false)
+	sectors.append(["T3 THE DIVE", s_mark, float(b_pts.size() - 1)])
+	# T4: THE OFF-CAMBER S - the lab P5 piece's family
+	# at R~85 (ADVERSE bank +-10 deg each way): right
+	# then left on the valley floor. The circuit
+	# instance is sized by two convictions from the
+	# feasibility drive, not by the lab's dimensions:
+	# the lab's 70 deg sweep at racing pace runs off
+	# (camber pull ~1.7 m/s^2 on top of a cornering
+	# demand that already spends the grip budget at
+	# the curvature cap - lat bled to -4 inside 50 m,
+	# off at s ~998); and at 40 deg per arc the first
+	# arc's slide (-4.6 at the link) still killed the
+	# second: the 18 m link let the driver recover
+	# POSITION but not lateral VELOCITY, and the
+	# reversal threw the car off at s 1085 carrying
+	# ~9 m/s sideways. So: 30 deg per arc (the slide
+	# peaks near -2.7) and a 55 m settle link between
+	# them, where the lateral velocity dies before
+	# the second arc asks its question. The lab keeps
+	# the full piece as the library original.
+	s_mark = float(b_pts.size() - 1)
+	var s4a: float = s_mark
+	_walk(45, -deg_to_rad(30.0) / 45.0, 0.0, deg_to_rad(10.0), false, 0.006, 0.020)
+	curves.append([s4a, float(b_pts.size() - 1), -1.0, 45.0 / deg_to_rad(30.0)])
+	_walk(55, 0.0, 0.0, 0.0, false, 0.006, 0.060)
+	var s4b: float = float(b_pts.size() - 1)
+	_walk(45, deg_to_rad(30.0) / 45.0, 0.0, deg_to_rad(-10.0), false, 0.006, 0.020)
+	curves.append([s4b, float(b_pts.size() - 1), 1.0, 45.0 / deg_to_rad(30.0)])
+	_walk(18, 0.0, 0.0, 0.0, false, 0.006, 0.060)
+	sectors.append(["T4 OFF-CAMBER S", s_mark, float(b_pts.size() - 1)])
+	# T5: THE WALL - the signature STEEP CLIMB: +20 deg
+	# sustained for 170 m (~+60 m of gain; the engine's
+	# 16 m/s^2 against the slope's 3.4 m/s^2 of gravity
+	# component, so it tops at pace with room - stage
+	# 19's laps are the proof), then a LONG soft crest
+	# flatten (0.008/m - stage 51's climb-top load band
+	# is measured across it).
+	s_mark = float(b_pts.size() - 1)
+	feats["climb_s0"] = s_mark
+	_walk(170, 0.0, deg_to_rad(20.0), 0.0, false, 0.010)
 	feats["climb_s1"] = float(b_pts.size() - 1)
-	# S10: shelf, then the carried-over lip + 14 m gap + landing
-	_walk(25, 0.0, 0.0, 0.0, false)
+	_walk(45, 0.0, 0.0, 0.0, false, 0.008)
+	sectors.append(["T5 THE WALL", s_mark, float(b_pts.size() - 1)])
+	# T6: THE EDGE RUN - 110 m of flat taxed by the lab
+	# P7 discipline: marker blocks ON the edge line
+	# (the furniture below) and a gentle +-4 deg bank
+	# sway in ~45 m chunks. Its length is also the
+	# layout's west trim against the tail solver.
+	s_mark = float(b_pts.size() - 1)
+	feats["edge_s0"] = s_mark
+	var sway6: Array = [[45, 4.0], [45, -4.0], [20, 0.0]]
+	for ci6: int in sway6.size():
+		_walk(int(sway6[ci6][0]), 0.0, 0.0, deg_to_rad(float(sway6[ci6][1])), false)
+	feats["edge_s1"] = float(b_pts.size() - 1)
+	sectors.append(["T6 THE EDGE RUN", s_mark, float(b_pts.size() - 1)])
+	# T7: THE CHASM - the lab P4 piece: a flat settle,
+	# the shaped +10 lip, 28 m of air at +2 deg, the
+	# -3.4 landing straight, then the road CLIMBS away
+	# (+8 deg) so a rebound's second flight is measured
+	# against rising ground (stage 35's stage).
+	s_mark = float(b_pts.size() - 1)
+	_walk(30, 0.0, 0.0, 0.0, false)
 	_walk(2, 0.0, deg_to_rad(10.0), 0.0, false, 0.012, 0.10)
 	_walk(8, 0.0, deg_to_rad(10.0), 0.0, false, 0.034, 0.10)
 	feats["gap_s0"] = float(b_pts.size())
-	_walk(14, 0.0, deg_to_rad(2.0), 0.0, true, 0.020)
+	_walk(28, 0.0, deg_to_rad(2.0), 0.0, true, 0.020)
 	feats["gap_s1"] = float(b_pts.size())
 	feats["gap2_s0"] = feats["gap_s0"]
 	feats["gap2_s1"] = feats["gap_s1"]
 	_walk(40, 0.0, deg_to_rad(-3.4), 0.0, false, 0.020)
-	# S11: the five-hump row, carried over at FP8's shape on a
-	# descending base (climb in +3, over the top to -19, out at
-	# the -8 base - the same 22-degree sweep per hump)
-	feats["ext_s0"] = float(b_pts.size() - 1)
+	_walk(55, 0.0, deg_to_rad(8.0), 0.0, false, 0.012)
+	sectors.append(["T7 THE CHASM", s_mark, float(b_pts.size() - 1)])
+	# T8: THE WEST HAIRPIN - left 180 deg at R~40,
+	# banked 24: the lap's slow corner, turning the
+	# course back east along the ridge.
+	s_mark = float(b_pts.size() - 1)
+	_walk(126, deg_to_rad(180.0) / 126.0, 0.0, deg_to_rad(24.0), false)
+	curves.append([s_mark, float(b_pts.size() - 1), 1.0, 126.0 / deg_to_rad(180.0)])
+	_walk(3, 0.0, 0.0, 0.0, false, 0.006, 0.03)
+	_walk(17, 0.0, 0.0, 0.0, false, 0.006, 0.075)
+	sectors.append(["T8 WEST HAIRPIN", s_mark, float(b_pts.size() - 1)])
+	# T9: CREST LAUNCHES - the lab P3 pair (+14, +20),
+	# each slope-matched, a settle between them.
+	s_mark = float(b_pts.size() - 1)
+	_walk(40, 0.0, deg_to_rad(14.0), 0.0, false, 0.030)
+	_walk(40, 0.0, deg_to_rad(-14.0), 0.0, false, 0.055)
+	_walk(25, 0.0, 0.0, 0.0, false, 0.020)
+	_walk(40, 0.0, deg_to_rad(20.0), 0.0, false, 0.030)
+	_walk(40, 0.0, deg_to_rad(-20.0), 0.0, false, 0.055)
+	_walk(30, 0.0, 0.0, 0.0, false, 0.020)
+	sectors.append(["T9 CREST LAUNCHES", s_mark, float(b_pts.size() - 1)])
+	# T10: DRUMBEAT RIDGE - the FP8 hump row verbatim
+	# (five flat-based humps + the settle: the 245 m
+	# span stages 20/26 drive at pins 24 and 48).
+	s_mark = float(b_pts.size() - 1)
+	feats["ext_s0"] = s_mark
 	for hump: int in 5:
-		_walk(13, 0.0, deg_to_rad(3.0), 0.0, false, 0.016)
-		_walk(19, 0.0, deg_to_rad(-19.0), 0.0, false, 0.021)
-		_walk(13, 0.0, deg_to_rad(-8.0), 0.0, false, 0.016)
-	_walk(20, 0.0, deg_to_rad(-8.0), 0.0, false)
+		_walk(13, 0.0, deg_to_rad(11.0), 0.0, false, 0.016)
+		_walk(19, 0.0, deg_to_rad(-11.0), 0.0, false, 0.021)
+		_walk(13, 0.0, 0.0, 0.0, false, 0.016)
+	_walk(20, 0.0, 0.0, 0.0, false)
 	feats["hump_s1"] = float(b_pts.size() - 1)
-	# S12: curve C - right, the long return sweeper (R~236),
-	# descending, setting the lap due south for the tail
-	var c_s0: float = float(b_pts.size() - 1)
-	_walk(330, -deg_to_rad(80.0) / 330.0, deg_to_rad(-7.0), deg_to_rad(-26.0), false)
-	_walk(3, 0.0, deg_to_rad(-7.0), 0.0, false, 0.006, 0.03)
-	_walk(17, 0.0, deg_to_rad(-7.0), 0.0, false, 0.006, 0.075)
-	curves.append([c_s0, float(b_pts.size() - 1), -1.0, 330.0 / deg_to_rad(80.0)])
+	sectors.append(["T10 DRUMBEAT RIDGE", s_mark, float(b_pts.size() - 1)])
+	# T11: COMPRESSION -> REBOUND - the lab P6 piece
+	# verbatim, then its settles.
+	s_mark = float(b_pts.size() - 1)
+	_walk(25, 0.0, deg_to_rad(-14.0), 0.0, false, 0.030)
+	_walk(10, 0.0, 0.0, 0.0, false, 0.030)
+	_walk(25, 0.0, deg_to_rad(14.0), 0.0, false, 0.030)
+	_walk(12, 0.0, deg_to_rad(-8.0), 0.0, false, 0.045)
+	_walk(30, 0.0, 0.0, 0.0, false, 0.020)
+	_walk(20, 0.0, 0.0, 0.0, false)
+	sectors.append(["T11 COMPRESSION-REBOUND", s_mark, float(b_pts.size() - 1)])
+	# T12: THE STAIRCASE down (the ribbon's piece: six
+	# -22 deg steps, ~-11 m), a flat run, then THE
+	# ESCALATOR - the second STEEP CLIMB, +17 deg for
+	# 100 m - cresting off SHARP (0.030/m), so the top
+	# of the climb is itself a launch at pace, and a
+	# 40 m settle so its flight completes before the
+	# sweeper (the sequencing law again).
+	s_mark = float(b_pts.size() - 1)
+	feats["stairs_s0"] = s_mark
+	for step_i: int in 6:
+		_walk(5, 0.0, deg_to_rad(-22.0), 0.0, false, 0.077)
+		_walk(6, 0.0, 0.0, 0.0, false, 0.077)
+	feats["stairs_s1"] = float(b_pts.size() - 1)
+	_walk(25, 0.0, 0.0, 0.0, false, 0.020)
+	_walk(100, 0.0, deg_to_rad(17.0), 0.0, false, 0.008)
+	_walk(30, 0.0, 0.0, 0.0, false, 0.030)
+	_walk(40, 0.0, 0.0, 0.0, false, 0.020)
+	sectors.append(["T12 STAIRCASE + ESCALATOR", s_mark, float(b_pts.size() - 1)])
+	# T13: THE LONG RIGHT HOME - right sweeper R~100
+	# at -26 deg bank, DESCENDING at -9 deg (a steep
+	# descent with the wheel turned - its grade also
+	# sheds the lap's accumulated elevation so the
+	# tail solver's hold pitch stays off its clamp),
+	# the shaped unwind at its exit.
+	s_mark = float(b_pts.size() - 1)
+	_walk(158, -deg_to_rad(90.0) / 158.0, deg_to_rad(-9.0), deg_to_rad(-26.0), false)
+	curves.append([s_mark, float(b_pts.size() - 1), -1.0, 158.0 / deg_to_rad(90.0)])
+	_walk(3, 0.0, 0.0, 0.0, false, 0.012, 0.03)
+	_walk(17, 0.0, 0.0, 0.0, false, 0.012, 0.075)
+	sectors.append(["T13 THE LONG RIGHT HOME", s_mark, float(b_pts.size() - 1)])
+	# T14: THE LAST HUMP - the approach to the tail is
+	# taxed too: one FP8 hump between two links, on
+	# the run south to the return straight.
+	s_mark = float(b_pts.size() - 1)
+	_walk(15, 0.0, 0.0, 0.0, false)
+	_walk(13, 0.0, deg_to_rad(11.0), 0.0, false, 0.016)
+	_walk(19, 0.0, deg_to_rad(-11.0), 0.0, false, 0.021)
+	_walk(13, 0.0, 0.0, 0.0, false, 0.016)
+	_walk(15, 0.0, 0.0, 0.0, false)
+	sectors.append(["T14 THE LAST HUMP", s_mark, float(b_pts.size() - 1)])
+	# T15: THE TAIL - solver territory (return straight
+	# -> closing left hairpin), FP10's machinery; the
+	# return straight carries the bank sway and its own
+	# hump (see _gen_circuit_tail). Its figures land in
+	# features["tail"].
+	feats["tail_s0"] = float(b_pts.size() - 1)
+	feats["sectors"] = sectors
 	feats["curves"] = curves
 	feats["sweeper_s0"] = -1.0
 	feats["sweeper_s1"] = -1.0
-	feats["stairs_s0"] = -1.0
-	feats["stairs_s1"] = -1.0
-	# S13-S15: the solver tail (return straight -> curve D ->
-	# curve E unwinding its bank onto the seam)
 	var snap: Array = [_gen_pos, _gen_yaw, _gen_phi, _gen_bank,
 		b_pts.size(), b_tan.size(), b_bank.size(), b_curv.size(), b_gap.size()]
 	var sol: Array = _solve_circuit_tail(snap)
 	feats["tail"] = [sol[0], sol[1], sol[2]]
 	feats["closure_err_m"] = sol[3]
+	curves.append([float(feats["tail_s0"]) + sol[0], float(b_pts.size() - 1), 1.0, sol[2]])
+	sectors.append(["T15 THE TAIL", float(feats["tail_s0"]), float(b_pts.size() - 1)])
 	var d: Dictionary = _finalize_track(true, feats)
 	d["root"] = root
 	_activate_track(d)
 	_build_track_meshes(d)
+	_build_circuit_furniture(root, feats)
 	return d
+
+
+func _build_circuit_furniture(root: Node3D, feats: Dictionary) -> void:
+	# Fix Pass 37: Track 01's furniture - the Edge Run's
+	# marker blocks: bright blocks ON the surface at the
+	# edge line (lat +/-5.85), alternating every 30 m -
+	# the lab P7 construction carried to the circuit.
+	# Thread one closely and the outside wheels ride
+	# into the straddle zone.
+	var e0: float = float(feats["edge_s0"])
+	var e1: float = float(feats["edge_s1"])
+	var mk: int = 0
+	var s_m: float = e0 + 15.0
+	while s_m < e1 - 10.0:
+		var frm: Dictionary = _frame_at(s_m)
+		var lat_m: float = 5.85 if mk % 2 == 0 else -5.85
+		var pos_m: Vector3 = Vector3(frm["pos"]) + Vector3(frm["side"]) * lat_m + Vector3(frm["up"]) * 0.31
+		_box(root, Vector3(0.55, 0.6, 0.55), pos_m, _mat_unshaded(Color(1.0, 0.72, 0.10)), "EdgeMarker%d" % mk)
+		mk += 1
+		s_m += 30.0
 
 
 
@@ -2346,7 +2527,36 @@ func _gen_circuit_tail(snap: Array, lr: float, phi_h: float, r_e: float) -> Vect
 	# phi_h over 45 m, holds for the rest of lr, ramps to 0
 	var phi_s: float = _gen_phi
 	_walkf(45.0, 0.0, phi_h, 0.0, false, absf(phi_h - phi_s) / 45.0)
-	_walkf(maxf(lr - 90.0, 0.0), 0.0, phi_h, 0.0, false)
+	# Fix Pass 37: the hold is TAXED twice over - an
+	# alternating bank sway (+-4 deg in ~45 m chunks,
+	# the Edge Run's discipline), and 90 m in, one FP8
+	# hump flown on the hold pitch, so Track 01's run
+	# home pays air like every other sector and is not
+	# a rest section. Bank never enters the position
+	# integration; the hump's pitch path IS part of the
+	# solved geometry (its net elevation is ~0 and
+	# phi_h absorbs the residue - the layout replica
+	# the head was iterated against models it exactly).
+	var hold_left: float = maxf(lr - 90.0, 0.0)
+	var sway_i: int = 0
+	var to_hump: float = minf(90.0, hold_left)
+	while to_hump > 0.01:
+		var chunk_s: float = minf(45.0, to_hump)
+		_walkf(chunk_s, 0.0, phi_h, deg_to_rad(4.0) if sway_i % 2 == 0 else deg_to_rad(-4.0), false)
+		to_hump -= chunk_s
+		hold_left -= chunk_s
+		sway_i += 1
+	var hump_steps: Array = [[13.0, deg_to_rad(11.0), 0.016], [19.0, deg_to_rad(-11.0), 0.021], [13.0, 0.0, 0.016]]
+	for hs: Array in hump_steps:
+		var take_h: float = minf(float(hs[0]), hold_left)
+		if take_h > 0.001:
+			_walkf(take_h, 0.0, phi_h + float(hs[1]), 0.0, false, float(hs[2]))
+			hold_left -= take_h
+	while hold_left > 0.01:
+		var chunk_t: float = minf(45.0, hold_left)
+		_walkf(chunk_t, 0.0, phi_h, deg_to_rad(4.0) if sway_i % 2 == 0 else deg_to_rad(-4.0), false)
+		hold_left -= chunk_t
+		sway_i += 1
 	_walkf(45.0, 0.0, 0.0, 0.0, false, absf(phi_h) / 45.0)
 	# curve E - the closing HAIRPIN, left 180 deg at the
 	# solver radius; its bank unwinds over the final 20 m so
