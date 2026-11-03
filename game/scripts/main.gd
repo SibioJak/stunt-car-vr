@@ -1612,7 +1612,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP42 · 2026-11-03"
+const BUILD_STAMP: String = "FP43 · 2026-11-03"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -2893,6 +2893,20 @@ func _build_funlab() -> Dictionary:
 	#     360 deg over 52 m of flat: one quick twist at
 	#     racing pace, distinct from the corkscrew's
 	#     sustained roll.
+	# Fix Pass 43: THE FUNLAB REBUILD (the owner's FP41
+	# field verdicts). E1 rebuilt at the base (eased
+	# joins, tangent entry/exit - see the walk below);
+	# E2 rebuilt as a TRUE HELIX (the FP38 text above
+	# called the old straight-centreline roll "a
+	# sustained helix" - it was not one, and FP41's
+	# quarter-turn ruling is what a straight centreline
+	# earns; see _build_helix); and a fourth element
+	# joins the roster:
+	#   E4 THE WALL-RIDE - a full 360 deg turn at a
+	#     constant 55 deg of bank, R 28 m: the road as a
+	#     wall that rejoins its own entry line. A
+	#     prototype (the lab is the piece library; pieces
+	#     are judged here before any circuit use).
 	# Element spans land in features["elements"] as
 	# [name, s0, s1, entry_speed, advisory] - stage 66
 	# drives and audits against them, the boards carry the
@@ -2917,47 +2931,114 @@ func _build_funlab() -> Dictionary:
 	# every track) - 110 m of runup and settle.
 	_walk(110, 0.0, 0.0, 0.0, false)
 	# --- E1: THE LOOP ------------------------------------
-	# phi walks 0 -> 360 deg at a constant TAU/82 per
-	# metre: a regular 82-gon, which closes EXACTLY (the
-	# 82 step vectors are roots of unity - they sum to
-	# zero; modelled before it was built, residual
-	# 0.0000 m), radius 1/(2 sin(pi/82)) ~ 13.05 m, crown
-	# 26.1 m over the entry. phi's target is exactly TAU
-	# so the exit tangent is exactly level; _gen_phi then
-	# resets to 0 (the same angle, unwound) so the walks
-	# that follow target level honestly.
+	# Fix Pass 43 (Item 1): THE LOOP, REBUILT AT THE BASE.
+	# The FP38 ring was a regular 82-gon: exact closure,
+	# but its curvature STEPPED 0 -> 1/R at both joins,
+	# and FP41 measured what the steps cost - the FP14
+	# rebound throw fires at them, and the held 16-20
+	# band went around only to be thrown off the front
+	# wall at the exit join. The owner's seat verdict:
+	# "doesn't have correct entry, exit point." The Hot
+	# Wheels census (research/hot-wheels: hw1/2/5/6) says
+	# why the toy reads right: every HW loop is TANGENT
+	# AT ITS BASE - entry and exit are the same straight.
+	# The rebuild keeps that topology and eases the
+	# joins: the per-step turn follows an index-symmetric
+	# smoothstep profile (ramps over the first and last
+	# 12% of the ring's 92 steps, plateau between),
+	# normalized so the steps sum to exactly TAU. Index
+	# symmetry makes the exit land EXACTLY on the entry
+	# line - same height, same lateral, same heading (the
+	# pairing telescopes; modelled in the pass's offline
+	# prototype before it was built) - a measured ~11 m
+	# past the entry point: the ring's base chord, the
+	# span a clothoid loop's bottom covers. Plateau
+	# radius 12.9 m, crown 26.0 m over the base, and the
+	# largest per-step curvature change ~0.010 rad
+	# against the 82-gon's 0.0765 step. phi's per-step
+	# targets ARE the profile's cumulative angles (the
+	# 0.09 step rate clears the plateau's 0.0776, so phi
+	# lands on each target exactly); _gen_phi then
+	# resets to 0 (TAU unwound), as before.
 	var e1_s0: float = float(b_pts.size() - 1)
-	_walk(82, 0.0, TAU, 0.0, false, TAU / 82.0)
+	var n1_43: int = 92
+	var w1_43: Array[float] = []
+	var sum1_43: float = 0.0
+	for j1_43: int in range(1, n1_43 + 1):
+		var u1_43: float = (float(j1_43) - 0.5) / float(n1_43)
+		var e1u_43: float = clampf((u1_43 if u1_43 < 0.5 else 1.0 - u1_43) / 0.12, 0.0, 1.0)
+		var wj1_43: float = maxf(e1u_43 * e1u_43 * (3.0 - 2.0 * e1u_43), 0.000001)
+		w1_43.append(wj1_43)
+		sum1_43 += wj1_43
+	var th1_43: float = 0.0
+	for j1b_43: int in n1_43:
+		th1_43 += TAU * w1_43[j1b_43] / sum1_43
+		_gen_step(1.0, 0.0, th1_43, 0.0, false, 0.09, 0.012)
 	_gen_phi = 0.0
-	elements.append(["E1 THE LOOP", e1_s0, float(b_pts.size() - 1), 24.0, "CLEAN 22+ OR FLOORED - UNDER 12 THE CROWN LETS GO"])
+	elements.append(["E1 THE LOOP", e1_s0, float(b_pts.size() - 1), 24.0, "CLEAN 18+ OR FLOORED - 16 COMES OFF AT THE TOP"])
 	# Run-out: 120 m of flat - a failed loop needs room to
 	# land, be craned, and be re-taken.
 	_walk(120, 0.0, 0.0, 0.0, false)
 	# --- E2: THE CORKSCREW -------------------------------
 	# Run-in: pitch ramps to -6.5 deg over 20 m and holds
-	# 10 m, so the roll is entered already descending and
-	# settled. The roll: bank 0 -> 360 deg over 160 m -
-	# 10 m at half rate (TAU/300 per m), 140 m at full
-	# rate (TAU/150 per m), 10 m at half rate, targets
-	# cumulative with the last exactly TAU, so the bank
-	# lands exactly flat. The roll drops ~18 m on its
-	# descent. _gen_bank resets to 0 (the same angle,
-	# unwound).
-	_walk(20, 0.0, deg_to_rad(-6.5), 0.0, false, deg_to_rad(6.5) / 20.0)
-	_walk(10, 0.0, deg_to_rad(-6.5), 0.0, false)
+	# 10 m, so the element is entered already descending
+	# and settled - the helix's axis IS that settled
+	# tangent.
+	# Fix Pass 43 (Item 2): THE CORKSCREW, REBUILT AS A
+	# TRUE HELIX. The FP38/FP41 piece rolled the road
+	# around a STRAIGHT centreline, and FP41's ruling was
+	# final: on a straight centreline the road-frame
+	# normal force is g*cos(bank) - spent at the quarter-
+	# turn, no speed term exists, the car lets go at
+	# bank ~92 at every speed. The owner's seat verdict:
+	# "doesn't have any stick, not gonna work." The form
+	# that holds is the one Mattel's Mega Garage tower
+	# (research/hot-wheels hw3) is built on: the path
+	# itself spirals, so the car's direction keeps
+	# rotating and the PATH supplies the holding force.
+	# _build_helix lays it: centreline a helix of orbit
+	# radius 5 m about the entry axis, advancing 10 m of
+	# axis per radian, one full turn, dropping ~7 m -
+	# the road's up faces the path's principal normal,
+	# so the steep-regime law reads kvf ~ -|dT/ds| end
+	# to end and the crown law is the loop's: hold needs
+	# v^2 * kappa > g at the top (kappa = a/(a^2+c^2)
+	# = 0.04 at full orbit, the fall line ~15.7 m/s).
+	# No scripted grip: slower than the line at the
+	# top, it lets go there, exactly where the trace
+	# says it should. The piece rolls ~700 deg in the
+	# road's frame over the orbit - a double-roll
+	# corkscrew with two inversions (see _build_helix).
+	# The run-in also PRE-ROLLS the road: the helix's
+	# normal-facing surface starts at ~-116 deg of bank
+	# (the FP43 audit's measurement of the first
+	# station), so the road twists steadily across the
+	# whole 30 m approach (0.067 rad/m, gentler than
+	# the barrel roll's own entry twist) to meet it -
+	# no snap at the door.
+	var e2_entry_bank43: float = -2.02
+	_walk(20, 0.0, deg_to_rad(-6.5), e2_entry_bank43 * (20.0 / 30.0), false, deg_to_rad(6.5) / 20.0, 0.0673)
+	_walk(10, 0.0, deg_to_rad(-6.5), e2_entry_bank43, false, 0.0, 0.0673)
 	var e2_s0: float = float(b_pts.size() - 1)
-	_walk(10, 0.0, deg_to_rad(-6.5), deg_to_rad(12.0), false, 0.006, TAU / 300.0)
-	_walk(140, 0.0, deg_to_rad(-6.5), deg_to_rad(348.0), false, 0.006, TAU / 150.0)
-	_walk(10, 0.0, deg_to_rad(-6.5), TAU, false, 0.006, TAU / 300.0)
-	_gen_bank = 0.0
-	elements.append(["E2 THE CORKSCREW", e2_s0, float(b_pts.size() - 1), 20.0, "LETS GO AT THE QUARTER-TURN - NO SPEED HOLDS IT"])
-	_walk(20, 0.0, 0.0, 0.0, false, deg_to_rad(6.5) / 20.0)
+	_build_helix(5.0, 10.0, 0.26, 0.42)
+	elements.append(["E2 THE CORKSCREW", e2_s0, float(b_pts.size() - 1), 20.0, "DOUBLE ROLL, TWO INVERSIONS - HOLDS 14-20 - 24+ SLIDES OFF THE EXIT WALL"])
+	# The run-out untwists the road: _build_helix leaves
+	# _gen_bank at the roll's unwrapped ~-14 rad, and
+	# this walk winds it to the frame-flat branch
+	# (-2*TAU) over the first ~5 m. The bank scalar then
+	# RIDES at -2*TAU (frame-flat) through the climb
+	# home and the barrel roll's own targets are offset
+	# by the same -2*TAU, so no reset seam exists
+	# anywhere on the course; the barrel roll's closing
+	# _gen_bank = 0.0 absorbs the whole chain at its
+	# exit, where that seam already lived (FP41).
+	_walk(20, 0.0, 0.0, -TAU * 2.0, false, deg_to_rad(6.5) / 20.0, TAU / 18.0)
 	# The climb home: +7 deg (15 m ramp, 75 m hold, 15 m
 	# out) - the barrel roll is judged on the flat.
-	_walk(15, 0.0, deg_to_rad(7.0), 0.0, false, deg_to_rad(7.0) / 15.0)
-	_walk(75, 0.0, deg_to_rad(7.0), 0.0, false)
-	_walk(15, 0.0, 0.0, 0.0, false, deg_to_rad(7.0) / 15.0)
-	_walk(40, 0.0, 0.0, 0.0, false)
+	_walk(15, 0.0, deg_to_rad(7.0), -TAU * 2.0, false, deg_to_rad(7.0) / 15.0)
+	_walk(75, 0.0, deg_to_rad(7.0), -TAU * 2.0, false)
+	_walk(15, 0.0, 0.0, -TAU * 2.0, false, deg_to_rad(7.0) / 15.0)
+	_walk(40, 0.0, 0.0, -TAU * 2.0, false)
 	# --- E3: THE BARREL ROLL -----------------------------
 	# Bank 0 -> 360 deg over 52 m of flat, the roll rate
 	# shaped 0.055 -> 0.11 -> 0.155 (peak) -> 0.11 ->
@@ -2965,14 +3046,55 @@ func _build_funlab() -> Dictionary:
 	# than stepping; cumulative targets, the last exactly
 	# TAU. _gen_bank resets to 0.
 	var e3_s0: float = float(b_pts.size() - 1)
-	_walk(6, 0.0, 0.0, 0.33, false, 0.006, 0.055)
-	_walk(6, 0.0, 0.0, 0.99, false, 0.006, 0.11)
-	_walk(28, 0.0, 0.0, 5.33, false, 0.006, 0.155)
-	_walk(6, 0.0, 0.0, 5.99, false, 0.006, 0.11)
-	_walk(6, 0.0, 0.0, TAU, false, 0.006, 0.055)
+	# (Fix Pass 43: the roll's targets ride at -2*TAU -
+	# the corkscrew's bank-scalar offset, frame-identical
+	# to the old 0..TAU climb; the closing reset absorbs
+	# both rolls' accumulation at once.)
+	_walk(6, 0.0, 0.0, 0.33 - TAU * 2.0, false, 0.006, 0.055)
+	_walk(6, 0.0, 0.0, 0.99 - TAU * 2.0, false, 0.006, 0.11)
+	_walk(28, 0.0, 0.0, 5.33 - TAU * 2.0, false, 0.006, 0.155)
+	_walk(6, 0.0, 0.0, 5.99 - TAU * 2.0, false, 0.006, 0.11)
+	_walk(6, 0.0, 0.0, -TAU, false, 0.006, 0.055)
 	_gen_bank = 0.0
 	elements.append(["E3 THE BARREL ROLL", e3_s0, float(b_pts.size() - 1), 30.0, "HOPS ALL THE WAY ROUND - HELD 20-26, FLOOR 36+"])
-	_walk(130, 0.0, 0.0, 0.0, false)
+	_walk(90, 0.0, 0.0, 0.0, false)
+	# --- E4: THE WALL-RIDE -------------------------------
+	# Fix Pass 43 (Item 3): NEW PROTOTYPE, off the Hot
+	# Wheels shelf (hw6's near-flat rings): a full 360 deg
+	# turn on a wall - R 28 m at a constant 55 deg of bank,
+	# the road rising on the outside until the car is
+	# driving on a wall that rejoins its own entry line.
+	# Bank and turn only, no inversion: the holding force
+	# is the banked-turn law, N = g*cos(bank) +
+	# v^2/R*sin(bank), positive at every speed; the line
+	# the car settles on is set by the neutral speed
+	# v* = sqrt(g*R*tan(bank)) ~ 19.8 m/s - slower and
+	# bank gravity walks it down the wall, faster and the
+	# turn walks it up, the driver's steering arbitrates.
+	# The yaw rate is a trapezoid in step index (ramps of
+	# 4 x 6 m at 1/8, 3/8, 5/8, 7/8 of full rate, a
+	# fractional hold, the mirror down) summing to
+	# exactly TAU, so the heading comes home and the exit
+	# lands on the entry line ahead of the entry point -
+	# the same index-symmetry discipline as the loop.
+	# The bank walks to 55 deg across the ramp-up and
+	# unwinds across the ramp-down at the same rate.
+	var e4_s0: float = float(b_pts.size() - 1)
+	var om4_43: float = 1.0 / 28.0
+	var beta4_43: float = deg_to_rad(55.0)
+	var brate4_43: float = beta4_43 / 24.0
+	_walk(6, om4_43 * 0.125, 0.0, beta4_43, false, 0.006, brate4_43)
+	_walk(6, om4_43 * 0.375, 0.0, beta4_43, false, 0.006, brate4_43)
+	_walk(6, om4_43 * 0.625, 0.0, beta4_43, false, 0.006, brate4_43)
+	_walk(6, om4_43 * 0.875, 0.0, beta4_43, false, 0.006, brate4_43)
+	_walkf(151.93, om4_43, 0.0, beta4_43, false)
+	_walk(6, om4_43 * 0.875, 0.0, 0.0, false, 0.006, brate4_43)
+	_walk(6, om4_43 * 0.625, 0.0, 0.0, false, 0.006, brate4_43)
+	_walk(6, om4_43 * 0.375, 0.0, 0.0, false, 0.006, brate4_43)
+	_walk(6, om4_43 * 0.125, 0.0, 0.0, false, 0.006, brate4_43)
+	_gen_yaw = 0.0
+	elements.append(["E4 THE WALL-RIDE", e4_s0, float(b_pts.size() - 1), 20.0, "STEER IT - HOLDS 14-30, NEUTRAL AT 20"])
+	_walk(120, 0.0, 0.0, 0.0, false)
 	var feats: Dictionary = {
 		"gap_s0": -1.0, "gap_s1": -1.0,
 		"gap2_s0": -1.0, "gap2_s1": -1.0,
@@ -3008,6 +3130,166 @@ func _build_funlab() -> Dictionary:
 	_build_track_meshes(d)
 	_build_funlab_furniture(root, elements)
 	return d
+
+
+func _helix_w(u43: float, ease_in43: float, ease_out43: float) -> float:
+	# The helix orbit radius's ease over the turn's phase
+	# fraction u in [0, 1]: a smoothstep ramp over the
+	# first ease_in43 and the last ease_out43 of the turn,
+	# 1.0 between - so the centreline leaves and rejoins
+	# the axis line tangentially (the profile's slope is
+	# zero at both ends of each ramp). The exit ease is
+	# the longer of the two (the FP43 audit: the radius
+	# closing slowly on the way out keeps the car in the
+	# tube through the exit wall's steep band).
+	var x43: float
+	if u43 < ease_in43:
+		x43 = clampf(u43 / ease_in43, 0.0, 1.0)
+	elif u43 > 1.0 - ease_out43:
+		x43 = clampf((1.0 - u43) / ease_out43, 0.0, 1.0)
+	else:
+		return 1.0
+	return x43 * x43 * (3.0 - 2.0 * x43)
+
+
+func _helix_dw(u43: float, ease_in43: float, ease_out43: float) -> float:
+	# d/du of _helix_w (the smoothstep's derivative is
+	# 6x(1-x) across its ramp, signed on the way out).
+	if u43 < ease_in43:
+		var x43: float = clampf(u43 / ease_in43, 0.0, 1.0)
+		return 6.0 * x43 * (1.0 - x43) / ease_in43
+	if u43 > 1.0 - ease_out43:
+		var x43b: float = clampf((1.0 - u43) / ease_out43, 0.0, 1.0)
+		return -6.0 * x43b * (1.0 - x43b) / ease_out43
+	return 0.0
+
+
+func _build_helix(a_max: float, c_adv: float, ease_in: float, ease_out: float) -> void:
+	# Fix Pass 43 (Item 2): THE TRUE HELIX, TRK2 E2's new
+	# spine, appended station by station - the generator's
+	# yaw/pitch/bank walks cannot trace it (its tangent
+	# precesses around the entry direction). The centre-
+	# line is a helix about the ENTRY TANGENT AXIS:
+	#   P(psi) = org + axis * (c * psi) + Rot(axis, psi) * side * (a * w(psi))
+	# with "side" the entry frame's side, so the phase
+	# starts BESIDE the axis: the centreline departs
+	# SIDEWAYS as the radius eases out (a banked-turn
+	# entry - no vertical scoop, no whip), passes the
+	# tube's BOTTOM at psi = 90 deg (car upright, one
+	# orbit radius below the axis), the far wall at 180,
+	# INVERTED at the tube's top at psi = 270 (the
+	# centreline one orbit radius ABOVE the axis), and
+	# home to the side as the radius eases back to zero -
+	# entry and exit tangents are the axis itself.
+	# The road's up faces the path's own turning - the
+	# principal normal, blended in from the level up as
+	# the path's curvature grows - so the steep-regime
+	# law reads kvf ~ -|dT/ds| all the way around and
+	# the crown law is the loop's: hold needs
+	# v^2 * kappa > g at the top (kappa_h = a/(a^2+c^2)
+	# = 0.04 at full orbit, fall line ~15.7 m/s), no
+	# scripted grip anywhere. Two honest consequences
+	# of the geometry, both measured in the FP43 audit:
+	# (1) the path's first curvature points sideways
+	# and down (the departure bend plus the dip's
+	# onset), so the normal-facing surface starts
+	# already rolled ~-116 deg - the run-in PRE-ROLLS
+	# the road to meet it (see the call site), the way
+	# a coaster's steel twists into its element;
+	# (2) on a helix of this pitch the turning
+	# direction accumulates ~700 deg of roll in the
+	# road's frame over one orbit (the orbit's 360
+	# plus the tangent cone's own twist) - the piece
+	# is a DOUBLE-ROLL corkscrew, two inversions, the
+	# Arrow form. Banks are stored UNWRAPPED and
+	# _gen_bank is left at the unwrapped value; the
+	# run-out untwists to the frame-flat branch
+	# (-2*TAU) and the scalar offset rides through
+	# the climb home into the barrel roll's targets,
+	# whose closing reset absorbs the whole chain -
+	# no bank seam anywhere on the course. Stations
+	# step ~1 m of arc (the phase
+	# advances by the closed form's |dP/dpsi|);
+	# tangents are the closed form's, so no finite
+	# difference ever touches world positions.
+	var hd43 := Vector3(-sin(_gen_yaw), 0.0, -cos(_gen_yaw))
+	var axis43: Vector3 = (hd43 * cos(_gen_phi) + Vector3.UP * sin(_gen_phi)).normalized()
+	var side_e43: Vector3 = axis43.cross(Vector3.UP)
+	if side_e43.length() < 0.1:
+		side_e43 = Vector3.RIGHT
+	else:
+		side_e43 = side_e43.normalized()
+	var org43: Vector3 = _gen_pos
+	var rot43 := func(v43: Vector3, psi: float) -> Vector3:
+		return v43 * cos(psi) + axis43.cross(v43) * sin(psi) \
+			+ axis43 * (axis43.dot(v43) * (1.0 - cos(psi)))
+	var pt43 := func(psi: float) -> Vector3:
+		var rr43: Vector3 = rot43.call(side_e43, psi)
+		return org43 + axis43 * (c_adv * psi) \
+			+ rr43 * (a_max * _helix_w(psi / TAU, ease_in, ease_out))
+	var dpt43 := func(psi: float) -> Vector3:
+		var r43: Vector3 = rot43.call(side_e43, psi)
+		return axis43 * c_adv + axis43.cross(r43) * (a_max * _helix_w(psi / TAU, ease_in, ease_out)) \
+			+ r43 * (a_max * _helix_dw(psi / TAU, ease_in, ease_out) / TAU)
+	var psis43: Array[float] = []
+	var pts43: Array[Vector3] = []
+	var psi43: float = 0.0
+	while psi43 < TAU - 0.000001:
+		var sp43: float = (dpt43.call(psi43) as Vector3).length()
+		psi43 = minf(psi43 + 1.0 / maxf(sp43, 0.001), TAU)
+		psis43.append(psi43)
+		pts43.append(pt43.call(psi43))
+	var n43: int = pts43.size()
+	var tans43: Array[Vector3] = []
+	for k43: int in n43:
+		tans43.append((dpt43.call(psis43[k43]) as Vector3).normalized())
+	var banks43: Array[float] = []
+	for k43b: int in n43:
+		var tan43: Vector3 = tans43[k43b]
+		var sd43: Vector3 = tan43.cross(Vector3.UP)
+		if sd43.length() < 0.1:
+			sd43 = Vector3.RIGHT
+		else:
+			sd43 = sd43.normalized()
+		var up043: Vector3 = sd43.cross(tan43).normalized()
+		# The desired up faces the path's own turning:
+		# the principal normal from the closed-form
+		# tangents (central differences, extrapolated at
+		# the ends - no world-position differences, and
+		# the boundary stations difference against the
+		# helix's own tangents, never the run-in's).
+		var tp43: Vector3
+		var tm43: Vector3
+		if k43b == 0:
+			tp43 = tans43[1]
+			tm43 = tans43[0] * 2.0 - tans43[1]
+		elif k43b == n43 - 1:
+			tp43 = tans43[n43 - 1] * 2.0 - tans43[n43 - 2]
+			tm43 = tans43[n43 - 2]
+		else:
+			tp43 = tans43[k43b + 1]
+			tm43 = tans43[k43b - 1]
+		var dt43: Vector3 = (tp43 - tm43) * 0.5
+		var kmag43: float = dt43.length()
+		var bw43: float = smoothstep(0.004, 0.030, kmag43)
+		var udes43: Vector3 = up043
+		if kmag43 > 0.000001:
+			udes43 = (up043 * (1.0 - bw43) + dt43.normalized() * bw43).normalized()
+		var beta43: float = atan2(-udes43.dot(sd43), udes43.dot(up043))
+		if banks43.size() > 0:
+			while beta43 - banks43[banks43.size() - 1] > PI:
+				beta43 -= TAU
+			while beta43 - banks43[banks43.size() - 1] < -PI:
+				beta43 += TAU
+		banks43.append(beta43)
+	for k43c: int in n43:
+		b_pts.append(pts43[k43c])
+		b_tan.append(tans43[k43c])
+		b_bank.append(banks43[k43c])
+		b_curv.append(0.0)
+		b_gap.append(false)
+	_gen_pos = pts43[n43 - 1]
+	_gen_bank = banks43[n43 - 1]
 
 
 func _build_funlab_furniture(root: Node3D, elements: Array) -> void:
@@ -4593,7 +4875,7 @@ func _panel_text() -> String:
 	lines.append("TAB panels, L lift, J jitter, G view A/B, M drop side")
 	lines.append("PgUp/PgDn seat trim, R restart race")
 	lines.append("C recenter, V track")
-	lines.append("E next element (TRK2), F1/F2/F3 jump to element 1/2/3 (TRK2)")
+	lines.append("E next element (TRK2), F1/F2/F3/F4 jump to element 1/2/3/4 (TRK2)")
 	# Fix Pass 4: the DIAG block no longer appends here - it renders
 	# on its own board (diag_label) via _update_panel.
 	return "\n".join(lines)
@@ -5289,6 +5571,8 @@ func _input(event: InputEvent) -> void:
 			_goto_element(1)
 		KEY_F3:
 			_goto_element(2)
+		KEY_F4:
+			_goto_element(3) # Fix Pass 43 (Item 3): E4's direct jump-in
 
 
 
@@ -6623,10 +6907,17 @@ func _drop_piece_ok(s: float) -> bool:
 	# A valid drop piece in itself: on the road (no gap), flat,
 	# straight, unbanked - the Fix Pass 2 hang-centring criteria
 	# (a level, unbanked section keeps the plumb hang centred
-	# over the centreline).
+	# over the centreline). FP43: the bank test reads the
+	# WRAPPED bank - the funlab's offset chain stores whole
+	# turns past flat (the barrel roll's approach rides at
+	# -2 turns, frame-flat), and the raw stored value read
+	# "banked" all the way back to the corkscrew's run-in,
+	# which sent E3's jump-in search to s 298 (stage 69
+	# caught it: the jump-in drove into E2 first).
 	var fr: Dictionary = _frame_at(s)
 	return not bool(fr["gap"]) and absf(float(fr["curv"])) < 0.004 \
-		and absf(float(fr["tan"].y)) < 0.08 and absf(float(fr["bank"])) < 0.03
+		and absf(float(fr["tan"].y)) < 0.08 \
+		and absf(wrapf(float(fr["bank"]), -PI, PI)) < 0.03
 
 
 func _drop_runup_ok(drop_s: float) -> bool:
@@ -6645,7 +6936,7 @@ func _drop_runup_ok(drop_s: float) -> bool:
 			return false
 		if absf(float(fr["tan"].y)) > 0.20:
 			return false
-		if absf(float(fr["bank"])) > 0.10:
+		if absf(wrapf(float(fr["bank"]), -PI, PI)) > 0.10:
 			return false
 		if absf(float(fr["curv"])) > 0.006:
 			return false

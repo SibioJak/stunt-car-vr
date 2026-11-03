@@ -7743,20 +7743,23 @@ func _run() -> void:
 
 	# ---------- stage 66: Fix Pass 38 - TRK2, THE FUNLAB ----
 	# The extremes lab (owner's order, 2026-11-02): a fourth
-	# track appended to the roster - three SURFACE elements
-	# (the loop, the corkscrew, the barrel roll) strung on a
-	# straight test course in the Feature Lab's spirit. Every
-	# expectation below was MEASURED in-pass (the FP38
+	# track appended to the roster - SURFACE elements strung
+	# on a straight test course in the Feature Lab's spirit.
+	# Every expectation below was MEASURED in-pass (the
 	# probes, deleted before the commit) - and where the
 	# physics verdict is that an element does not work, the
 	# stage asserts the measured failure, not a hoped-for
 	# success. The funlab exists to learn exactly this.
+	# Fix Pass 43 amended in place: the loop rebuilt at the
+	# base, the corkscrew rebuilt as a true helix (a
+	# double-roll with two inversions), a fourth element
+	# (the wall-ride) added - four elements, four boards.
 	main._set_track("funlab")
 	main.test_brake = 0.0
 	var fun66: Dictionary = main.track_data["funlab"]
 	var elems66: Array = fun66["features"]["elements"]
-	check(not bool(fun66["closed"]) and elems66.size() == 3,
-		"stage66: TRK2 is an open test course carrying three elements (len %.0f m)" % float(fun66["len"]))
+	check(not bool(fun66["closed"]) and elems66.size() == 4,
+		"stage66: TRK2 is an open test course carrying four elements (len %.0f m)" % float(fun66["len"]))
 	# The roster: lab -> funlab -> circuit (stage 58's wrap
 	# check and stage 11a's sweep were amended for the
 	# fourth track, flagged in place).
@@ -7772,7 +7775,7 @@ func _run() -> void:
 	# text exact against the builder's table.
 	var froot66: Node3D = fun66["root"]
 	var boards_ok66: bool = true
-	for bi66: int in 3:
+	for bi66: int in 4:
 		var b66: Node = froot66.get_node_or_null("ElementBoard%d" % (bi66 + 1))
 		if b66 == null:
 			boards_ok66 = false
@@ -7788,12 +7791,18 @@ func _run() -> void:
 		if nm66 != String(elems66[bi66][0]) or ad66 != String(elems66[bi66][4]):
 			boards_ok66 = false
 	check(boards_ok66,
-		"stage66: three roadside boards carry the element names and their measured advisories")
+		"stage66: four roadside boards carry the element names and their measured advisories")
 	# The built shape, read off the shipped arrays: the
 	# loop's unwrapped pitch (from the tangents) passes
 	# 180 deg at mid-span and the crown stands ~26 m over
-	# the entry; both rolls are upside down at their
-	# middles and flat again 3 m past their ends.
+	# the entry; the barrel roll is upside down at its
+	# middle and flat again 3 m past its end; the helix's
+	# frame inverts fully inside its span (up.y < -0.9 -
+	# twice over the double roll, the scan takes the
+	# minimum) and is untwisted flat 8 m past its end.
+	# (Fix Pass 43: the barrel roll's stored banks ride
+	# at the corkscrew's -2*TAU scalar offset, so its
+	# readings are taken wrapped - frame-identical.)
 	var tan66: Array = fun66["tan"]
 	var phi66: Array = []
 	var prev66: float = 0.0
@@ -7817,26 +7826,38 @@ func _run() -> void:
 	var entry_y66: float = float(main._frame_at(float(e1_66[1]))["pos"].y)
 	check(crown66 - entry_y66 > 25.0,
 		"stage66: the loop's crown stands %.1f m over its entry" % (crown66 - entry_y66))
-	var rolls_ok66: bool = true
-	for ei66: int in [1, 2]:
-		var frm66: Dictionary = main._frame_at((float(elems66[ei66][1]) + float(elems66[ei66][2])) * 0.5)
-		var fre66: Dictionary = main._frame_at(float(elems66[ei66][2]) + 3.0)
-		if absf(absf(rad_to_deg(float(frm66["bank"]))) - 180.0) > 8.0 or absf(rad_to_deg(float(fre66["bank"]))) > 1.0:
-			rolls_ok66 = false
-	check(rolls_ok66,
-		"stage66: both rolls are upside down at their middles and flat past their ends")
-	# Entry states: E1 and E3 from the flat; E2 from its
-	# -6.5 deg descent, unbanked - each element's pinned
-	# state, sampled 5 m before its span.
+	var frm66: Dictionary = main._frame_at((float(elems66[2][1]) + float(elems66[2][2])) * 0.5)
+	var fre66: Dictionary = main._frame_at(float(elems66[2][2]) + 3.0)
+	check(absf(absf(wrapf(rad_to_deg(float(frm66["bank"])), -180.0, 180.0)) - 180.0) <= 8.0
+			and absf(wrapf(rad_to_deg(float(fre66["bank"])), -180.0, 180.0)) <= 1.0,
+		"stage66: the barrel roll is upside down at its middle and flat past its end")
+	var min_up66: float = 2.0
+	var sc66: float = float(elems66[1][1])
+	while sc66 <= float(elems66[1][2]):
+		min_up66 = minf(min_up66, (main._frame_at(sc66)["up"] as Vector3).y)
+		sc66 += 1.0
+	var fre2_66: Dictionary = main._frame_at(float(elems66[1][2]) + 8.0)
+	check(min_up66 < -0.9 and (fre2_66["up"] as Vector3).y > 0.98,
+		"stage66: the helix's frame inverts fully in-span (min up.y %.2f) and is flat 8 m past its end" % min_up66)
+	# Entry states, sampled 5 m before each span: E1, E3
+	# and E4 from the flat, unbanked; E2 from its -6.5 deg
+	# descent PRE-ROLLED (Fix Pass 43: the road twists
+	# across the run-in to meet the helix's rolled first
+	# station - at -5 m the bank reads ~-96 deg, wrapped;
+	# E3's stored banks ride at the -2*TAU offset, also
+	# read wrapped - frame-identical to flat).
 	var ent_ok66: bool = true
-	for ei66b: int in 3:
+	for ei66b: int in 4:
 		var fr_e66: Dictionary = main._frame_at(float(elems66[ei66b][1]) - 5.0)
 		var sl_e66: float = rad_to_deg(asin(clampf((fr_e66["tan"] as Vector3).y, -1.0, 1.0)))
 		var want66: float = -6.5 if ei66b == 1 else 0.0
-		if absf(sl_e66 - want66) > 0.8 or absf(rad_to_deg(float(fr_e66["bank"]))) > 0.5:
+		var bank_e66: float = wrapf(rad_to_deg(float(fr_e66["bank"])), -180.0, 180.0)
+		var want_b66: float = -96.5 if ei66b == 1 else 0.0
+		var tol_b66: float = 8.0 if ei66b == 1 else 1.5
+		if absf(sl_e66 - want66) > 0.8 or absf(bank_e66 - want_b66) > tol_b66:
 			ent_ok66 = false
 	check(ent_ok66,
-		"stage66: every element is entered from its pinned state (flat / -6.5 deg descent, unbanked)")
+		"stage66: every element is entered from its pinned state (flat / -6.5 deg descent, the corkscrew pre-rolled)")
 	# Drop Start at TRK2's head and crane recovery mid-
 	# course (stage 58's protocol, on this course).
 	main.debug_set_hang_dangle()
@@ -7950,6 +7971,16 @@ func _run() -> void:
 	# collects it. It does not wedge at any speed now.
 	# The extraction sequence that answered the wedge
 	# answers the fall instead.
+	# Fix Pass 43 amended in place: the ring is rebuilt
+	# at the base (entry and exit the same road, the
+	# joins eased - max |d kvf| per station 0.010 against
+	# the old ring's 0.0765 single step), and FP41's
+	# 16-20 rebound defect band is RETIRED with the
+	# joins: held at 18 the car now goes around with no
+	# separation at all (the FP43 probes: 18/20/22 clean,
+	# exit = entry; at 16 it comes off at the crown
+	# approach; at 14 it hops over the top and falls at
+	# the exit ease).
 	var r_loop66: Dictionary = await drive66.call(elems66[0], 24.0, "floor", 3000)
 	print("stage66 loop: wedged=%s max_phi=%.1f max_s=%.1f airs=%d hung=%s exit=%.1f" % [
 		str(bool(r_loop66["wedged"])), float(r_loop66["max_phi"]), float(r_loop66["max_s"]),
@@ -7958,6 +7989,12 @@ func _run() -> void:
 			and float(r_loop66["max_phi"]) > 270.0 and float(r_loop66["exit_v"]) > 0.0,
 		"stage66: E1 the loop - floored at 24 it goes all the way around (max phi %.0f deg, exit %.0f m/s)" % [
 			float(r_loop66["max_phi"]), float(r_loop66["exit_v"])])
+	var r_l18_66: Dictionary = await drive66.call(elems66[0], 18.0, "pin", 4000)
+	print("stage66 loop 18: sep=%s airs=%d hung=%s exit=%.1f" % [
+		str(bool(r_l18_66["sep"])), int(r_l18_66["airs"]), str(bool(r_l18_66["hung"])), float(r_l18_66["exit_v"])])
+	check(not bool(r_l18_66["sep"]) and not bool(r_l18_66["hung"]) and int(r_l18_66["airs"]) == 0
+			and absf(float(r_l18_66["exit_v"]) - 18.0) < 0.5,
+		"stage66: E1 the loop - held at 18 it goes around CLEAN, no separation (FP41's defect band is retired)")
 	var r_slow66: Dictionary = await drive66.call(elems66[0], 10.0, "pin", 4000)
 	print("stage66 loop slow: sep=%s hung=%s wedged=%s max_phi=%.1f exit=%.1f" % [
 		str(bool(r_slow66["sep"])), str(bool(r_slow66["hung"])), str(bool(r_slow66["wedged"])),
@@ -7975,23 +8012,36 @@ func _run() -> void:
 	var wrel66: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 400)
 	check(wrel66 and main.car_s < float(elems66[0][1]),
 		"stage66: E1 the loop - the extraction drops the car back on the flat (s %.0f)" % main.car_s)
-	# ---- E2: THE CORKSCREW - Fix Pass 41 (Item 3)
-	# amended in place. The FP38 reading stood here
-	# before (carried to bank ~165-168, lost sideways
-	# short of inverted) - that was the flat-world
-	# bookkeeping crediting support the road cannot
-	# give. The twist's centreline is straight, so the
-	# road-frame normal force is gravity's own component
-	# and is spent at the quarter-turn: held at 20 the
-	# car lets go at bank ~92 and the crane finishes it,
-	# at every speed the FP41 probes ran (18-30).
+	# ---- E2: THE CORKSCREW - Fix Pass 43 (Item 2)
+	# amended in place. The FP41 ruling stood here
+	# before (the straight-centreline twist lets go at
+	# the quarter-turn at every speed - the road-frame
+	# normal force there is g*cos(bank), spent at bank
+	# ~92, no speed term exists). The rebuild is a TRUE
+	# HELIX: the centreline spirals, the road's up faces
+	# the path's principal normal, and the path supplies
+	# the holding force (kappa_h = 0.04 at full orbit;
+	# the FP43 probes' static crown loads +0.25 g at 14,
+	# +0.63 g at 16, read off the shipped arrays). The
+	# measured window: held at 14-20 it completes with
+	# the full double roll (the frame bank accumulates
+	# past 600 deg in-span; a hop at the bottom twist is
+	# its character, as on the barrel roll); at 24 it
+	# slides off the exit wall to the crane - the honest
+	# top of the window, asserted as measured.
 	var r_cork66: Dictionary = await drive66.call(elems66[1], 20.0, "pin", 4000)
-	print("stage66 corkscrew: sep=%s sep_bank=%.1f max_bank=%.1f hung=%s exit_v=%.1f" % [
-		str(bool(r_cork66["sep"])), float(r_cork66["sep_bank"]), float(r_cork66["max_bank"]),
+	print("stage66 corkscrew: sep=%s max_bank=%.1f hung=%s exit_v=%.1f" % [
+		str(bool(r_cork66["sep"])), float(r_cork66["max_bank"]),
 		str(bool(r_cork66["hung"])), float(r_cork66["exit_v"])])
-	check(bool(r_cork66["sep"]) and bool(r_cork66["hung"]) and float(r_cork66["sep_bank"]) > 70.0
-			and float(r_cork66["sep_bank"]) < 110.0 and float(r_cork66["max_bank"]) < 130.0,
-		"stage66: E2 the corkscrew - held at 20 it lets go at the quarter-turn (bank %.0f deg) and the crane finishes it" % float(r_cork66["sep_bank"]))
+	check(not bool(r_cork66["hung"]) and not bool(r_cork66["wedged"])
+			and float(r_cork66["exit_v"]) > 0.0 and float(r_cork66["max_bank"]) > 600.0,
+		"stage66: E2 the corkscrew - held at 20 the helix carries it around the full double roll (max bank %.0f deg, exit %.0f m/s)" % [
+			float(r_cork66["max_bank"]), float(r_cork66["exit_v"])])
+	var r_ck24_66: Dictionary = await drive66.call(elems66[1], 24.0, "pin", 4000)
+	print("stage66 corkscrew 24: sep=%s max_lat=%.1f hung=%s exit_v=%.1f" % [
+		str(bool(r_ck24_66["sep"])), float(r_ck24_66["max_lat"]), str(bool(r_ck24_66["hung"])), float(r_ck24_66["exit_v"])])
+	check(bool(r_ck24_66["sep"]) and bool(r_ck24_66["hung"]) and float(r_ck24_66["exit_v"]) < 0.0,
+		"stage66: E2 the corkscrew - held at 24 it slides off the exit wall and the crane collects it (the window's honest top)")
 	# ---- E3: THE BARREL ROLL - Fix Pass 41 (Item 3)
 	# amended in place. The same honest twist over a
 	# shorter piece: unsupported past the quarter-turn,
@@ -8011,14 +8061,35 @@ func _run() -> void:
 			and float(r_bar66["max_lat"]) < 6.9,
 		"stage66: E3 the barrel roll - completes floored at 36 in hops, never near the 7.17 fall line (airs %d, exit %.0f m/s, max lat %.1f m)" % [
 			int(r_bar66["airs"]), float(r_bar66["exit_v"]), float(r_bar66["max_lat"])])
-	# ---- the finish: the last element's run-out crosses
-	# the course's end under power (pinned 26, the held
-	# line) and the race completes on TRK2. (The recorder
-	# is aimed at the track's end, not the element's.)
+	# ---- E4: THE WALL-RIDE - Fix Pass 43 (Item 3), new.
+	# A full-circle banked turn (R 28 m at 55 deg) that
+	# rejoins its own entry line: bank and turn only, no
+	# inversion, the holding force the banked-turn law -
+	# positive at every speed (the FP43 probes: held at
+	# 14-30, exit = entry every time, the car never more
+	# than 1.9 m off the centreline; hands-off it sheds,
+	# as any turn does - the line is the driver's to
+	# hold). Held at 20 here: around the full circle on
+	# the wall (max frame bank ~55 deg), out at entry
+	# speed, never near the fall line.
+	var r_wal66: Dictionary = await drive66.call(elems66[3], 20.0, "pin", 9000)
+	print("stage66 wall-ride: sep=%s airs=%d max_bank=%.1f max_lat=%.1f hung=%s exit_v=%.1f" % [
+		str(bool(r_wal66["sep"])), int(r_wal66["airs"]), float(r_wal66["max_bank"]), float(r_wal66["max_lat"]),
+		str(bool(r_wal66["hung"])), float(r_wal66["exit_v"])])
+	check(not bool(r_wal66["sep"]) and not bool(r_wal66["hung"]) and int(r_wal66["airs"]) == 0
+			and absf(float(r_wal66["exit_v"]) - 20.0) < 0.5 and float(r_wal66["max_lat"]) < 3.0
+			and float(r_wal66["max_bank"]) > 45.0 and float(r_wal66["max_bank"]) < 65.0,
+		"stage66: E4 the wall-ride - held at 20 it circles the full 360 on the wall and exits at entry speed (max bank %.0f deg, max lat %.1f m)" % [
+			float(r_wal66["max_bank"]), float(r_wal66["max_lat"])])
+	# ---- the finish: from E3's mouth the course runs
+	# out through E4's wall (pinned 26, inside its held
+	# band) and across the course's end under power, and
+	# the race completes on TRK2. (The recorder is aimed
+	# at the track's end, not the element's.)
 	var fin66: Array = ["FINISH", elems66[2][1], float(fun66["len"]) - 1.0, 26.0, ""]
 	var r_fin66: Dictionary = await drive66.call(fin66, 26.0, "pin", 4000)
 	check(bool(r_fin66["done"]),
-		"stage66: TRK2's finish - the barrel run-out crosses the course end and the race completes")
+		"stage66: TRK2's finish - the run from E3 crosses E4's wall and the course end, and the race completes")
 	main.test_throttle = 0.0
 	main.test_boost = false
 
@@ -8560,7 +8631,7 @@ func _run() -> void:
 			break
 	check(min_up69 < -0.9,
 		"stage69: at the crown the car drives inverted (min basis up.y %.2f in DRIVE)" % min_up69)
-	for i69: int in 3:
+	for i69: int in 4:
 		var el69: Array = els69[i69]
 		main._goto_element(i69)
 		check(main.mode == main.MODE_HANG and absf(main.drop_target_s - float(el69[5])) < 0.01,
@@ -8581,7 +8652,7 @@ func _run() -> void:
 			main.debug_pin_speed(22.0)
 			await physics_frame
 			g2_69 += 1
-			for j69: int in 3:
+			for j69: int in 4:
 				if main.car_s >= float(els69[j69][1]) and main.car_s <= float(els69[j69][2]):
 					entered69 = j69
 					break

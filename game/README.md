@@ -113,13 +113,14 @@ VR (Quest):
   Track 01 (default), the original test ribbon, the Feature Lab
   and TRK2 (the funlab); a Track 01 race is 3 laps to the finish,
   the ribbon is point-to-point, the lab is the piece library as a
-  practice lap, TRK2 is the extremes course — loop, corkscrew
-  and barrel roll on one straight line
+  practice lap, TRK2 is the extremes course — loop, corkscrew,
+  barrel roll and wall-ride on one straight line
 - Jump to a TRK2 element (Fix Pass 41): GRIP near the green ELEM
   dash button — the crane collects the car from wherever it is
   and stations it at the NEXT element's run-up, so no element
-  gates another; desktop E cycles and F1/F2/F3 jump straight to
-  E1/E2/E3. On any other track the button is inert
+  gates another; desktop E cycles and F1/F2/F3/F4 jump straight
+  to E1/E2/E3/E4 (F4 added Fix Pass 43 with the fourth element).
+  On any other track the button is inert
 - Recenter: click the left stick
 - Road-jitter experiment on/off: click the right stick (state shows
   as JIT in the DIAG block; default ON)
@@ -6596,3 +6597,123 @@ leans on its springs when the box changes its mind —
 all of it is tuned past the staged ceilings on the
 owner's word, and only his hands can say whether MORE
 was the right amount.
+
+## Fix Pass 43 — THE FUNLAB REBUILD (the loop at its base, the true helix, the wall-ride)
+
+Ordered on the owner's FP41 field verdicts: the loop
+"works as a loop" but "doesn't have correct entry, exit
+point"; the corkscrew "just doesn't have any stick, not
+gonna work." The reference shelf is his Hot Wheels
+census: every HW loop is tangent at its base (entry and
+exit are the same straight), the Mega Garage tower is a
+true helix, and the near-flat rings are wall-ride 360s.
+The funlab is rebuilt to those three forms. Course
+length 849 → 1,048 m.
+
+### Item 1 — the loop, rebuilt at the base
+
+The ring is planted on the road's own line: a 92-step
+index-symmetric curvature profile (smoothstep ramps
+over the first and last 12% of the ring, plateau
+R = 12.89 m) whose step-end geometry closes exactly —
+the exit lands ON the entry line, 11.0 m ahead, same
+direction (closure: d_lat 0.000, d_up −0.001), crown
+26.0 m over the entry. The curvature now eases at the
+joins: max |Δkvf| 0.0102 per station against the old
+ring's 0.0765 in a single step. Staged audit: pins
+18/20/22 go around CLEAN, zero airs, exit at entry
+speed; floored from 24 exits at 42.7. Pin 16 comes off
+on the crown approach (s 151, ~160° around, one air,
+the crane collects it) — not at a join: the static
+crown load at 16 is +1.02 g, the loss is a transient on
+the way up, and FP41's 16–20 rebound defect band (the
+rebound throw firing at the ring's curvature steps) is
+retired — the joins are clean at every speed tested.
+Pin 14 hops over the top (9 airs) and comes off at the
+exit ease. Board: "CLEAN 18+ OR FLOORED - 16 COMES OFF
+AT THE TOP".
+
+### Item 2 — the corkscrew, rebuilt as a true helix
+
+The straight-centreline roll is replaced by a helix:
+the centreline itself spirals (orbit radius 5.0 m, axis
+advance 10.0 m per radian, axis = the −6.5° run-in
+tangent, ~69 stations), and the road's up follows the
+path's principal normal, so the surface curvature reads
+kvf = −0.0399 through the core — κ = a/(a²+c²) = 0.0400,
+the helix's own. The holding force is the path's,
+provably, not a script's. On a helix of this pitch the
+pressing surface rolls ~640° per orbit (the 360° orbit
+plus the tangent cone's twist): this is a DOUBLE-roll
+corkscrew, two inversions on every completing run (min
+up.y −1.00) — a one-roll surface cannot press here;
+mid-element it faces ~167° off the turn and its
+curvature flips sign. The run-in pre-rolls across its
+30 m at 0.0673 rad/m to meet the helix's first-station
+bank (−115.7°) within 4°. Static minimum loads, read at
+the deep crown: +0.25 g at 14, +0.63 at 16, +0.85 at 18,
++0.95 at 20, +1.20 at 24. Drives: 14–20 complete, exit
+at entry speed, with 1–3 short hops at the tube-bottom
+twist (frame up.y ≈ +0.9) — the surface-twist tax, the
+same family as the barrel roll's hops. At 24+ the
+failure is lateral, not load (the crown still reads
++1.20 g): the car slides off the exit wall at ~8 m of
+lat and the crane collects it. Board: "DOUBLE ROLL,
+TWO INVERSIONS - HOLDS 14-20 - 24+ SLIDES OFF THE EXIT
+WALL".
+
+### Item 3 — NEW PROTOTYPE E4: the wall-ride 360
+
+A full-circle steeply banked turn that rejoins its own
+entry (the hw6 form): R = 28 m, bank 55°, yaw trapezoid
+ramps, 200 m of course. Neutral speed √(g·R·tanβ) =
+19.8 m/s. Closure: d_fwd 24.83, d_lat 0.030, d_up
+0.000; the frame's up.y holds 0.54–0.57 all the way
+round — banked hard, never in the steep regime. Staged
+audit: pins 14/17/20/23/26/30 ALL clean, zero airs,
+exit at entry speed, heading sweep 360–362°, lateral
+band −0.38..+1.84 m. Hands-off at 20 sheds (lat 8.0) —
+it is a banked turn, not a slot; the line is the
+driver's. Board: "STEER IT - HOLDS 14-30, NEUTRAL
+AT 20".
+
+### Jump-ins, and the one defect the suite caught
+
+Stations re-derived on the rebuilt course: E1 90,
+E2 298 (the search walks back past the pre-rolled
+run-in), E3 562, E4 704. Stage 69 proves each one
+hangs, releases, and drives into its OWN element first
+(F4 joins F1/F2/F3 on the desktop; the commands panel
+names it). The suite caught one real defect on the
+way: E3's search first returned 298 — the barrel
+roll's approach rides at −2 whole turns of stored bank
+(the offset chain that keeps the course's bank scalar
+seamless), and _drop_piece_ok / _drop_runup_ok read the
+raw stored value as "banked," walking the search back
+to the corkscrew's run-in. The helpers now read the
+wrapped bank (flagged in place); the same fix covers
+recovery drops anywhere on the funlab. No census track
+stores a whole turn of bank, so the wrap is
+behaviour-identical off the funlab — the full suite
+re-proves it. E3 itself is untouched except its
+station: floored at 36 it still completes in 28 hops,
+exit 16.2, max lat 2.43 — its FP41 signature intact.
+
+- Everything else in the FP41/FP42 census holds: the
+  tangent model's laws, the FP39 storm law (1
+  touchdown, 0 HARD after the T13 arrival), the gearbox
+  (0–45 in 5.40 s, four gears in order), the fishtail
+  (peak 3.59°, sustained 2.09°), landing retention
+  (0.964 / 0.600 / 0.424 / 0.215, crane drop 1.000),
+  the body-pitch channel.
+
+Gates: preflight audit clean; parse clean; SMOKE ALL
+810, API GUARD ALL 71; render proof 172/173 (the
+standing wheel-hub reach artifact only — 0.31 m below
+the eye, identical on every baseline since FP31).
+
+Stamp: FP43 · 2026-11-03. What the seat still owes: the
+verdict — the loop's feel (including the old 16–20
+band, now joins-clean), whether the helix's two rolls
+read as a corkscrew from the driver's seat, the
+wall-ride's wall, and the four jump-ins.
