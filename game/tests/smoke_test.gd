@@ -2131,6 +2131,10 @@ func _run() -> void:
 	# census. The dip depth, the curves census, the seam
 	# segment and the drop-qualification trio are
 	# features-driven and stand as written.
+	# AMENDED (FP39, FLAGGED): the lap band only - the
+	# fair-hills rework grew the lap to 4,066 m (long
+	# brows after every grounded crest). The Wall's gain
+	# (52.4 m), the dip and the rest stand as derived.
 	main._set_track("circuit")
 	await frames(5)
 	var cf18: Dictionary = main.track_data["circuit"]["features"]
@@ -2138,7 +2142,7 @@ func _run() -> void:
 		"stage18: circuit active and closed")
 	check(float(cf18["closure_err_m"]) < 0.05,
 		"stage18: closure exact (err %.4f m)" % float(cf18["closure_err_m"]))
-	check(main.track_len >= 3400.0 and main.track_len <= 3550.0,
+	check(main.track_len >= 3980.0 and main.track_len <= 4150.0,
 		"stage18: Track 01 lap length in band (%.0f m)" % main.track_len)
 	# the seam join itself: the wrap segment is a normal segment
 	var n18: int = main.t_pts.size()
@@ -3045,6 +3049,14 @@ func _run() -> void:
 	# 208 frames (2.31 s), so its bound is re-derived
 	# < 230 - still inside the old 2.4 s timer the case
 	# exists to beat.
+	# AMENDED (FP39, FLAGGED): the climb case's band is
+	# re-derived - the Wall's crest is a brow now, so a
+	# launch staged at its top lands ON THE BROW (the
+	# road stays up to meet the flight instead of
+	# falling to the Edge Run): 206 frames, 2.29 s,
+	# measured on the reworked layout. The case's point
+	# stands (a real flight off the climb top lands,
+	# no snatch); the band is (150, 320).
 	main._set_track("circuit")
 	await frames(3)
 	main.dip_timer = 1000.0
@@ -3092,7 +3104,7 @@ func _run() -> void:
 		return [false, fa]
 	var feats29: Dictionary = main.track_data["circuit"]["features"]
 	var climb29: Array = await fly_case.call(float(feats29["climb_s1"]), 2.0, 0.0)
-	check(bool(climb29[0]) and int(climb29[1]) > 270 and int(climb29[1]) < 450,
+	check(bool(climb29[0]) and int(climb29[1]) > 150 and int(climb29[1]) < 320,
 		"stage29: climb-top launch LANDS after %.2f s of flight (no snatch)" % (float(climb29[1]) / 90.0))
 	var lip29: Array = await fly_case.call(float(feats29["gap_s0"]), 2.0, 0.0)
 	check(bool(lip29[0]) and int(lip29[1]) > 150 and int(lip29[1]) < 300,
@@ -5305,15 +5317,19 @@ func _run() -> void:
 	# AMENDED (FP37, FLAGGED): the census list is re-derived
 	# from Track 01's sector table (features["sectors"]) -
 	# one forced fall per sector family, sixteen in all.
+	# AMENDED (FP39, FLAGGED): re-derived again from the
+	# reworked sector table (the fair-hills lap is 4,066 m;
+	# "crest launches" is "twin crests" now - same family,
+	# grounded). One fall per family, sixteen in all.
 	var census49: Array = [
 		["opening flat", 100.0], ["the flair (banked)", 430.0],
-		["first crest", 635.0], ["the dive", 760.0],
-		["valley floor", 940.0], ["off-camber S", 1040.0],
-		["the wall", 1200.0], ["edge run", 1390.0],
-		["west hairpin (banked)", 1670.0], ["crest launches", 1860.0],
-		["drumbeat ridge", 2090.0], ["compression-rebound", 2270.0],
-		["the escalator", 2480.0], ["long right (banked)", 2670.0],
-		["tail return", 3010.0], ["closing hairpin", 3280.0]]
+		["first crest", 690.0], ["the dive", 900.0],
+		["valley floor", 1100.0], ["off-camber S", 1240.0],
+		["the wall", 1450.0], ["edge run", 1700.0],
+		["west hairpin (banked)", 1960.0], ["twin crests", 2250.0],
+		["drumbeat ridge", 2650.0], ["compression-rebound", 2830.0],
+		["the escalator", 3050.0], ["long right (banked)", 3300.0],
+		["tail return", 3600.0], ["closing hairpin", 3850.0]]
 	var worst49: float = 0.0
 	for case49: Array in census49:
 		main.dip_timer = 1000.0
@@ -7835,6 +7851,194 @@ func _run() -> void:
 		"stage66: TRK2's finish - the barrel run-out crosses the course end and the race completes")
 	main.test_throttle = 0.0
 	main.test_boost = false
+
+	# ---------- stage 67: Fix Pass 39 - THE FAIR HILLS ----
+	# The FP39 audit as permanent checks, on Track 01.
+	# Three instruments, all production paths:
+	# (a) the brow law as structure: the smoothed kv the
+	# physics reads stays under the separation rate on
+	# every grounded shed (brows <= 0.0045 against their
+	# 0.0032-0.0042 build rates; the Last Hump's back
+	# <= 0.0085 against 0.007);
+	# (b) the sightlines: for every formerly blind join
+	# the far side reveals itself at least 5 m before
+	# the lip from a grounded eye travelling the road
+	# (the B2 instrument - the strict B1 test from the
+	# turn exit is geometrically impossible over a
+	# falling far side, which is why the joins are
+	# grounded at all);
+	# (c) the drive audit: one staged lap - lateral
+	# velocity at every climb's foot <= 0.5 m/s, no
+	# flight longer than 30 m or 0.35 s inside any
+	# grounded join's zone, zero falls.
+	main._set_track("circuit")
+	await frames(5)
+	var f67: Dictionary = main.track_data["circuit"]["features"]
+	var sec67: Array = f67["sectors"]
+	check(main.track_len >= 3980.0 and main.track_len <= 4150.0,
+		"stage67: Track 01's lap is %.0f m after the fair-hills rework" % main.track_len)
+	check(sec67.size() == 16 and str(sec67[9][0]) == "T9 THE TWIN CRESTS",
+		"stage67: sixteen sectors and T9 is THE TWIN CRESTS (the launches are grounded)")
+	var kv67 := func(s0: float, s1: float) -> float:
+		var m: float = 0.0
+		var ss: float = s0
+		while ss <= s1:
+			m = maxf(m, absf(float(main._frame_at(ss)["kv"])))
+			ss += 1.0
+		return m
+	var t9_67: float = float(sec67[9][1])
+	var esc67: float = float(f67["stairs_s1"]) + 125.0
+	check(kv67.call(float(sec67[2][1]) + 28.0, float(sec67[2][2]) - 2.0) <= 0.0055,
+		"stage67: the First Crest's back is a brow (kv %.4f)" % kv67.call(float(sec67[2][1]) + 28.0, float(sec67[2][2]) - 2.0))
+	check(kv67.call(t9_67 + 38.0, t9_67 + 191.0) <= 0.0055,
+		"stage67: crest 1's back is a brow (kv %.4f)" % kv67.call(t9_67 + 38.0, t9_67 + 191.0))
+	# (window corrected in-pass: crest 2's face runs
+	# [218, 258] inside T9 - the first form sampled it
+	# and read its 0.030 pitch-on; the back is [258, 443].)
+	check(kv67.call(t9_67 + 256.0, t9_67 + 441.0) <= 0.0055,
+		"stage67: crest 2's back is a brow (kv %.4f)" % kv67.call(t9_67 + 256.0, t9_67 + 441.0))
+	check(kv67.call(float(f67["climb_s1"]), float(sec67[5][2])) <= 0.0045,
+		"stage67: THE WALL's brow holds its rate (kv %.4f)" % kv67.call(float(f67["climb_s1"]), float(sec67[5][2])))
+	check(kv67.call(esc67, esc67 + 93.0) <= 0.0045,
+		"stage67: the Escalator's brow holds its rate (kv %.4f)" % kv67.call(esc67, esc67 + 93.0))
+	# (window corrected in-pass, twice: T14 opens with
+	# a 15 m flat lead-in, so the back runs [+28, +58]
+	# inside the sector - the first forms sampled the
+	# face's pitch-on and the run-out's rise, both
+	# 0.016, and convicted them as the back.)
+	check(kv67.call(float(sec67[14][1]) + 30.0, float(sec67[14][1]) + 56.0) <= 0.0085,
+		"stage67: the Last Hump's back is stretched (kv %.4f)" % kv67.call(float(sec67[14][1]) + 30.0, float(sec67[14][1]) + 56.0))
+	# sightline helpers (the probe's instruments): a road
+	# point past the lip is visible from an eye if no
+	# nearer road point rises above the eye->point line.
+	var pitch67 := func(s: float) -> float:
+		return rad_to_deg(asin(clampf((main._frame_at(s)["tan"] as Vector3).y, -1.0, 1.0)))
+	var lip67 := func(s_from: float, s_to: float) -> float:
+		var pk: float = -999.0
+		var ss: float = s_from
+		while ss <= s_to:
+			pk = maxf(pk, pitch67.call(ss))
+			if pk >= 6.0 and pitch67.call(ss) <= 0.5:
+				return ss
+			ss += 1.0
+		return s_to
+	var vis67 := func(eye_s: float, lip: float) -> float:
+		var ef: Dictionary = main._frame_at(eye_s)
+		var eye: Vector3 = ef["pos"] + ef["up"] * 1.26
+		var best: float = -1.0
+		var ts: float = lip + 3.0
+		while ts <= lip + 120.0:
+			var tp: Vector3 = main._frame_at(ts)["pos"]
+			var blocked: bool = false
+			var bs: float = eye_s + 2.0
+			while bs < ts - 1.0:
+				var bp: Vector3 = main._frame_at(bs)["pos"]
+				var tt67: float = eye.distance_to(bp) / maxf(eye.distance_to(tp), 0.001)
+				if bp.y > eye.y + (tp.y - eye.y) * tt67 + 0.05:
+					blocked = true
+					break
+				bs += 2.0
+			if not blocked:
+				best = ts - lip
+				break
+			ts += 1.0
+		return best
+	var reveal67 := func(foot: float, lip: float) -> float:
+		var es: float = foot
+		while es <= lip:
+			if vis67.call(es, lip) >= 0.0:
+				return es
+			es += 2.0
+		return -1.0
+	var lip1_67: float = lip67.call(float(sec67[2][1]), float(sec67[2][2]) + 40.0)
+	var lip2_67: float = lip67.call(float(f67["climb_s0"]), float(sec67[5][2]) + 40.0)
+	var lip3_67: float = lip67.call(t9_67, t9_67 + 200.0)
+	var lip5_67: float = lip67.call(esc67 - 125.0, esc67 + 140.0)
+	check(reveal67.call(float(sec67[2][1]), lip1_67) <= lip1_67 - 5.0,
+		"stage67: J1 the First Crest's far side reveals before its lip (at s %.0f of %.0f)" % [reveal67.call(float(sec67[2][1]), lip1_67), lip1_67])
+	check(reveal67.call(float(sec67[5][1]), lip2_67) <= lip2_67 - 5.0,
+		"stage67: J2 the Wall's far side reveals before its lip (at s %.0f of %.0f)" % [reveal67.call(float(sec67[5][1]), lip2_67), lip2_67])
+	check(reveal67.call(t9_67, lip3_67) <= lip3_67 - 5.0,
+		"stage67: J3 crest 1's far side reveals before its lip (at s %.0f of %.0f)" % [reveal67.call(t9_67, lip3_67), lip3_67])
+	check(reveal67.call(esc67 - 25.0, lip5_67) <= lip5_67 - 5.0,
+		"stage67: J5 the Escalator's far side reveals before its lip (at s %.0f of %.0f)" % [reveal67.call(esc67 - 25.0, lip5_67), lip5_67])
+	var lip4_67: float = lip67.call(float(sec67[14][1]), float(sec67[14][2]) + 30.0)
+	check(reveal67.call(float(sec67[14][1]), lip4_67) <= lip4_67 - 5.0,
+		"stage67: J4 the Last Hump's far side reveals before its lip (at s %.0f of %.0f)" % [reveal67.call(float(sec67[14][1]), lip4_67), lip4_67])
+	# the drive audit: one staged lap
+	main.jitter_on = false
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await frames(3)
+	main._do_release()
+	var feet67: Array = [
+		["J1", float(sec67[2][1])], ["J2", float(sec67[5][1])],
+		["J3", t9_67], ["J3b", t9_67 + 218.0],
+		["J4", float(sec67[14][1]) + 15.0], ["J5", float(f67["stairs_s1"]) + 25.0]]
+	var zones67: Array = [
+		[float(sec67[2][1]) + 25.0, float(sec67[2][2]) + 80.0],
+		[float(f67["climb_s1"]) - 15.0, float(sec67[5][2]) + 40.0],
+		[t9_67 + 35.0, t9_67 + 200.0], [t9_67 + 205.0, float(sec67[9][2])],
+		# (zone 3 ends AT T9's end, corrected in-pass:
+		# the first form reached 40 m into DRUMBEAT
+		# RIDGE and convicted the drumbeat's own first
+		# beat - a deliberate 26 m launch at 24 m/s,
+		# stage 51's measured rhythm - as a crest-2
+		# launch. Crest 2's piece ends at the sector line.)
+		[float(sec67[14][1]) + 10.0, float(sec67[14][2]) + 40.0],
+		[esc67 - 15.0, esc67 + 130.0]]
+	var footgot67: Dictionary = {}
+	var worst67: Dictionary = {}
+	var falls67: int = 0
+	var lapdone67: bool = false
+	var prevmode67: int = main.mode
+	var seps67: float = -1.0
+	var airf67: int = 0
+	var unwrapped67: float = 0.0
+	var prevs67: float = main.car_s
+	var fr67: int = 0
+	while fr67 < 24000 and not lapdone67:
+		await physics_frame
+		fr67 += 1
+		if main.mode == main.MODE_DRIVE:
+			autopilot_fast()
+		elif main.mode == main.MODE_HANG:
+			main._do_release()
+		var cs67: float = main.car_s
+		if cs67 < prevs67 - 100.0:
+			unwrapped67 += main.track_len
+		prevs67 = cs67
+		var u67: float = unwrapped67 + cs67
+		if u67 >= main.track_len + 285.0:
+			lapdone67 = true
+		for frow67: Array in feet67:
+			if not footgot67.has(frow67[0]) and cs67 >= float(frow67[1]) and main.mode == main.MODE_DRIVE:
+				footgot67[frow67[0]] = main.lat_vel
+		if main.mode == main.MODE_AIR and prevmode67 == main.MODE_DRIVE:
+			seps67 = u67
+			airf67 = 0
+		elif main.mode == main.MODE_AIR:
+			airf67 += 1
+		elif prevmode67 == main.MODE_AIR and seps67 >= 0.0:
+			var fl67: float = u67 - seps67
+			for zi67: int in zones67.size():
+				var z67: Array = zones67[zi67]
+				if seps67 >= float(z67[0]) and seps67 <= float(z67[1]):
+					worst67[zi67] = maxf(float(worst67.get(zi67, 0.0)), fl67)
+					worst67["air" + str(zi67)] = maxf(float(worst67.get("air" + str(zi67), 0.0)), float(airf67) / 60.0)
+			seps67 = -1.0
+		if main.mode == main.MODE_HANG and prevmode67 != main.MODE_HANG:
+			falls67 += 1
+		prevmode67 = main.mode
+	check(lapdone67, "stage67: the staged lap completes on the reworked layout")
+	check(falls67 == 0, "stage67: zero falls on the staged lap (fell %d)" % falls67)
+	for frow67b: Array in feet67:
+		check(footgot67.has(frow67b[0]) and absf(float(footgot67[frow67b[0]])) <= 0.5,
+			"stage67: %s lateral velocity at the climb's foot is %.2f m/s (<= 0.5)" % [frow67b[0], float(footgot67.get(frow67b[0], -999.0))])
+	for zi67b: int in zones67.size():
+		check(float(worst67.get(zi67b, 0.0)) <= 30.0 and float(worst67.get("air" + str(zi67b), 0.0)) <= 0.35,
+			"stage67: zone %d has no launch (worst flight %.0f m, %.2f s)" % [zi67b, float(worst67.get(zi67b, 0.0)), float(worst67.get("air" + str(zi67b), 0.0))])
+	print("stage67 census: feet %s | worst flights %s" % [str(footgot67), str(worst67)])
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")
