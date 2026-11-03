@@ -427,8 +427,11 @@ func _run() -> void:
 	# face, registered last - eight controls.
 	# Fix Pass 31: the green LEAN button is DELETED with the
 	# lean experiment - seven controls.
-	check(main.dash_ctl_kinds == ["restart", "track", "seatup", "seatdn", "view", "side", "drop"],
-		"dash carries exactly the seven controls (%s)" % str(main.dash_ctl_kinds))
+	# Fix Pass 41 (Item 4): the ELEM jump-in button joins in
+	# the lean button's vacated spot, registered last - eight
+	# controls.
+	check(main.dash_ctl_kinds == ["restart", "track", "seatup", "seatdn", "view", "side", "drop", "elem"],
+		"dash carries exactly the eight controls (%s)" % str(main.dash_ctl_kinds))
 	# Fix Pass 31: the deletion's scene-level proofs - the
 	# flask beside the vacated spot does not move, and
 	# neither the lean needle's cyan (0.2, 0.9, 1.0) nor the

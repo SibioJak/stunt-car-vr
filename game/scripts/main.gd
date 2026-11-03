@@ -870,6 +870,12 @@ var t_bank: Array[float] = []
 var t_curv: Array[float] = []
 var t_gap: Array[bool] = []
 var t_kv: Array[float] = [] # vertical curvature per sample (crest +)
+var t_kvf: Array[float] = []
+# Fix Pass 41 (Item 1): the CARRIED pre-bank up per station,
+# built only on tracks whose spine folds the level frame
+# (TRK2's loop): empty everywhere else, where _frame_at's
+# level construction stands untouched.
+var t_up0: Array[Vector3] = [] # Fix Pass 41: road-FRAME curvature per sample (-(dT/ds).up, crest +)
 var track_len: float = 0.0
 # Fix Pass 10 (Item 3): two tracks, one live set of arrays.
 # track_data holds each track's Dictionary (arrays, length,
@@ -877,6 +883,8 @@ var track_len: float = 0.0
 # points the live arrays at one of them.
 var track_data: Dictionary = {}
 var active_track: String = ""
+var active_elements: Array = [] # Fix Pass 41 (Item 4): the active track's element table (funlab only), mirrored in _activate_track
+var elem_index: int = 0 # Fix Pass 41 (Item 4): the element the last jump-in targeted
 const RACE_LAPS: int = 3 # circuit race length (the ribbon is point-to-point)
 # Fix Pass 23: the FP10 loop spur is REMOVED (owner's
 # verdict after run 19: "nuke it, we'll deal with it
@@ -915,9 +923,52 @@ var car_s: float = 0.0
 var car_lat: float = 0.0
 var lat_vel: float = 0.0 # velocity across the heading (the real slip velocity)
 var speed: float = 0.0 # velocity along the heading (panel/audio/tests read this)
-var car_heading: float = 0.0 # the car's own yaw, rad (never read from the frame)
+# Fix Pass 41 (Item 1): THE TANGENT MODEL. Through FP40 the
+# car's velocity was a HORIZONTAL 2D vector (vel2) and road
+# progress was re-derived by projecting the XZ position, so
+# progress died as the road went vertical (progress ~
+# vf*cos(phi) -> 0 at phi = 90 deg): the loop wedged at the
+# wall and the corkscrew's lateral bookkeeping walked away
+# near inverted - the FP38 measurements. The velocity now
+# lives ALONG THE ROAD: vel3 is the 3D velocity state, and
+# drive_fwd is the car's forward as a 3D direction IN THE
+# ROAD'S TANGENT PLANE - transported through each frame's
+# plane as the car advances, turned by the steering as a
+# rotation about the road's up. On any road the census
+# covers the two models agree (the frame's plane is the
+# horizontal one, give or take the road's own pitch/bank);
+# past the vertical the tangent frame is the only frame
+# there is. car_heading survives as a DERIVED yaw (the
+# forward's bearing) for the readers that think in yaw -
+# cockpit, DIAG, the test autopilots - backed by
+# _heading_yaw wherever the forward stands vertical and a
+# bearing does not exist; writing it (a stage posing a
+# divergence) re-aims drive_fwd in the current plane.
+# vel2 survives as vel3's XZ shadow for the same readers.
+var _heading_yaw: float = 0.0 # backing / vertical fallback for car_heading
+var car_heading: float:
+	get:
+		if mode == MODE_DRIVE or mode == MODE_AIR:
+			if Vector2(drive_fwd.x, drive_fwd.z).length() > 0.05:
+				return atan2(-drive_fwd.x, -drive_fwd.z)
+		return _heading_yaw
+	set(value):
+		_heading_yaw = value
+		if mode == MODE_DRIVE:
+			var fh41: Vector3 = Vector3(-sin(value), 0.0, -cos(value))
+			var up41: Vector3 = _frame_at(car_s)["up"]
+			var d41: Vector3 = fh41 - up41 * fh41.dot(up41)
+			if d41.length() > 0.05:
+				drive_fwd = d41.normalized()
+var drive_fwd: Vector3 = Vector3(0.0, 0.0, -1.0) # the car's forward, in the road plane (DRIVE)
 var yaw_rate: float = 0.0 # rad/s, lagged toward the bicycle target
-var vel2: Vector2 = Vector2.ZERO # world-XZ velocity, m/s (velocity != heading)
+var vel3: Vector3 = Vector3.ZERO # the velocity state, m/s (Fix Pass 41: 3D, road frame)
+var vel2: Vector2: # world-XZ velocity shadow (velocity != heading)
+	get:
+		return Vector2(vel3.x, vel3.z)
+	set(value):
+		vel3.x = value.x
+		vel3.z = value.y
 var wheel_angle: float = 0.0
 var boost_meter: float = BOOST_START_STOCK
 var dent_level: int = 0
@@ -1483,7 +1534,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP40 · 2026-11-03"
+const BUILD_STAMP: String = "FP41 · 2026-11-03"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -2800,7 +2851,7 @@ func _build_funlab() -> Dictionary:
 	var e1_s0: float = float(b_pts.size() - 1)
 	_walk(82, 0.0, TAU, 0.0, false, TAU / 82.0)
 	_gen_phi = 0.0
-	elements.append(["E1 THE LOOP", e1_s0, float(b_pts.size() - 1), 24.0, "NO CLEAN SPEED - IT WEDGES AT THE WALL"])
+	elements.append(["E1 THE LOOP", e1_s0, float(b_pts.size() - 1), 24.0, "CLEAN 22+ OR FLOORED - UNDER 12 THE CROWN LETS GO"])
 	# Run-out: 120 m of flat - a failed loop needs room to
 	# land, be craned, and be re-taken.
 	_walk(120, 0.0, 0.0, 0.0, false)
@@ -2821,7 +2872,7 @@ func _build_funlab() -> Dictionary:
 	_walk(140, 0.0, deg_to_rad(-6.5), deg_to_rad(348.0), false, 0.006, TAU / 150.0)
 	_walk(10, 0.0, deg_to_rad(-6.5), TAU, false, 0.006, TAU / 300.0)
 	_gen_bank = 0.0
-	elements.append(["E2 THE CORKSCREW", e2_s0, float(b_pts.size() - 1), 20.0, "NO CLEAN LINE - HELD 20 GOES FURTHEST"])
+	elements.append(["E2 THE CORKSCREW", e2_s0, float(b_pts.size() - 1), 20.0, "LETS GO AT THE QUARTER-TURN - NO SPEED HOLDS IT"])
 	_walk(20, 0.0, 0.0, 0.0, false, deg_to_rad(6.5) / 20.0)
 	# The climb home: +7 deg (15 m ramp, 75 m hold, 15 m
 	# out) - the barrel roll is judged on the flat.
@@ -2842,7 +2893,7 @@ func _build_funlab() -> Dictionary:
 	_walk(6, 0.0, 0.0, 5.99, false, 0.006, 0.11)
 	_walk(6, 0.0, 0.0, TAU, false, 0.006, 0.055)
 	_gen_bank = 0.0
-	elements.append(["E3 THE BARREL ROLL", e3_s0, float(b_pts.size() - 1), 30.0, "ANY SPEED - ONE HOP AT THE EXIT"])
+	elements.append(["E3 THE BARREL ROLL", e3_s0, float(b_pts.size() - 1), 30.0, "HOPS ALL THE WAY ROUND - HELD 20-26, FLOOR 36+"])
 	_walk(130, 0.0, 0.0, 0.0, false)
 	var feats: Dictionary = {
 		"gap_s0": -1.0, "gap_s1": -1.0,
@@ -2854,6 +2905,28 @@ func _build_funlab() -> Dictionary:
 	d["root"] = root
 	d["sections"] = true
 	_activate_track(d)
+	# Fix Pass 41 (Item 4): each element's JUMP-IN station -
+	# the nearest drop-ok piece at least 20 m before the
+	# element's mouth whose own 25 m reads clean by the
+	# recovery search's criteria (the element's approach
+	# pieces pass them - E2's pitch ramp does; the element
+	# itself sits beyond the window). Searched on the built
+	# arrays with the funlab active, in _find_drop_s's
+	# discipline: 2 m strides, BACKWARD from the want, never
+	# forward - so a jump-in can never set the car down
+	# inside another element's span. Stored as the rows'
+	# 6th field; _goto_element stations the crane there.
+	for el41: Array in elements:
+		var want41: float = float(el41[1]) - 20.0
+		var ds41: float = 2.0
+		var back41: float = 0.0
+		while want41 - back41 >= 2.0:
+			var cand41: float = want41 - back41
+			if _drop_piece_ok(cand41) and _drop_runup_ok(cand41):
+				ds41 = cand41
+				break
+			back41 += 2.0
+		el41.append(ds41)
 	_build_track_meshes(d)
 	_build_funlab_furniture(root, elements)
 	return d
@@ -3060,9 +3133,102 @@ func _finalize_track(closed: bool, features: Dictionary) -> Dictionary:
 		var sp: int = (si + 1) % n if closed else mini(si + 1, n - 1)
 		b_pts[si] = 0.25 * pts_raw[sm] + 0.5 * pts_raw[si] + 0.25 * pts_raw[sp]
 		b_tan[si] = (0.25 * tan_raw[sm] + 0.5 * tan_raw[si] + 0.25 * tan_raw[sp]).normalized()
+	# Fix Pass 41 (Item 1): THE CARRIED UP. The frame's up
+	# is derived from the world up (tan x UP - see
+	# _frame_at), which FOLDS where the spine goes
+	# vertical: the cross product dies at the vertical and
+	# comes back pointing out of the road's far side, so
+	# the whole back half of a loop reads as a crest with
+	# the car on the outside. Where the level up flips
+	# against its own predecessor (dot < 0 - the fold's
+	# signature, reachable only within a degree or two of
+	# the vertical), this walk instead TRANSPORTS the up
+	# by each step's minimal rotation, and stays carried
+	# until the level up agrees with the carried one again
+	# on ordinary road - for a full ring that is exactly
+	# the exit flat, where the 360 deg of transport comes
+	# home to the level up to numerical dust. Tracks that
+	# never fold (every census track: their tangents stay
+	# 55+ deg from the vertical) store an EMPTY array and
+	# _frame_at runs its level construction untouched.
+	var upfix: Array[Vector3] = []
+	upfix.resize(n)
+	var folds41: bool = false
+	var in_carry41: bool = false
+	var carry41: Vector3 = Vector3.UP
+	for ui41: int in n:
+		var tt0: Vector3 = b_tan[ui41]
+		var sd0: Vector3 = tt0.cross(Vector3.UP)
+		if sd0.length() < 0.1:
+			sd0 = Vector3.RIGHT
+		else:
+			sd0 = sd0.normalized()
+		var lv41: Vector3 = sd0.cross(tt0).normalized()
+		if ui41 == 0:
+			carry41 = lv41
+		elif in_carry41:
+			var ax41: Vector3 = b_tan[ui41 - 1].cross(tt0)
+			if ax41.length() > 0.0000001:
+				carry41 = carry41.rotated(ax41.normalized(),
+					asin(clampf(ax41.length(), -1.0, 1.0)))
+			carry41 = (carry41 - tt0 * carry41.dot(tt0)).normalized()
+			if lv41.dot(carry41) > 0.99 and absf(tt0.y) < 0.85:
+				in_carry41 = false
+				carry41 = lv41
+		elif lv41.dot(carry41) < 0.0:
+			in_carry41 = true
+			folds41 = true
+			var ax42: Vector3 = b_tan[ui41 - 1].cross(tt0)
+			if ax42.length() > 0.0000001:
+				carry41 = carry41.rotated(ax42.normalized(),
+					asin(clampf(ax42.length(), -1.0, 1.0)))
+			carry41 = (carry41 - tt0 * carry41.dot(tt0)).normalized()
+		else:
+			carry41 = lv41
+		upfix[ui41] = carry41
+	if not folds41:
+		upfix.clear()
+	# Fix Pass 41 (Item 1): the ROAD-FRAME curvature, kvf =
+	# -(dT/ds).up with the frame built exactly as _frame_at
+	# builds it - the rate the tangent turns toward the
+	# road's own up, crest-positive like kv. kv above is the
+	# ELEVATION angle's rate and folds at the vertical (asin
+	# cannot tell the loop's back half from a crest); kvf is
+	# differenced from the tangent vectors themselves and
+	# stays honest all the way around a ring - the loop reads
+	# ~-1/R end to end, concave, the road pressing the car
+	# in. Read by the steep-regime load law in
+	# _update_suspension (through _frame_at's "kvf" key);
+	# nowhere else - the elevation kv keeps every job it had.
+	var kvf: Array[float] = []
+	kvf.resize(n)
+	for fi41: int in n:
+		var fm41: int = (fi41 - 1 + n) % n if closed else maxi(fi41 - 1, 0)
+		var fp41: int = (fi41 + 1) % n if closed else mini(fi41 + 1, n - 1)
+		var tt41: Vector3 = b_tan[fi41]
+		# The frame here is the build's own: the carried up
+		# where the walk carried it, the level up elsewhere
+		# (identical values off the funlab by construction).
+		var up041: Vector3
+		var sd41: Vector3
+		if upfix.size() > 0:
+			up041 = upfix[fi41]
+			sd41 = tt41.cross(up041).normalized()
+		else:
+			sd41 = tt41.cross(Vector3.UP)
+			if sd41.length() < 0.1:
+				sd41 = Vector3.RIGHT
+			else:
+				sd41 = sd41.normalized()
+			up041 = sd41.cross(tt41).normalized()
+		var bk41: float = b_bank[fi41]
+		var sd_b41: Vector3 = (sd41 * cos(bk41) + up041 * sin(bk41)).normalized()
+		var up_b41: Vector3 = sd_b41.cross(tt41).normalized()
+		var span41: float = float(fp41 - fm41) if not closed else 2.0
+		kvf[fi41] = -((b_tan[fp41] - b_tan[fm41]) / span41).dot(up_b41)
 	return {
 		"pts": b_pts, "tan": b_tan, "bank": b_bank, "curv": b_curv,
-		"gap": b_gap, "kv": kv,
+		"gap": b_gap, "kv": kv, "kvf": kvf, "up0": upfix,
 		"len": float(n) if closed else float(n - 1),
 		"closed": closed, "features": features}
 
@@ -3077,6 +3243,9 @@ func _activate_track(d: Dictionary) -> void:
 	t_curv = d["curv"]
 	t_gap = d["gap"]
 	t_kv = d["kv"]
+	t_kvf = d["kvf"]
+	t_up0 = d["up0"]
+	active_elements = d["features"].get("elements", [])
 	track_len = float(d["len"])
 	track_closed = bool(d["closed"])
 	var f: Dictionary = d["features"]
@@ -3460,6 +3629,21 @@ func _frame_at(s: float) -> Dictionary:
 	if side.length() < 0.1:
 		side = Vector3.RIGHT
 	var upv: Vector3 = side.cross(tanv).normalized()
+	# Fix Pass 41 (Item 1): THE CARRIED FRAME. The level
+	# construction above derives the up from the WORLD up
+	# (tan x UP) - which folds where the spine goes
+	# vertical: past the fold the up points out of the
+	# road's far side and the road beyond reads as a crest.
+	# Tracks whose build found a fold (only TRK2) carry a
+	# transported up per station (see _finalize_track);
+	# where it exists it replaces the level up before the
+	# bank is applied - the same frame, carried around.
+	if t_up0.size() > 0:
+		var u_l: Vector3 = t_up0[i0].lerp(t_up0[i1], fr)
+		u_l = u_l - tanv * u_l.dot(tanv)
+		if u_l.length() > 0.05:
+			upv = u_l.normalized()
+			side = tanv.cross(upv).normalized()
 	var side_b: Vector3 = (side * cos(bank) + upv * sin(bank)).normalized()
 	var up_b: Vector3 = side_b.cross(tanv).normalized()
 	return {
@@ -3467,6 +3651,7 @@ func _frame_at(s: float) -> Dictionary:
 		"bank": bank, "curv": lerpf(t_curv[i0], t_curv[i1], fr),
 		"gap": t_gap[i0] or t_gap[i1],
 		"kv": lerpf(t_kv[i0], t_kv[i1], fr),
+		"kvf": lerpf(t_kvf[i0], t_kvf[i1], fr),
 	}
 
 
@@ -3608,13 +3793,23 @@ func _project_to_spine(p: Vector3, hint: float, wide: bool = false) -> Array:
 	return [s, (p - fr["pos"]).dot(fr["side"])]
 
 
-func _sync_vel2_from_speed_lat() -> void:
-	# Rebuild the world velocity from the heading-frame pair
+func _sync_vel_from_speed_lat(fr: Dictionary) -> void:
+	# Rebuild the velocity vector from the drive-frame pair
 	# (speed, lat_vel) - used at transitions where those two are
 	# the authoritative state (air entry from the suspension).
-	var f: Vector3 = _heading_fwd()
-	var r: Vector3 = _heading_right()
-	vel2 = Vector2(f.x, f.z) * speed + Vector2(r.x, r.z) * lat_vel
+	# Fix Pass 41 (Item 1): the pair composes in the ROAD's axes
+	# (drive_fwd and its in-plane right), so the flight is born
+	# with the velocity the car actually has along the road it
+	# is leaving - pre-FP41 this built the horizontal vel2 and
+	# _enter_air composed the vertical from the slope after.
+	var up41: Vector3 = fr["up"]
+	var d41: Vector3 = drive_fwd - up41 * drive_fwd.dot(up41)
+	if d41.length() < 0.05:
+		d41 = fr["tan"]
+	else:
+		d41 = d41.normalized()
+	var r41: Vector3 = d41.cross(up41)
+	vel3 = d41 * speed + r41 * lat_vel
 
 
 func _enter_air(from_gap: bool, extra_vy: float) -> void:
@@ -3624,11 +3819,16 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 	# spine tangent), not the heading - a sliding car leaves the
 	# lip along its motion. Heading is NOT integrated in AIR:
 	# no yaw authority airborne (the original's discipline too).
+	# Fix Pass 41 (Item 1): the velocity state is already the
+	# car's true 3D velocity (vel3, road frame) - the flight is
+	# born with it whole, plus the caller's vertical increment
+	# (the suspension's throw). The pre-FP41 slope composition
+	# that stood here divided by the tangent's horizontal run
+	# and could not be evaluated at a vertical road at all.
 	var fr: Dictionary = _frame_at(car_s)
-	var t3: Vector3 = fr["tan"]
-	var t2 := Vector2(t3.x, t3.z)
-	var vy: float = vel2.dot(t2) * t3.y / maxf(t2.length_squared(), 0.04) + extra_vy
-	air_vel = Vector3(vel2.x, vy, vel2.y)
+	air_vel = vel3 + Vector3.UP * extra_vy
+	if Vector2(drive_fwd.x, drive_fwd.z).length() > 0.05:
+		_heading_yaw = atan2(-drive_fwd.x, -drive_fwd.z)
 	air_s_est = car_s
 	air_start_s = car_s # Fix Pass 10 (Item 1): the fall starts HERE
 	air_time = 0.0
@@ -4040,6 +4240,27 @@ func _build_cockpit() -> void:
 	drop_btn_node = dbt
 	_register_dash_ctl(dbt, "drop")
 	_apply_drop_btn_side()
+	# Fix Pass 41 (Item 4): the green ELEM button - the
+	# funlab jump-in (see _cycle_element): on TRK2 it
+	# stations the crane at the next element's run-up; on
+	# any other track it has no elements to name. It stands
+	# at -0.52, the spot the lean toggle vacated in FP31,
+	# 0.17 m left of VIEW in the row's own spacing, and is
+	# registered LAST of the dash controls so no earlier
+	# control's index (and no stage keyed on them) moves.
+	var elt := Node3D.new()
+	elt.position = Vector3(-0.52, 0.95, -0.60) # on the dash (as restart)
+	car_body.add_child(elt)
+	var el_mi := MeshInstance3D.new()
+	var el_m := CylinderMesh.new()
+	el_m.top_radius = 0.036
+	el_m.bottom_radius = 0.036
+	el_m.height = 0.04
+	el_mi.mesh = el_m
+	el_mi.material_override = _mat_unshaded(Color(0.25, 0.8, 0.3))
+	el_mi.name = "ElemBtnMesh"
+	elt.add_child(el_mi)
+	_register_dash_ctl(elt, "elem")
 	# Fix Pass 26 (Item 1): the TURBO FLASK - the boost meter
 	# as a liquid vessel set into the dash-TOP button row,
 	# built with the cockpit (NOT on either info panel: it
@@ -4153,7 +4374,7 @@ func _build_cockpit() -> void:
 	panel_label = Label3D.new()
 	panel_label.position = Vector3(-0.368, 0.555, 0.02)
 	panel_label.font_size = 30
-	panel_label.pixel_size = 0.00084 # FP12: the controls list grew (shifter/panels lines); ~9% smaller type keeps it on its board. FP29: the list grew again (steering-mode line, stick + X named); the FP29 render proof measured the text at 1.46 m tall against the 1.24 m board, so the type shrinks again by the measured ratio - same FP12 remedy, new number.
+	panel_label.pixel_size = 0.000785 # FP12: the controls list grew (shifter/panels lines); ~9% smaller type keeps it on its board. FP29: the list grew again (steering-mode line, stick + X named); the FP29 render proof measured the text at 1.46 m tall against the 1.24 m board, so the type shrinks again by the measured ratio - same FP12 remedy, new number. FP41: the list grew again (the ELEM jump-in lines, VR + desktop); the FP41 render proof measured the text at 1.31 m tall against the 1.24 m board, so the type shrinks again by the measured ratio - same remedy, new number.
 	panel_label.width = 640.0
 	panel_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel_label.modulate = Color(0.92, 0.95, 1.0)
@@ -4284,6 +4505,7 @@ func _panel_text() -> String:
 	lines.append("Call crane: L X button (while driving)")
 	lines.append("Jitter exp: R stick click")
 	lines.append("Dash buttons (GRIP): red restart, purple track, amber view A/B, blue drop side")
+	lines.append("TRK2 elements: green ELEM dash button - crane jumps you to the next element's run-up")
 	lines.append("Recenter: L stick click")
 	lines.append("restart race: L Y button")
 	lines.append("Panels: R B button (show/hide)")
@@ -4293,6 +4515,7 @@ func _panel_text() -> String:
 	lines.append("TAB panels, L lift, J jitter, G view A/B, M drop side")
 	lines.append("PgUp/PgDn seat trim, R restart race")
 	lines.append("C recenter, V track")
+	lines.append("E next element (TRK2), F1/F2/F3 jump to element 1/2/3 (TRK2)")
 	# Fix Pass 4: the DIAG block no longer appends here - it renders
 	# on its own board (diag_label) via _update_panel.
 	return "\n".join(lines)
@@ -4384,7 +4607,7 @@ func _diag_zone_line() -> String:
 	# lever is a dead CHANNEL (grip reads 0.00 above) or a
 	# hand that never entered the zone.
 	var short: Dictionary = {"restart": "RST", "track": "TRK",
-		"seatup": "SUP", "seatdn": "SDN", "view": "VIEW", "side": "SIDE", "drop": "DROP"}
+		"seatup": "SUP", "seatdn": "SDN", "view": "VIEW", "side": "SIDE", "drop": "DROP", "elem": "ELEM"}
 	var near_l: int = _dash_ctl_near(_hand_pos("L"))
 	var near_r: int = _dash_ctl_near(_hand_pos("R"))
 	# Fix Pass 20 (Item 1): the drop control is a dash control
@@ -4978,6 +5201,16 @@ func _input(event: InputEvent) -> void:
 			_toggle_panels()
 		KEY_C:
 			_recenter()
+		KEY_E:
+			# Fix Pass 41 (Item 4): the desktop twin of the
+			# green ELEM dash button - next element (TRK2).
+			_cycle_element()
+		KEY_F1:
+			_goto_element(0) # Fix Pass 41 (Item 4): direct jump-ins (TRK2; F-keys - 1/2/3 are the prep switches)
+		KEY_F2:
+			_goto_element(1)
+		KEY_F3:
+			_goto_element(2)
 
 
 
@@ -6001,6 +6234,8 @@ func _activate_dash_ctl(kind: String) -> void:
 		_toggle_view_gain()
 	elif kind == "side":
 		_toggle_drop_btn_side()
+	elif kind == "elem":
+		_cycle_element() # Fix Pass 41 (Item 4): the funlab jump-in
 
 
 # ---------------------------------------------------------------- actions
@@ -6025,10 +6260,11 @@ func start_race() -> void:
 	speed = 0.0
 	# Fix Pass 9: free-heading state starts aligned to the drop
 	# section, at rest (the release re-derives it anyway).
-	vel2 = Vector2.ZERO
+	vel3 = Vector3.ZERO
 	yaw_rate = 0.0
 	edge_roll = 0.0
 	car_heading = _frame_yaw(_frame_at(2.0)["tan"])
+	drive_fwd = _frame_at(2.0)["tan"] # Fix Pass 41: the tangent state starts aligned too
 	wheel_angle = 0.0
 	boost_meter = BOOST_START_STOCK # Fix Pass 24: the stake (was the whole one-shot ration)
 	dent_level = 0
@@ -6178,12 +6414,20 @@ func _begin_recovery(_catch_pos: Vector3, from_s: float) -> void:
 	is_drop_start = false
 	speed = 0.0
 	lat_vel = 0.0
-	vel2 = Vector2.ZERO
+	vel3 = Vector3.ZERO
 	yaw_rate = 0.0
 	edge_roll = 0.0
 	hang_phase = "attach"
 	anchor_t = 0.0
 	drop_target_s = _find_drop_s(from_s)
+	_setup_hang_at()
+
+
+func _setup_hang_at() -> void:
+	# Fix Pass 41 (Item 4): the hang setup at drop_target_s,
+	# extracted from _begin_recovery so the funlab jump-in
+	# stations the crane by the same code the recovery uses -
+	# one hang, however the car came to be collected.
 	var fr: Dictionary = _frame_at(drop_target_s)
 	# Fix Pass 2: world-up hang anchor (see start_race) - the car must
 	# hang centred over the ribbon, not offset along a tilted frame up.
@@ -6231,6 +6475,58 @@ func _begin_recovery(_catch_pos: Vector3, from_s: float) -> void:
 	pend_th_l = 0.22
 	pend_om_f = 0.0
 	pend_om_l = 0.0
+
+
+func _goto_element(idx: int) -> void:
+	# Fix Pass 41 (Item 4): THE FUNLAB JUMP-IN. The FP38
+	# build strung TRK2's elements in series behind a known
+	# blocker (the loop wedged; the owner: "Cant get around
+	# loop so cant see other track elements") - a lab whose
+	# pieces gate each other is not a lab. Every element now
+	# has its own station (its row's 6th field, searched at
+	# build): the crane collects the car off-stage, exactly
+	# as a recovery does, and carries it to that element's
+	# run-up. From the hang, from a drive, from a flight -
+	# the collection is the recovery's own shape, so the
+	# DROP button releases from the new hang in every phase
+	# (FP22's law) and no element can ever gate another.
+	if active_track != "funlab":
+		return
+	if idx < 0 or idx >= active_elements.size():
+		return
+	var el41: Array = active_elements[idx]
+	elem_index = idx
+	mode = MODE_HANG
+	is_drop_start = false
+	speed = 0.0
+	lat_vel = 0.0
+	vel3 = Vector3.ZERO
+	yaw_rate = 0.0
+	edge_roll = 0.0
+	hang_phase = "attach"
+	anchor_t = 0.0
+	drop_target_s = float(el41[5])
+	_setup_hang_at()
+	_grab_event("ELEM JUMP %s -> S %.0f" % [String(el41[0]), drop_target_s])
+	_update_panel()
+
+
+func _cycle_element() -> void:
+	# Fix Pass 41 (Item 4): the ELEM control's ruling - jump
+	# to the NEXT element ahead of where the car answers
+	# from (its drop station while hanging, its s while
+	# driving), wrapping past the last element back to E1.
+	# On any other track the control has no elements to
+	# name and does nothing.
+	if active_track != "funlab" or active_elements.is_empty():
+		return
+	var ref41: float = drop_target_s if mode == MODE_HANG else car_s
+	var pick41: int = 0
+	for i41: int in active_elements.size():
+		if float(active_elements[i41][1]) > ref41 + 5.0:
+			pick41 = i41
+			break
+	_goto_element(pick41)
 
 
 # Fix Pass 10 (Item 1): DROP_MIN_RUNUP_M - the hazard-free road a
@@ -6375,6 +6671,7 @@ func _do_release() -> void:
 	# settled dangle equals the drop section's direction).
 	# The horizontal air velocity becomes the velocity vector.
 	car_heading = orient_yaw
+	drive_fwd = Vector3(-sin(orient_yaw), 0.0, -cos(orient_yaw)) # Fix Pass 41: the flight's forward (the landing re-derives the drive state from it)
 	# Fix Pass 20 (Item 3): SURFACE THE RULING - every release
 	# records its heading against the drop section's travel
 	# direction and logs it (the grab log file, the event ring,
@@ -6393,7 +6690,7 @@ func _do_release() -> void:
 	_grab_event("RELEASE s%.0f HDG %+.1f SEC %+.1f ERR %+.1f" % [
 		last_release_s, last_release_hdg_deg, last_release_sec_deg, last_release_err_deg])
 	yaw_rate = 0.0
-	vel2 = Vector2(air_vel.x, air_vel.z)
+	vel3 = air_vel
 	mode = MODE_AIR
 	contact_label.text = ""
 	contact_readout_t = 0.0
@@ -6533,7 +6830,7 @@ func _update_drive(delta: float) -> void:
 	# load decision was made in _update_suspension last frame.
 	if bounce_pending:
 		bounce_pending = false
-		_sync_vel2_from_speed_lat()
+		_sync_vel_from_speed_lat(_frame_at(car_s))
 		_enter_air(false, bounce_vy)
 		# Fix Pass 14 (Item 1): remember HOW this flight began -
 		# a rebound's own landing must not arm a second energy
@@ -6543,12 +6840,29 @@ func _update_drive(delta: float) -> void:
 		rebound_gate_vy = 0.0
 		return
 	var fr: Dictionary = _frame_at(car_s)
-	var tanv: Vector3 = fr["tan"]
-	# Decompose the velocity against the CURRENT heading.
-	var f0: Vector3 = _heading_fwd()
-	var r0: Vector3 = _heading_right()
-	var vf: float = vel2.dot(Vector2(f0.x, f0.z))
-	var vl: float = vel2.dot(Vector2(r0.x, r0.z))
+	# Fix Pass 41 (Item 1): THE TANGENT DECOMPOSITION. The
+	# forward is transported into THIS frame's tangent plane
+	# (project out the road's up, renormalize - the rotation-
+	# minimizing carry across one sample step), and the
+	# velocity decomposes against the forward and its
+	# in-plane right. On the flat this is the pre-FP41
+	# heading decomposition to the digit (the plane IS the
+	# horizontal); on a pitched or banked road the forward
+	# rides the surface the car is glued to; at the vertical
+	# and past it, the plane is the only frame that exists.
+	# A forward the projection cannot carry (it stood along
+	# the up - a 90 deg skid at the exact vertical) falls
+	# back to the road's own tangent for one frame.
+	var up41: Vector3 = fr["up"]
+	var d41: Vector3 = drive_fwd - up41 * drive_fwd.dot(up41)
+	if d41.length() < 0.05:
+		d41 = fr["tan"]
+	else:
+		d41 = d41.normalized()
+	drive_fwd = d41
+	var r41: Vector3 = d41.cross(up41)
+	var vf: float = vel3.dot(d41)
+	var vl: float = vel3.dot(r41)
 	# Longitudinal: engine / brake / boost / drag / slope gravity -
 	# the same terms the slaved model had, applied to vf.
 	# Fix Pass 36 (Item B1): the engine and boost forces are
@@ -6632,7 +6946,16 @@ func _update_drive(delta: float) -> void:
 	var accel: float = tire_long
 	accel -= in_brake * 14.0
 	accel -= vf * 0.10
-	accel += -GRAV * tanv.y * 0.85 # slope gravity: climbs bite, descents push
+	# Fix Pass 41 (Item 1): slope gravity is gravity's
+	# component along the car's own forward (0.85 = the
+	# standing drivetrain factor). Aligned on a slope this
+	# is the pre-FP41 -GRAV * tan.y * 0.85 to the digit;
+	# angled across a slope the hill now pulls the way the
+	# nose points, and up the loop's wall it is the force
+	# the climb is priced against (tan.y * 0.85 read the
+	# road the same way - the terms agree wherever the car
+	# follows the road).
+	accel += -GRAV * d41.y * 0.85 # slope gravity: climbs bite, descents push
 	vf = clampf(vf + accel * delta, -6.0, TOP_SPEED)
 	if in_brake > 0.05 and vf < 0.5 and vf > -0.5:
 		vf = 0.0
@@ -6649,17 +6972,36 @@ func _update_drive(delta: float) -> void:
 	var front_angle: float = steer * MAX_LOCK_RAD * lock_scale
 	var omega_target: float = clampf(-vf / WHEELBASE * tan(front_angle), -MAX_YAW_RATE, MAX_YAW_RATE)
 	yaw_rate = lerpf(yaw_rate, omega_target, clampf(delta / YAW_TAU, 0.0, 1.0))
-	car_heading = wrapf(car_heading + yaw_rate * delta, -PI, PI)
-	# The accelerated velocity, decomposed against the NEW
-	# heading: turning the car under a fixed velocity vector is
-	# what creates lateral velocity in the first place.
-	var v_acc: Vector3 = f0 * vf + r0 * vl
-	var f1: Vector3 = _heading_fwd()
-	var r1: Vector3 = _heading_right()
-	vf = v_acc.dot(f1)
-	vl = v_acc.dot(r1)
-	var side_align: float = Vector3(fr["side"]).dot(r1)
-	vl += -GRAV * sin(float(fr["bank"])) * side_align * delta
+	# Fix Pass 41 (Item 1): the yaw turns the forward IN THE
+	# ROAD PLANE - a rotation about the road's up by the same
+	# yaw increment the heading used to integrate. On the
+	# flat (up = world up) this is the old heading step to
+	# the digit; on a wall or inverted it is the same turn in
+	# the plane the car drives in, so steering right still
+	# turns the nose toward the car's own right, crown or no
+	# crown. The accelerated velocity, decomposed against
+	# the NEW axes: turning the car under a fixed velocity
+	# vector is what creates lateral velocity in the first
+	# place.
+	var v_acc: Vector3 = d41 * vf + r41 * vl
+	if yaw_rate != 0.0:
+		d41 = d41.rotated(up41, yaw_rate * delta).normalized()
+		drive_fwd = d41
+		r41 = d41.cross(up41)
+	vf = v_acc.dot(d41)
+	vl = v_acc.dot(r41)
+	# Refresh the yaw mirror's backing while a bearing
+	# exists (the car_heading getter's vertical fallback).
+	if Vector2(d41.x, d41.z).length() > 0.05:
+		_heading_yaw = atan2(-d41.x, -d41.z)
+	# Fix Pass 41 (Item 1): bank gravity is gravity's own
+	# component along the in-plane right. Aligned on a
+	# banked road this is the old -GRAV * sin(bank) feed
+	# (the old term carried one further cos(bank) of
+	# projection through the horizontal right); past 90 deg
+	# of bank it keeps pulling the car down the face at full
+	# strength, which is the corkscrew's whole story.
+	vl += -GRAV * r41.y * delta
 	# Fix Pass 14 (Item 5): the bleed scales by the load the
 	# corners carry (load_grip, from _update_suspension). A
 	# slide across an unloading crest keeps most of its
@@ -6743,9 +7085,15 @@ func _update_drive(delta: float) -> void:
 	slip_state = clampf((absf(vl) - AUDIO_SLIP_ONSET) / AUDIO_SLIP_SPAN, 0.0, 1.0)
 	speed = vf
 	lat_vel = vl
-	vel2 = Vector2(f1.x, f1.z) * vf + Vector2(r1.x, r1.z) * vl
-	# Integrate the world position; height comes from placement.
-	car.global_position += Vector3(vel2.x, 0.0, vel2.y) * delta
+	# Fix Pass 41 (Item 1): the velocity composes in the road
+	# plane and the position integrates in 3D - the car
+	# climbs the wall it is glued to instead of pushing its
+	# XZ shadow against it. Height still comes from
+	# placement (the surface under (s, lat)); the velocity's
+	# own rise is what carries s along the spine's 3D path
+	# when the projection re-derives it below.
+	vel3 = d41 * vf + r41 * vl
+	car.global_position += vel3 * delta
 	# Derive (s, lat) from where the car actually is now.
 	var prev_s: float = car_s
 	var pr: Array = _project_to_spine(car.global_position, car_s)
@@ -6795,14 +7143,28 @@ func _place_car_on_track(fr: Dictionary) -> void:
 	# pitch_extra stays OFF this basis - it rides on car_body
 	# (the spring pitch visual), exactly as before.
 	var pos: Vector3 = fr["pos"] + fr["side"] * car_lat + fr["up"] * (CLEARANCE + heave_off)
-	var psi: float = wrapf(car_heading - _frame_yaw(fr["tan"]), -PI, PI)
-	var slope_ang: float = asin(clampf(Vector3(fr["tan"]).y, -1.0, 1.0))
-	var bank: float = float(fr["bank"])
-	var pitch_a: float = slope_ang * cos(psi) - bank * sin(psi)
-	var roll_a: float = bank * cos(psi) + slope_ang * sin(psi) + edge_roll
-	var b := Basis(Vector3.UP, car_heading)
-	b = b.rotated(b.x, pitch_a)
-	b = b.rotated(b.z, roll_a)
+	# Fix Pass 41 (Item 1): the basis IS the road frame,
+	# twisted by the car's in-plane heading: x = the in-plane
+	# right (drive_fwd x up), y = the road's up, z = back
+	# along -drive_fwd. The pre-FP41 construction (world yaw,
+	# then slope/bank re-expressed through the heading offset
+	# psi) was this same frame approximated through asin -
+	# which folds at the vertical, so it could neither stand
+	# the car on a wall nor turn it over a crown. On ordinary
+	# roads the two agree to within the approximation's own
+	# error; the straddle wobble (edge_roll, from the corner
+	# attach heights) still rides on top, about the car's own
+	# longitudinal axis, and pitch_extra stays on car_body.
+	var up41: Vector3 = fr["up"]
+	var d41: Vector3 = drive_fwd - up41 * drive_fwd.dot(up41)
+	if d41.length() < 0.05:
+		d41 = Vector3(fr["tan"])
+	else:
+		d41 = d41.normalized()
+	var r41: Vector3 = d41.cross(up41)
+	var b := Basis(r41, up41, -d41)
+	if edge_roll != 0.0:
+		b = b.rotated(b.z, edge_roll)
 	car.global_transform = Transform3D(b, pos)
 
 
@@ -7039,16 +7401,32 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	thump_arm[0] = clampf(vy * LAND_CV_FRONT / 9.0, 0.0, 1.0)
 	thump_arm[1] = clampf(vy * LAND_CV_REAR / 9.0, 0.0, 1.0)
 	thump_age = 0.0
-	# Fix Pass 9: the velocity vector lands with the car - the
-	# horizontal air velocity becomes vel2 under the (frozen)
-	# heading, keeping its lateral part, with the old minimum
-	# forward guarantee (a dead drop still rolls away at 4 m/s
-	# along the heading). (s, lat) are then re-derived from the
+	# Fix Pass 9: the velocity vector lands with the car,
+	# keeping its lateral part, with the old minimum forward
+	# guarantee (a dead drop still rolls away at 4 m/s along
+	# the heading). (s, lat) are then re-derived from the
 	# car's actual position by wide projection.
-	vel2 = Vector2(air_vel.x, air_vel.z)
-	var f2: Vector3 = _heading_fwd()
-	var r2: Vector3 = _heading_right()
-	var vf_land: float = vel2.dot(Vector2(f2.x, f2.z))
+	# Fix Pass 41 (Item 1): the landing is taken IN THE ROAD
+	# FRAME - the forward is the flight's own forward (the
+	# frozen basis's) projected into the landing frame's
+	# plane, and the velocity keeps every component that
+	# plane holds: the road takes the normal component (the
+	# springs grade it above) and the plane keeps the rest.
+	# On a flat landing this is the pre-FP41 horizontal
+	# decomposition to the digit; on a slope-matched arrival
+	# the along-road speed now includes the fall the road
+	# was already grading as its own.
+	var up41: Vector3 = fr["up"]
+	var fb41: Vector3 = -car.global_transform.basis.z.normalized()
+	var d41: Vector3 = fb41 - up41 * fb41.dot(up41)
+	if d41.length() < 0.05:
+		d41 = Vector3(fr["tan"])
+	else:
+		d41 = d41.normalized()
+	drive_fwd = d41
+	var r41: Vector3 = d41.cross(up41)
+	vel3 = air_vel - up41 * air_vel.dot(up41)
+	var vf_land: float = vel3.dot(d41)
 	# Fix Pass 13 (Item 1): the minimum-forward guarantee tops
 	# up only a FORWARD contact. The old code floored every
 	# landing to the same 4 m/s, which erased the fore-aft half
@@ -7059,13 +7437,13 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	# backward and the driver recovers it, which is the cost
 	# of the mistimed release, honestly come by.
 	if vf_land >= 0.0 and vf_land < 4.0:
-		vel2 += Vector2(f2.x, f2.z) * (4.0 - vf_land)
+		vel3 += d41 * (4.0 - vf_land)
 		vf_land = 4.0
 	elif vf_land > TOP_SPEED:
-		vel2 -= Vector2(f2.x, f2.z) * (vf_land - TOP_SPEED)
+		vel3 -= d41 * (vf_land - TOP_SPEED)
 		vf_land = TOP_SPEED
 	speed = vf_land
-	lat_vel = vel2.dot(Vector2(r2.x, r2.z))
+	lat_vel = vel3.dot(r41)
 	# Fix Pass 36 (Part C): the yaw rate the car left the
 	# road with is restored, damped by the flight's length
 	# (pre-FP36 this line zeroed it - see AIR_YAW_DAMP).
@@ -7080,7 +7458,13 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	# across. Graded against thresholds taken from the staged
 	# sway-zero / sway-peak distribution (smoke stage 30).
 	contact_lat_speed = absf(lat_vel)
-	contact_head_err = rad_to_deg(wrapf(car_heading - _frame_yaw(fr["tan"]), -PI, PI))
+	# Fix Pass 41 (Item 1): the heading error is the in-plane
+	# angle between the landed forward and the road's
+	# tangent, signed in the old convention (positive = nose
+	# toward -side) - on a flat road the two are the same
+	# number; on a banked or pitched one the in-plane angle
+	# is the angle the getaway actually has to kill.
+	contact_head_err = -rad_to_deg(atan2(d41.dot(Vector3(fr["side"])), d41.dot(Vector3(fr["tan"]))))
 	if contact_lat_speed <= CONTACT_CLEAN_LAT and absf(contact_head_err) <= CONTACT_CLEAN_HDG:
 		contact_grade = "CLEAN"
 	elif contact_lat_speed <= CONTACT_SCRUB_LAT and absf(contact_head_err) <= CONTACT_SCRUB_HDG:
@@ -7119,7 +7503,7 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 				land_retention = clampf(0.78 - vy * 0.022, 0.30, 0.62)
 		land_retention *= clampf(1.05 - misalign * 0.006, 0.75, 1.0)
 		if land_retention < 1.0:
-			vel2 -= Vector2(f2.x, f2.z) * vf_land * (1.0 - land_retention)
+			vel3 -= d41 * vf_land * (1.0 - land_retention)
 			vf_land *= land_retention
 			speed = vf_land
 	_pay_for_landing() # Fix Pass 24 (Item 1): the air exchange (crane drops refused inside)
@@ -7693,10 +8077,28 @@ func _update_suspension(delta: float) -> void:
 		# (the wobble) through the lagged edge_roll in placement.
 		# Steering back restores the support: the save.
 		var car_pos: Vector3 = car.global_position
-		var hf: Vector3 = _heading_fwd()
-		var hr: Vector3 = _heading_right()
 		var up_c: Vector3 = fr["up"]
 		var pos_c: Vector3 = fr["pos"]
+		# Fix Pass 41 (Item 1): the wheels are sampled where
+		# the car actually points - the in-plane forward and
+		# its right - not the horizontal heading's shadow. On
+		# ordinary roads the two placements differ only by
+		# the road's own pitch/bank foreshortening; on the
+		# funlab's steep pieces the horizontal offsets were
+		# meaningless (the front wheels of a car on a wall
+		# are UP the wall, not ahead on the flat).
+		var hf: Vector3 = drive_fwd
+		var hr: Vector3 = hf.cross(up_c)
+		if hr.length() < 0.05:
+			hr = Vector3(fr["side"])
+		else:
+			hr = hr.normalized()
+		# Fix Pass 41 (Item 1): the steep regime's bookkeeping
+		# (see the load law inside the loop): which corners
+		# are being read by the road-frame law this frame, and
+		# whether ALL of them are (the fall-off gate below).
+		var wheel_steep41: Array[bool] = [false, false, false, false]
+		var frame_fall41: bool = true
 		for wi: int in 4:
 			var wl: Vector2 = WHEEL_LOCALS[wi]
 			var wp: Vector3 = car_pos + hr * wl.x - hf * wl.y
@@ -7726,7 +8128,36 @@ func _update_suspension(delta: float) -> void:
 			wheel_kv[wi] = _patch_kv(sup_s[wi], wlat)
 			var tan_wy: float = Vector3(wfr["tan"]).y
 			var cos_w: float = maxf(sqrt(maxf(1.0 - tan_wy * tan_wy, 0.0)), 0.5)
-			wheel_load[wi] = clampf(1.0 - speed * speed * wheel_kv[wi] / (GRAV * cos_w), 0.0, 1.25) if sup_ok[wi] else 0.0
+			# Fix Pass 41 (Item 1): THE STEEP REGIME. Where
+			# the road's up at this patch has tipped past
+			# ~60 deg from the world's (up.y < 0.5 - the
+			# loop's walls and crown, the rolls' inverted
+			# bands), the height-stencil curvature above is
+			# meaningless: it prices the surface by world
+			# heights and divides by the tangent's horizontal
+			# run, which vanishes at the vertical. There the
+			# load is the ROAD-FRAME NORMAL FORCE instead,
+			# N = -v^2 * kvf - g.vec . up, in units of g:
+			# kvf is the frame curvature from the build and
+			# v the along-road speed. At the loop's crown it
+			# reads v^2/R - g (a slow car falls off the ring,
+			# a fast one is pressed in); past 90 deg of bank
+			# it reads gravity's own component, which no
+			# speed fixes; on the loop's climbing wall it
+			# reads v^2/R + g (pressed). No census track
+			# tips its up past 0.87, so the regime is
+			# TRK2-only by construction.
+			var up_w41: Vector3 = wfr["up"]
+			if up_w41.y < 0.5:
+				wheel_steep41[wi] = true
+				if sup_ok[wi]:
+					var n41: float = -speed * speed * float(wfr["kvf"]) + GRAV * up_w41.y
+					wheel_load[wi] = clampf(n41 / GRAV, 0.0, 1.25)
+				else:
+					wheel_load[wi] = 0.0
+			else:
+				frame_fall41 = false
+				wheel_load[wi] = clampf(1.0 - speed * speed * wheel_kv[wi] / (GRAV * cos_w), 0.0, 1.25) if sup_ok[wi] else 0.0
 		geom_f = (sup_rise[0] + sup_rise[1]) * 0.5
 		geom_r = (sup_rise[2] + sup_rise[3]) * 0.5
 		# Fix Pass 7 (Item 2): the suspension samples the QUANTISED
@@ -7768,7 +8199,13 @@ func _update_suspension(delta: float) -> void:
 		# re-contacts on its own); a corner past the edge
 		# cutoff belongs to the straddle, not to this.
 		for wi5: int in 4:
-			if sup_ok[wi5] and speed > 8.0 and wheel_load[wi5] <= AIR_LOAD_EPS:
+			# Fix Pass 41 (Item 1): a steep-regime corner
+			# separates at ANY speed - its load law does not
+			# return to 1 as v falls (at the loop's crown a
+			# slow car is held by nothing), so the crest
+			# route's speed gate would wedge it upside down.
+			if sup_ok[wi5] and wheel_load[wi5] <= AIR_LOAD_EPS \
+					and (speed > 8.0 or wheel_steep41[wi5]):
 				wheel_air[wi5] = true
 			elif not sup_ok[wi5] or wheel_load[wi5] > AIR_LOAD_EPS:
 				wheel_air[wi5] = false
@@ -7939,7 +8376,8 @@ func _update_suspension(delta: float) -> void:
 		# compression happens along later.
 		if rebound_gate_vy > 0.0 and grounded_t > REBOUND_GATE_EXPIRY_S:
 			rebound_gate_vy = 0.0
-		if wheel_air[0] and wheel_air[1] and wheel_air[2] and wheel_air[3] and speed > 8.0:
+		if wheel_air[0] and wheel_air[1] and wheel_air[2] and wheel_air[3] \
+				and (speed > 8.0 or frame_fall41):
 			# Fix Pass 21 (Item 2): every corner has
 			# separated on its own comparison - nothing
 			# holds the car, so the car flies. Same entry
@@ -8801,7 +9239,8 @@ func debug_warp_to_s(s: float) -> void:
 	edge_roll = 0.0
 	var frw: Dictionary = _frame_at(car_s)
 	car_heading = _frame_yaw(frw["tan"])
-	vel2 = Vector2(frw["tan"].x, frw["tan"].z).normalized() * 14.0
+	drive_fwd = frw["tan"] # Fix Pass 41: the warp aligns the tangent state too
+	vel3 = drive_fwd * 14.0
 	mode = MODE_DRIVE
 	_place_car_on_track(frw)
 
@@ -8810,14 +9249,13 @@ func debug_pin_speed(v: float) -> void:
 	# Fix Pass 9 test fixture: hold the car at speed v along its
 	# own heading with zero slip - the free-heading replacement
 	# for poking `speed` directly (the model now integrates
-	# vel2, so a bare speed assignment would be overwritten by
+	# vel3, so a bare speed assignment would be overwritten by
 	# the decomposition on the next frame). Yaw rate is left
 	# alone: fixtures that pin per-frame on a straight (the
 	# shelf, the climb-top control) still need their steering.
 	speed = v
 	lat_vel = 0.0
-	var f2: Vector3 = _heading_fwd()
-	vel2 = Vector2(f2.x, f2.z) * v
+	vel3 = drive_fwd * v # Fix Pass 41: pinned along the car's own (in-plane) forward
 
 
 func debug_set_hang_dangle() -> void:
@@ -8949,6 +9387,7 @@ func debug_stage_landing(s: float, height: float, fwd_speed: float) -> void:
 	air_time = 0.0
 	air_s_est = s
 	car_heading = _frame_yaw(fr["tan"])
+	drive_fwd = fr["tan"] # Fix Pass 41: staged landings judge under the tangent state too
 	yaw_rate = 0.0
 	air_vel = fr["tan"] * fwd_speed
 	car.global_transform = Transform3D(

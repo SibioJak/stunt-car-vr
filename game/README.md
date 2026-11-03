@@ -115,6 +115,11 @@ VR (Quest):
   the ribbon is point-to-point, the lab is the piece library as a
   practice lap, TRK2 is the extremes course — loop, corkscrew
   and barrel roll on one straight line
+- Jump to a TRK2 element (Fix Pass 41): GRIP near the green ELEM
+  dash button — the crane collects the car from wherever it is
+  and stations it at the NEXT element's run-up, so no element
+  gates another; desktop E cycles and F1/F2/F3 jump straight to
+  E1/E2/E3. On any other track the button is inert
 - Recenter: click the left stick
 - Road-jitter experiment on/off: click the right stick (state shows
   as JIT in the DIAG block; default ON)
@@ -6155,3 +6160,272 @@ hop authority and yaw carry (stage 65), the funlab verdicts
 (stage 66), the fair-hills census (stage 67), stage 49's
 heading census (its five FP40-caught cases now drop at the
 baseline's own stations: 100 / 1664 / 2202 / 3016 / 3560).
+
+## Fix Pass 41 — THE LOOP PASS (tangent drive model, the loop-de-loop, funlab jump-ins)
+
+Called by the owner after his first TRK2 session: "funlab is
+brokelab. Silly robots dont know how to do a loop. Cant get
+around loop so cant see other track elements" — with his
+reference photo of the classic loop-de-loop: a full ring,
+driven on the inside, in and out in the same direction. Four
+items: the drive-model surgery, the loop working, the other
+two elements re-audited on the new model, and jump-in access
+so no element ever gates another.
+
+### Item 1 — the surgery: velocity lives along the road tangent
+
+The FP38 conviction was geometric: DRIVE carried the car's
+velocity as a HORIZONTAL 2D vector and re-derived road
+progress by projection, so progress died as the road went
+vertical (progress ∝ vf·cos φ → 0 at φ = 90°) — the loop
+wedged at φ ≈ 88–92°, fully supported, forever. The surgery
+moves the state into the road's own frame: the velocity is a
+3D vector (vel3) and the car's forward is a 3D direction
+(drive_fwd) that lives in the road's tangent plane; each
+DRIVE frame transports the forward into the current frame's
+plane, decomposes the velocity against it and its in-plane
+right, steers by rotating the forward about the road's up,
+and integrates the position in 3D. Support, slope gravity
+(gravity's component along the car's own forward; the
+standing 0.85 drivetrain factor kept), bank gravity
+(gravity's component along the in-plane right — the old term
+carried one extra cos(bank) of projection) and the landing
+conversion are all read in the same frame. On flat and
+ordinary roads the frame IS the horizontal one and the two
+models agree term for term; vel2 and car_heading survive as
+accessors over the new state for the staged fixtures that
+poke them.
+
+Two folds had to be found and fixed on the way, both the
+same disease one level down:
+
+- **The frame itself folded.** _frame_at derived the road's
+  up from the WORLD up (tan × UP), which dies at the
+  vertical and comes back pointing out of the road's far
+  side — past the fold the whole back half of the ring read
+  as a crest with the car on the outside, and the
+  road-frame curvature (kvf, below) flipped sign there.
+  Fix: at build, a walk detects the fold (the level up
+  flipping against its own predecessor — reachable only
+  within a degree or two of the vertical) and TRANSPORTS
+  the up through it by each step's minimal rotation,
+  rejoining the level up where they agree again (for a full
+  ring, exactly the exit flat). The carried up is stored per
+  station and _frame_at prefers it where it exists. Only
+  TRK2 has one: a parallel-transport frame everywhere was
+  measured first and rejected — it deviates from the level
+  frame by up to ~74° on Track 01, whose roads are authored
+  against the level law. Stage 69 guards the boundary:
+  circuit/ribbon/lab carry no upfix array, the funlab does.
+- **The load law's curvature folded.** The suspension's
+  load read the surface through world heights and the
+  elevation angle's rate (kv, asin-based — the back half of
+  a ring is indistinguishable from a crest through it).
+  Where a patch's road up tips past ~60° from the world's
+  (up.y < 0.5 — only TRK2 reaches it; Track 01's steepest
+  reads 0.87), the load is now the road-frame NORMAL FORCE,
+  N = −v²·kvf + g·(up), with kvf the frame curvature
+  differenced from the tangent vectors themselves at build
+  (the ring reads −1/R end to end). At the crown it is
+  v²/R − g: a slow car is held by nothing and falls, a fast
+  one is pressed in. In the same regime a wheel separates at
+  any speed (its law does not return to 1 as v falls) and
+  the all-four air entry no longer demands speed > 8 when
+  every corner is in the regime — a car that stops ON the
+  front wall (load = up.y, small but real) stays glued and
+  rolls back in DRIVE; only the crown lets go.
+
+The wheel sampling also moved into the plane: the four
+patches are offset along the car's in-plane axes (on a wall
+the front wheels are UP the wall, not ahead on the flat).
+Everything else about the model — gearbox, fishtail,
+retention, rebound, straddle, the FP39 storm law — is
+untouched code reading the new frame's numbers.
+
+### Item 2 — the loop-de-loop, working
+
+TRK2's E1 was already the owner's reference geometry (full
+ring, R ≈ 13 m, in and out at the base in the same
+direction) — it was the model that could not drive it. On
+the tangent model, staged entries measure:
+
+- **Held at 22–32 m/s: clean.** No separations, no dents,
+  exit at entry speed; the crown is driven fully inverted
+  (car basis up.y −0.9999 in DRIVE) with the load pegged at
+  its 1.25 clamp.
+- **Floored from 24–30: clean**, around and out at 47–48.
+- **The low edge is the crown's own line**, v = √(gR) ≈
+  11.3 m/s: held at 14 the crown load reads 0.53 — exactly
+  (v²/R − g)/g — and the car completes with two small hops
+  at the entry/exit joins; held at 12 it completes with one
+  exit hop; held at 11 it gets around ragged (five hops);
+  held at 10 it comes off the ring and the crane collects
+  it. Nothing wedges at any speed.
+- **The honest defect band, held at 16–20:** the car goes
+  around every time, but the FP14 rebound throw fires at
+  the ring's abrupt curvature steps (the ring's curvature
+  is a step at both joins — Track 01's brow law never
+  allowed one, the FP38 ring was built with them). The hop
+  is small (vy ≈ 0.9), but at 18–20 it lands the car past
+  the exit where the ring's front wall passes 1.6 m over
+  the exit road — close enough that the landing projection
+  can catch the wall and put the car back at the entry: it
+  laps the ring again instead of leaving. At 16 the throw
+  comes on the crown's back and drops the car inside the
+  ring to the crane. Floored entries sail over the band
+  (the exit is taken at 46+); the band is a held-speed
+  artefact, reported, not hidden.
+
+The board now reads: CLEAN 22+ OR FLOORED - UNDER 12 THE
+CROWN LETS GO.
+
+### Item 3 — the other two, re-audited on the new model
+
+- **E2 THE CORKSCREW: it lets go at the quarter-turn.** The
+  FP38 reading (carried to bank ~165°, lost sideways) was
+  the flat-world bookkeeping crediting support the road
+  cannot give: the twist's centreline is straight, so the
+  normal force is gravity's own component along the road's
+  up — full at bank 0, zero at 90°, negative beyond, and no
+  speed changes that. On the new model the car is carried
+  centred (max lat 0.2 m) to bank ≈ 92° and separates, at
+  every entry the probes ran (held 18–26, floored 30); the
+  crane finishes it. Board: LETS GO AT THE QUARTER-TURN -
+  NO SPEED HOLDS IT.
+- **E3 THE BARREL ROLL: it hops all the way round.** The
+  same law over a shorter twist: unsupported past the
+  quarter-turn, but the tube keeps catching the car — it
+  completes held at 20–26 and floored at 36+, in 23–26
+  short flights, exiting at entry speed. Floored at 24–30
+  the hops drift it out of the tube (max lat 7.9, past the
+  7.17 fall line) and the crane collects it. Board: HOPS
+  ALL THE WAY ROUND - HELD 20-26, FLOOR 36+.
+
+### Item 4 — funlab access: the jump-ins
+
+The owner's second count was a lab-design error: the
+elements stood in series behind a known blocker. Each
+element now has a jump-in station, searched at build with
+the recovery search's own criteria (the nearest drop-ok
+piece at least 20 m before the mouth whose 25 m run-up
+reads clean, searched BACKWARD so a station can never sit
+inside another element): E1 → s 86, E2 → s 320, E3 → s 643.
+The green ELEM dash button (the spot the lean toggle
+vacated in FP31; registered last so no existing control's
+index moves) cranes the car to the NEXT element's station;
+desktop E cycles, F1/F2/F3 jump direct (1/2/3 stay the prep
+switches). The jump-in is the recovery's own hang — same
+setup code — so the DROP button releases from it in every
+phase (FP22's law) and the crane answers from any state the
+new model can reach. Off TRK2 the control is inert. The
+panel's command list names it in both its VR and desktop
+sections, the standing rule. Stage 69 proves each element
+reachable without passing another: hang at the station,
+release, drive — the first element span entered is its own.
+
+### Census and gates
+
+Baseline first: the unmodified FP40 tree (3320b61) was
+re-run on this machine before the surgery — SMOKE: ALL 781
+CHECKS PASSED, API GUARD: ALL 71 CHECKS PASSED. That is
+the census the new model had to reproduce. On the FP41
+tree: **SMOKE: ALL 797 CHECKS PASSED** (781 + stage 69's
+15 new checks + 1 net from the in-place amendments),
+**API GUARD: ALL 71 CHECKS PASSED**, parse/import clean,
+and the render proof at 172/173 — the one failure is the
+standing wheel-hub reach artifact, identical on every
+baseline since FP31 (the sandbox cannot settle reach or
+colour; the headset can). The render proof also caught
+the commands panel overflowing its board with the two
+new ELEM lines (text 1.31 m vs the 1.24 m board); the
+type shrank by the measured ratio — the FP12/FP29 remedy —
+and the panel fits again with no occluded sightline.
+
+UNMOVED, verified on the new model to the digit: the
+FP32 landing census (stages 30–32, 49, 61); FP40's
+retention numbers (CLEAN 0.962 / SCRUBBED 0.694 /
+CROSSED-UP 0.544 / face slam 0.338, crane drops exempt
+1.000); FP40's gearbox (gears [1, 2, 3, 4] in order,
+0–45 m/s in 5.13 s, launch spin peak 1.00, biggest
+one-tick rev drop 0.99) and stage 65's launches (floored
+spin 1.00, Drop Start 0.83); the FP39 storm law (stage
+68(1b): 1 touchdown, min heave 0.077, dents +0); FP36's
+authority family. The heartland holds.
+
+What legitimately moved — each re-derived and flagged in
+place in the suite, none silently re-based:
+
+- **Stage 38 (ribbon sweeper exit unload)**: the unload
+  order flips RIGHT-FIRST (FP40: left-first at both
+  axles, ~20 frames apart). A/B on the pristine FP40
+  tree convicts the mechanism, not a bug: the tangent
+  model carries velocity IN the road frame, so through
+  the sweeper the velocity lags the road's own turning
+  as lateral velocity the bleed must kill; the pinned
+  line rides ~0.3 m wider on the downhill side and that
+  side stays loaded ~50 frames longer. The wheelbase
+  phase (front axle first) is intact. A world-yaw gain
+  compensation was tried and REJECTED on measurement
+  (the line ran wider still). This is the pass's one
+  genuine handling-line change on an existing road.
+- **Stage 29 (climb-top flight)**: lands at 145 frames
+  vs the staged (150, 320) window. The old air-entry
+  composed the launch vertical as vf·tan φ (the
+  horizontal speed's slope rate); the tangent state
+  carries the along-road speed, whose vertical is
+  vf·sin φ — at the climb top's 28° the launch is
+  3.0 m/s softer. Window re-based to (120, 320).
+- **Stage 58 (lab flair)**: piece 2's bank-unwind lift
+  pattern no longer reads "falling wheels only" (FP41
+  measures mild [5, 7, 6, 9], run18 [7, 0, 9, 0], never
+  full air); the check now guards the surviving law
+  (never the whole car, total air frames at scale, no
+  single wheel over 12). Piece 3's crest-2 flight
+  measures 2.88 s vs [2.95, 3.7] — the same tan→sin
+  composition as stage 29 (nominal 20°: 30·tan20 = 10.9
+  vs 30·sin20 = 10.3 m/s) — window re-based to [2.7, 3.7].
+- **Stage 68 (gearbox launch)**: the launch now waits
+  out any live contact transient first (flagged in
+  place). The (1b) STAGED arrival grades CROSSED-UP on
+  the new model (lat 24.3 m/s, hdg −99.5°) and its
+  honest 2.30 s contact transient — FP32/FP36 law: the
+  tires are governed by the contact until the slide
+  bleeds off — survives the warp and the 0.92 s staged
+  stop and strangles the launch's spin (peak 0.00). The
+  spin model itself is unmoved (the identical launch
+  with no live transient peaks 0.996 on this tree, as
+  on FP40); the stage's law is "first gear burns out
+  from a standstill," and a standstill means a settled
+  contact, so the precondition is explicit now. With
+  it, the run reproduces FP40 exactly (above).
+- **Stages 7 / 22 / 25 / 44 / 56 + the render proof's
+  dash census**: the roster is eight controls — ELEM
+  registered last; every existing index verified
+  unmoved.
+- **Stage 66**: the funlab verdicts replaced with the
+  new model's measured rulings (Items 2–3).
+- **Stage 69**: new (15 checks) — the tangent state
+  tracks the road frame (fwd·tan 1.0000, vel.y −4.77 vs
+  slope rate −4.77 at ribbon s 300's −13.7° descent;
+  the check's first cut assumed flat ground there and
+  failed on its own premise — the measured forward was
+  the tangent's to the digit), the carried frame exists
+  only on TRK2, the loop pinned at 24 goes around glued
+  and drives inverted at the crown (basis up.y −1.00 in
+  DRIVE), and the three jump-ins each hang at their own
+  station, release, and enter their own element first.
+
+FOUND, NOT FIXED (reported, owner's call): the staged
+landing helper (debug_stage_landing) seeds its
+swept-contact history from the car's PRE-teleport
+position, so a staged landing's first contact can fire
+across the teleport segment against a foreign frame —
+the stage 68 arrival above is that artifact. The code
+is identical on FP40, where the old heading-based
+grading structurally masked it (every staged landing
+read lat 0 / hdg 0 by construction). FP41's road-frame
+grading exposes it. In real play the history is seeded
+by the real _enter_air at every takeoff, so no shipped
+behaviour carries it; fixing the helper re-derives
+every staged landing in the suite and is its own pass,
+not a stowaway in this one.
