@@ -1421,7 +1421,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP38 · 2026-11-02"
+const BUILD_STAMP: String = "FP39 · 2026-11-02"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -1948,6 +1948,55 @@ func _build_circuit() -> Dictionary:
 	# in features["sectors"] as [name, s0, s1] - the
 	# README's sector table and the stage-49 census are
 	# derived from the same numbers.
+	# Fix Pass 39: THE FAIR-HILLS REWORK (the owner's
+	# conviction from the seat - see the README's FP39
+	# section for the audit tables). Turn exits no
+	# longer feed tall climbs on short links or blind
+	# launches. The audit's geometry result drives the
+	# whole design: from a lower eye, a far-side point
+	# past a convex lip is visible only if the far side
+	# rises back above the lip's sightline - a falling
+	# far side (the Dive, Drumbeat Ridge, the Long
+	# Right) is invisible from the turn exit at ANY
+	# link length, so every turn-fed launch on the lap
+	# is GROUNDED instead: pitches stay, pitch sheds
+	# stretch until v^2.kv < g at the fastest honest
+	# arrival (the audit's later runs kept catching
+	# stormed arrivals - the staged driver, like a
+	# driver, floors it between the corners - so the
+	# sheds are sized for the stormed speed, not the
+	# cruising one: on a sustained grade nothing caps
+	# the speed, and the storm is the honest arrival).
+	# ONE BROW LAW everywhere a grounded car can be
+	# thrown: every convex shed on the lap runs at
+	# 0.0032/m, where v^2.kv at the 48 m/s clamp is
+	# 7.4 m/s^2 and no separation crossing exists (a
+	# 0.010 brow was caught separating at 48; even
+	# 0.0042 separated at 47.6-48, the smoothed kv
+	# running a few percent over nominal). The First
+	# Crest's back, both Twin Crest backs (was CREST
+	# LAUNCHES), the Wall's brow, the Escalator's brow
+	# and the Dive's entry ramp all run at that rate;
+	# the Last Hump's back runs 0.007 (its arrival is
+	# curvature-capped by the sweeper itself). The
+	# S -> Wall link grows 18 -> 60 m and the Flair's
+	# settle 20 -> 35 m, sized from the measured exit
+	# slides and the FP36 bleed law. The grades never
+	# move (the Wall is still +20 deg x 170 m);
+	# compensation, honestly booked: the Dive deepens
+	# to -18 x 282, the Edge Run trims 110 -> 90 m,
+	# and T13's descent deepens -9 -> -15 deg as an
+	# elevation-budget trim (the FP37 precedent; -16
+	# was tried with a shortened Escalator settle and
+	# the staged driver fell in the arc - the settle
+	# is restored to 40 m and the grade sits at -15).
+	# A chasm exit trim (55 -> 30 m) made during the
+	# closure search was reverted after stage 35's
+	# rebound census convicted it - the rising ground
+	# past the chasm is that piece's second act.
+	# Solver after the rework: lr 238 m, phi_h
+	# -0.02 deg, R_e 99 m, residual 0.003 m; the lap
+	# is 4,066 m.
 	var root := Node3D.new()
 	root.name = "TrackCircuit"
 	add_child(root)
@@ -1989,24 +2038,60 @@ func _build_circuit() -> Dictionary:
 	_walk(290, deg_to_rad(90.0) / 290.0, 0.0, deg_to_rad(26.0), false)
 	curves.append([s_mark, float(b_pts.size() - 1), 1.0, 290.0 / deg_to_rad(90.0)])
 	_walk(3, 0.0, 0.0, 0.0, false, 0.006, 0.03)
-	_walk(17, 0.0, 0.0, 0.0, false, 0.006, 0.075)
+	# Fix Pass 39: the unwind/settle grows 17 -> 32 m
+	# (35 m total after the arc): the Flair's exit slide
+	# gets a real bleed distance before the First
+	# Crest's foot (the fair-hills law A).
+	_walk(32, 0.0, 0.0, 0.0, false, 0.006, 0.075)
 	sectors.append(["T2 THE FLAIR", s_mark, float(b_pts.size() - 1)])
-	# T2b: FIRST CREST - a +12 deg launch (the lab P3
+	# T2b: FIRST CREST - a +12 deg rise (the lab P3
 	# shape at its gentlest, slope-matched).
+	# Fix Pass 39: this was a LAUNCH - the audit
+	# measured the staged driver flying 39 m off it
+	# into the Dive with no road visible past the lip
+	# from the Flair's exit. A rising landing shelf
+	# was tried first and failed the same sightline
+	# test (the shelf's top loses the angle race to
+	# the lip from a close, low eye - see the README):
+	# a falling far side cannot be read from the turn
+	# exit at any link length, so the crest is
+	# GROUNDED. The +12 deg face stays; the back is a
+	# BROW on the one brow law: 131 m at 0.0032/m. The
+	# audit's later runs taught why nothing gentler
+	# holds: the early shed is still a climb, a floored
+	# car keeps accelerating along it, and it separates
+	# wherever v^2.kv crosses g - at 0.006 that crossing
+	# sat at 40 m/s, 26 m into the shed, and even
+	# 0.0042 separated at 47.6-48 (the smoothed kv runs
+	# a few percent over the nominal rate, and the
+	# crossing lands on the 48 clamp). At 0.0032 the
+	# demand at the clamp is 7.4 m/s^2 - no crossing at
+	# any speed the car can make. The back ends at
+	# -12 deg, which the Dive's entry ramp continues
+	# at the same brow rate to -18.
 	s_mark = float(b_pts.size() - 1)
 	_walk(30, 0.0, deg_to_rad(12.0), 0.0, false, 0.030)
-	_walk(30, 0.0, deg_to_rad(-12.0), 0.0, false, 0.045)
-	_walk(20, 0.0, 0.0, 0.0, false, 0.020)
+	_walk(131, 0.0, deg_to_rad(-12.0), 0.0, false, 0.0032)
 	sectors.append(["T2b FIRST CREST", s_mark, float(b_pts.size() - 1)])
 	# T3: THE DIVE - a STEEP DESCENT: -18 deg sustained
-	# for 170 m (~55 m given back to the valley floor),
-	# a flatten, one FP8 hump on the floor, and a LONG
-	# settle (55 m) so the hump's touchdown + rebound +
-	# settled run all complete on the flat before the
-	# S begins (the lab's sequencing law).
+	# for 282 m (Fix Pass 39: lengthened from 170 - the
+	# extra drop is the elevation budget's main payer
+	# for the grounded crests' slower sheds; the Dive
+	# is deeper, not shallower), a flatten, one FP8
+	# hump on the floor, and a LONG settle (55 m) so
+	# the hump's touchdown + rebound + settled run all
+	# complete on the flat before the S begins (the
+	# lab's sequencing law). Fix Pass 39: the first
+	# 35 m are an entry RAMP at the brow rate (0.0032) -
+	# a grounded car now arrives here at ~44 m/s, and
+	# the shipped 0.010 pitch-on would itself separate
+	# it (v^2.kv = 19); the ramp walks the pitch from
+	# the crest back's -12 to -18 at brow rate, then
+	# the main descent continues as shipped.
 	s_mark = float(b_pts.size() - 1)
 	feats["dip_s0"] = s_mark
-	_walk(170, 0.0, deg_to_rad(-18.0), 0.0, false, 0.010)
+	_walk(35, 0.0, deg_to_rad(-18.0), 0.0, false, 0.0032)
+	_walk(247, 0.0, deg_to_rad(-18.0), 0.0, false, 0.010)
 	_walk(20, 0.0, 0.0, 0.0, false, 0.010)
 	feats["dip_s1"] = float(b_pts.size() - 1)
 	_walk(13, 0.0, deg_to_rad(11.0), 0.0, false, 0.016)
@@ -2041,29 +2126,61 @@ func _build_circuit() -> Dictionary:
 	var s4b: float = float(b_pts.size() - 1)
 	_walk(45, deg_to_rad(30.0) / 45.0, 0.0, deg_to_rad(-10.0), false, 0.006, 0.020)
 	curves.append([s4b, float(b_pts.size() - 1), 1.0, 45.0 / deg_to_rad(30.0)])
-	_walk(18, 0.0, 0.0, 0.0, false, 0.006, 0.060)
+	# Fix Pass 39: the link after the S grows 18 -> 60 m.
+	# The FP39 audit measured the staged driver leaving
+	# the second arc at +3.8 m/s of lateral velocity;
+	# the FP36 bleed law (capped at GRIP_LAT_ACCEL,
+	# then proportional at GRIP_BITE_RATE under load)
+	# integrates that slide to the 0.3 m/s threshold in
+	# ~0.45 s (~14 m at the link's pace) IF nothing
+	# re-injects it. On a 45 m link the slide itself
+	# crossed zero 16 m in, but the staged driver's own
+	# line-correction ripple still read -0.7 m/s at the
+	# foot (45 m/s of link pace makes the pursuit's
+	# steering overshoot) - the link is 60 m, so the
+	# foot reads settled on the same instrument: the
+	# slide bled AND the correction done. (The shipped
+	# 18 m link measured 0.39 m/s at the foot with the
+	# pursuit mid-correction the whole way.)
+	_walk(60, 0.0, 0.0, 0.0, false, 0.006, 0.060)
 	sectors.append(["T4 OFF-CAMBER S", s_mark, float(b_pts.size() - 1)])
 	# T5: THE WALL - the signature STEEP CLIMB: +20 deg
 	# sustained for 170 m (~+60 m of gain; the engine's
 	# 16 m/s^2 against the slope's 3.4 m/s^2 of gravity
 	# component, so it tops at pace with room - stage
-	# 19's laps are the proof), then a LONG soft crest
-	# flatten (0.008/m - stage 51's climb-top load band
-	# is measured across it).
+	# 19's laps are the proof), then the crest.
+	# Fix Pass 39: the soft flatten (45 m at 0.008/m)
+	# becomes THE BROW: 115 m at 0.0032/m. The audit
+	# convicted the old crest at racing pace: the car
+	# arrives at the 48 m/s clamp and the 0.008/m shed
+	# demands 18.4 m/s^2 of centripetal - it separated
+	# ON the +20 deg tangent and flew 147 m, over the
+	# whole Edge Run, blind. At 0.0032/m the demand at
+	# the clamp is 7.4 m/s^2, under gravity's component
+	# all the way up the shed (load ~0.20 at the brow's
+	# foot, growing as the pitch falls): the car stays
+	# on the road it can see. The climb itself is
+	# untouched - +20 deg x 170 m, 52.4 m of gain on
+	# the span (stage 18's measure stands).
 	s_mark = float(b_pts.size() - 1)
 	feats["climb_s0"] = s_mark
 	_walk(170, 0.0, deg_to_rad(20.0), 0.0, false, 0.010)
 	feats["climb_s1"] = float(b_pts.size() - 1)
-	_walk(45, 0.0, 0.0, 0.0, false, 0.008)
+	_walk(115, 0.0, 0.0, 0.0, false, 0.0032)
 	sectors.append(["T5 THE WALL", s_mark, float(b_pts.size() - 1)])
-	# T6: THE EDGE RUN - 110 m of flat taxed by the lab
+	# T6: THE EDGE RUN - flat taxed by the lab
 	# P7 discipline: marker blocks ON the edge line
 	# (the furniture below) and a gentle +-4 deg bank
 	# sway in ~45 m chunks. Its length is also the
-	# layout's west trim against the tail solver.
+	# layout's west trim against the tail solver
+	# (Fix Pass 39: trimmed 110 -> 90 m in that job,
+	# paying part of the fair-hills growth - and the
+	# solver's teeth are real: this length is a
+	# closure tooth, and at 60-80 m the reworked head
+	# would not close at all).
 	s_mark = float(b_pts.size() - 1)
 	feats["edge_s0"] = s_mark
-	var sway6: Array = [[45, 4.0], [45, -4.0], [20, 0.0]]
+	var sway6: Array = [[35, 4.0], [35, -4.0], [20, 0.0]]
 	for ci6: int in sway6.size():
 		_walk(int(sway6[ci6][0]), 0.0, 0.0, deg_to_rad(float(sway6[ci6][1])), false)
 	feats["edge_s1"] = float(b_pts.size() - 1)
@@ -2073,6 +2190,14 @@ func _build_circuit() -> Dictionary:
 	# -3.4 landing straight, then the road CLIMBS away
 	# (+8 deg) so a rebound's second flight is measured
 	# against rising ground (stage 35's stage).
+	# Fix Pass 39: the exit climb's +8 leg was trimmed
+	# 55 -> 30 m during the closure search and then
+	# RESTORED to 55 - stage 35's rebound census
+	# convicted the trim (at 48 the gap flight ate the
+	# whole shortened exit and the rebound off the
+	# rising ground never happened; the rising ground
+	# is this piece's second act). The jump, the lip
+	# and the landing straight are as shipped.
 	s_mark = float(b_pts.size() - 1)
 	_walk(30, 0.0, 0.0, 0.0, false)
 	_walk(2, 0.0, deg_to_rad(10.0), 0.0, false, 0.012, 0.10)
@@ -2094,16 +2219,45 @@ func _build_circuit() -> Dictionary:
 	_walk(3, 0.0, 0.0, 0.0, false, 0.006, 0.03)
 	_walk(17, 0.0, 0.0, 0.0, false, 0.006, 0.075)
 	sectors.append(["T8 WEST HAIRPIN", s_mark, float(b_pts.size() - 1)])
-	# T9: CREST LAUNCHES - the lab P3 pair (+14, +20),
-	# each slope-matched, a settle between them.
+	# T9: THE TWIN CRESTS - the lab P3 pair (+14, +20),
+	# a settle between them.
+	# Fix Pass 39: these were CREST LAUNCHES, and the
+	# audit convicted them as the second blind-launch
+	# join: fed by the West Hairpin's exit, the staged
+	# driver flew 50 m off the first crest and 65 m
+	# off the second with NO road visible past either
+	# lip from the hairpin exit (B1 infinite at both).
+	# Unlike the First Crest, no rising shelf can save
+	# them: a long flight's landing must fall away to
+	# meet the descent angle, and a falling far side
+	# past a convex lip is invisible from a lower eye
+	# at ANY link length - the geometry, not the
+	# distance, is the defect. So both crests are
+	# GROUNDED: the pitches stay (+14, +20 - the hills
+	# stay tall) and both backs become BROWS on the
+	# one brow law (0.0032/m, the Wall's rate): the
+	# audit caught the car storming the first crest's
+	# top at 35.2 m/s and the second's at the 48
+	# clamp, and on any gentler shed the still-
+	# climbing early back lets a floored car
+	# accelerate to the v^2.kv = g crossing and
+	# separate mid-shed - at the brow rate there is
+	# no crossing at any speed. The second brow sheds
+	# only to -14 (the shipped piece's -20 back was
+	# pure symmetry; nothing downstream reads it) and
+	# a 40 m GLIDE at -14 pays the elevation back
+	# before a 14 m runout (concave, free at any rate)
+	# levels the road for Drumbeat Ridge. The sector
+	# is renamed for what it now is.
 	s_mark = float(b_pts.size() - 1)
 	_walk(40, 0.0, deg_to_rad(14.0), 0.0, false, 0.030)
-	_walk(40, 0.0, deg_to_rad(-14.0), 0.0, false, 0.055)
+	_walk(153, 0.0, deg_to_rad(-14.0), 0.0, false, 0.0032)
 	_walk(25, 0.0, 0.0, 0.0, false, 0.020)
 	_walk(40, 0.0, deg_to_rad(20.0), 0.0, false, 0.030)
-	_walk(40, 0.0, deg_to_rad(-20.0), 0.0, false, 0.055)
-	_walk(30, 0.0, 0.0, 0.0, false, 0.020)
-	sectors.append(["T9 CREST LAUNCHES", s_mark, float(b_pts.size() - 1)])
+	_walk(185, 0.0, deg_to_rad(-14.0), 0.0, false, 0.0032)
+	_walk(40, 0.0, deg_to_rad(-14.0), 0.0, false, 0.020)
+	_walk(14, 0.0, 0.0, 0.0, false, 0.020)
+	sectors.append(["T9 THE TWIN CRESTS", s_mark, float(b_pts.size() - 1)])
 	# T10: DRUMBEAT RIDGE - the FP8 hump row verbatim
 	# (five flat-based humps + the settle: the 245 m
 	# span stages 20/26 drive at pins 24 and 48).
@@ -2123,16 +2277,33 @@ func _build_circuit() -> Dictionary:
 	_walk(10, 0.0, 0.0, 0.0, false, 0.030)
 	_walk(25, 0.0, deg_to_rad(14.0), 0.0, false, 0.030)
 	_walk(12, 0.0, deg_to_rad(-8.0), 0.0, false, 0.045)
+	# Fix Pass 39 leaves this piece exactly as shipped
+	# (settles included) - the fair-hills compensation
+	# is carried by the Dive, the Edge Run trim and
+	# T13's grade instead.
 	_walk(30, 0.0, 0.0, 0.0, false, 0.020)
 	_walk(20, 0.0, 0.0, 0.0, false)
 	sectors.append(["T11 COMPRESSION-REBOUND", s_mark, float(b_pts.size() - 1)])
 	# T12: THE STAIRCASE down (the ribbon's piece: six
 	# -22 deg steps, ~-11 m), a flat run, then THE
 	# ESCALATOR - the second STEEP CLIMB, +17 deg for
-	# 100 m - cresting off SHARP (0.030/m), so the top
-	# of the climb is itself a launch at pace, and a
-	# 40 m settle so its flight completes before the
-	# sweeper (the sequencing law again).
+	# 100 m, and a 40 m settle before the sweeper.
+	# Fix Pass 39: the crest-off is no longer SHARP.
+	# The audit measured the old 0.030/m crest-off
+	# launching the car 31 m at the top of the climb
+	# with no road visible past the lip from the
+	# staircase - a blind launch, descent-fed or not.
+	# The crest-off becomes a BROW on the Wall's law:
+	# 93 m at 0.0032/m. The rate is set by the fastest
+	# honest arrival, not the staged one: a climb
+	# invites full throttle, the car tops the
+	# Escalator at the 48 m/s clamp, and the audit's
+	# own second run caught a gentler 0.010 brow
+	# separating there at 48 (v^2.kv = 23 >> g). At
+	# 0.0032 the demand at the clamp is 7.4 m/s^2 and
+	# the car rolls over the top on the road at any
+	# speed the engine can make. The +17 deg x 100 m
+	# climb is untouched.
 	s_mark = float(b_pts.size() - 1)
 	feats["stairs_s0"] = s_mark
 	for step_i: int in 6:
@@ -2141,28 +2312,45 @@ func _build_circuit() -> Dictionary:
 	feats["stairs_s1"] = float(b_pts.size() - 1)
 	_walk(25, 0.0, 0.0, 0.0, false, 0.020)
 	_walk(100, 0.0, deg_to_rad(17.0), 0.0, false, 0.008)
-	_walk(30, 0.0, 0.0, 0.0, false, 0.030)
+	_walk(93, 0.0, 0.0, 0.0, false, 0.0032)
 	_walk(40, 0.0, 0.0, 0.0, false, 0.020)
 	sectors.append(["T12 STAIRCASE + ESCALATOR", s_mark, float(b_pts.size() - 1)])
 	# T13: THE LONG RIGHT HOME - right sweeper R~100
-	# at -26 deg bank, DESCENDING at -9 deg (a steep
+	# at -26 deg bank, DESCENDING at -15 deg (a steep
 	# descent with the wheel turned - its grade also
 	# sheds the lap's accumulated elevation so the
-	# tail solver's hold pitch stays off its clamp),
-	# the shaped unwind at its exit.
+	# tail solver's hold pitch stays off its clamp;
+	# Fix Pass 39: deepened from -9 deg in that same
+	# budget job, paying for the grounded crests' and
+	# the long brows' net climb - the FP37 precedent,
+	# its grade was always part of the budget), the
+	# shaped unwind at its exit.
 	s_mark = float(b_pts.size() - 1)
-	_walk(158, -deg_to_rad(90.0) / 158.0, deg_to_rad(-9.0), deg_to_rad(-26.0), false)
+	_walk(158, -deg_to_rad(90.0) / 158.0, deg_to_rad(-15.0), deg_to_rad(-26.0), false)
 	curves.append([s_mark, float(b_pts.size() - 1), -1.0, 158.0 / deg_to_rad(90.0)])
 	_walk(3, 0.0, 0.0, 0.0, false, 0.012, 0.03)
 	_walk(17, 0.0, 0.0, 0.0, false, 0.012, 0.075)
 	sectors.append(["T13 THE LONG RIGHT HOME", s_mark, float(b_pts.size() - 1)])
 	# T14: THE LAST HUMP - the approach to the tail is
-	# taxed too: one FP8 hump between two links, on
+	# taxed too: one hump between two links, on
 	# the run south to the return straight.
+	# Fix Pass 39: the hump's back face stretches
+	# (19 m at 0.021/m -> 30 m at 0.007/m). Fed by the
+	# Long Right's exit, the FP8-shaped original was
+	# the audit's fourth blind launch (26 m of flight,
+	# nothing past the lip visible from the sweeper
+	# exit); at 0.007/m the demand is 5.2 m/s^2 at the
+	# measured 24 m/s hump pace and 7.6 even at a
+	# stormed 33 - under gravity, the car rolls over
+	# it, and its far side reveals itself before the
+	# lip while the car is still on the road. The
+	# +11 deg face and the tax stay; the drumbeat row
+	# keeps the true FP8 shape as the library
+	# original.
 	s_mark = float(b_pts.size() - 1)
 	_walk(15, 0.0, 0.0, 0.0, false)
 	_walk(13, 0.0, deg_to_rad(11.0), 0.0, false, 0.016)
-	_walk(19, 0.0, deg_to_rad(-11.0), 0.0, false, 0.021)
+	_walk(30, 0.0, deg_to_rad(-11.0), 0.0, false, 0.007)
 	_walk(13, 0.0, 0.0, 0.0, false, 0.016)
 	_walk(15, 0.0, 0.0, 0.0, false)
 	sectors.append(["T14 THE LAST HUMP", s_mark, float(b_pts.size() - 1)])
