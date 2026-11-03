@@ -2112,7 +2112,18 @@ func _run() -> void:
 	var drv17b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 	check(drv17b, "stage17: release after the carried, dipped hang resumes driving")
 
-	# ---------- stage 18: Fix Pass 10 (Item 3) - the mountain circuit ----
+	# ---------- stage 18: Fix Pass 10 (Item 3) - the circuit census ----
+	# AMENDED (FP37, FLAGGED): Track 01 replaces the FP10
+	# mountain circuit in slot 1. Re-derived below: the lap
+	# band (3469 m measured), THE WALL's climb gain (the
+	# +20 deg x 170 m span gains 52.4 m - the old circuit's
+	# 60 m figure belonged to its longer, gentler climb),
+	# the gap width (28 m chasm, not the old 14 m slot),
+	# and the home/mid straightaways (an FP10 feature pair
+	# Track 01 does not carry) replaced by the 16-sector
+	# census. The dip depth, the curves census, the seam
+	# segment and the drop-qualification trio are
+	# features-driven and stand as written.
 	main._set_track("circuit")
 	await frames(5)
 	var cf18: Dictionary = main.track_data["circuit"]["features"]
@@ -2120,8 +2131,8 @@ func _run() -> void:
 		"stage18: circuit active and closed")
 	check(float(cf18["closure_err_m"]) < 0.05,
 		"stage18: closure exact (err %.4f m)" % float(cf18["closure_err_m"]))
-	check(main.track_len >= 2800.0 and main.track_len <= 3400.0,
-		"stage18: length in the brief band (%.0f m)" % main.track_len)
+	check(main.track_len >= 3400.0 and main.track_len <= 3550.0,
+		"stage18: Track 01 lap length in band (%.0f m)" % main.track_len)
 	# the seam join itself: the wrap segment is a normal segment
 	var n18: int = main.t_pts.size()
 	var seam_len18: float = main.t_pts[0].distance_to(main.t_pts[n18 - 1])
@@ -2131,8 +2142,8 @@ func _run() -> void:
 	var cl_y0: float = main._frame_at(float(cf18["climb_s0"]))["pos"].y
 	var cl_y1: float = main._frame_at(float(cf18["climb_s1"]))["pos"].y
 	var climb_gain18: float = cl_y1 - cl_y0
-	check(climb_gain18 >= 60.0,
-		"stage18: signature climb gains >= 60 m (%.1f)" % climb_gain18)
+	check(climb_gain18 >= 50.0,
+		"stage18: THE WALL gains >= 50 m on its +20 deg span (%.1f)" % climb_gain18)
 	var dip_ymax18: float = -1e9
 	var dip_ymin18: float = 1e9
 	var dip_s18: float = 0.0
@@ -2146,8 +2157,8 @@ func _run() -> void:
 	var dip_depth18: float = dip_ymax18 - dip_ymin18
 	check(dip_depth18 >= 45.0,
 		"stage18: massive dip gives back >= 45 m (%.1f)" % dip_depth18)
-	check(float(cf18["home_len"]) >= 350.0 and float(cf18["mid_len"]) >= 350.0,
-		"stage18: two straightaways >= 350 m (home %.0f, mid %.0f)" % [float(cf18["home_len"]), float(cf18["mid_len"])])
+	check((cf18["sectors"] as Array).size() == 16,
+		"stage18: Track 01 carries its 16 sectors (T1-T15 + T2b)")
 	# at least two long banked swinging curves, one each way,
 	# generous radius
 	var long_l18: int = 0
@@ -2161,8 +2172,8 @@ func _run() -> void:
 				long_r18 += 1
 	check(long_l18 >= 1 and long_r18 >= 1,
 		"stage18: long banked curves both ways (L %d, R %d)" % [long_l18, long_r18])
-	check(absf((main.gap_s1 - main.gap_s0) - 14.0) < 0.5,
-		"stage18: the one gap spans 14 m (%.1f)" % (main.gap_s1 - main.gap_s0))
+	check(absf((main.gap_s1 - main.gap_s0) - 28.0) < 0.5,
+		"stage18: the chasm spans 28 m (%.1f)" % (main.gap_s1 - main.gap_s0))
 	# five-hump row carried over: five crest kv peaks in the span
 	var crests18: int = 0
 	var prev_kv18: float = 0.0
@@ -2326,6 +2337,14 @@ func _run() -> void:
 	await frames(3)
 	main._do_release()
 	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 300)
+	# AMENDED (FP37, FLAGGED): the absence assertions above
+	# stand (Track 01's build carries no spur data either).
+	# The drive below is re-derived: the old fork span
+	# (s 150-360) is gone with the old circuit; Track 01's
+	# clean-line span is the opening flat BEFORE its hump
+	# (s 30-200, the hump sits at 220-265), and the drive
+	# still runs out to s 400 through the hump and the
+	# flair's entry.
 	var passed21: bool = false
 	var max_lat21: float = 0.0
 	var drv_frames21: int = 0
@@ -2340,16 +2359,16 @@ func _run() -> void:
 			if drv_frames21 > 45:
 				main.debug_pin_speed(30.0)
 			autopilot_steer(0.0)
-			if main.car_s > 150.0 and main.car_s < 360.0:
+			if main.car_s > 30.0 and main.car_s < 200.0:
 				max_lat21 = maxf(max_lat21, absf(main.car_lat))
 			if main.car_s >= 400.0:
 				passed21 = true
 		elif main.mode == main.MODE_HANG:
 			break
 	check(passed21,
-		"stage21: the home straight drives through the old fork span (reached s %.0f)" % main.car_s)
+		"stage21: the opening drives clean out to s 400 (reached s %.0f)" % main.car_s)
 	check(max_lat21 < 1.2,
-		"stage21: no swerve on the home straight (worst |lat| %.2f m across s 150-360)" % max_lat21)
+		"stage21: no swerve on the opening flat (worst |lat| %.2f m across s 30-200)" % max_lat21)
 
 	# ---------- stage 22: Fix Pass 11 (Item 1) - seat + yaw cone ----
 	# (a) The trim funnel: the eye follows the trim, the live seat
@@ -2999,11 +3018,26 @@ func _run() -> void:
 
 	# ---------- stage 29: Fix Pass 12 (Item 5) --------------------
 	# Item 5: the air trigger. The convicted case first: a
-	# 48 m/s launch off the climb top (s 2125, rebound 2.0)
-	# flies 3.64 s and LANDS (the old bare 2.4 s timer snatched
-	# it at 2.41 s). The dip-lip flight (2.32 s) lands too.
+	# 48 m/s launch off the climb top (rebound 2.0) flies
+	# ~3.6 s and LANDS (the old bare 2.4 s timer snatched
+	# it at 2.41 s). The lip flight (~2.3 s) lands too.
 	# Genuine losses still get the crane, and sooner: the
 	# below-band dwell fires in well under the old 2.4 s.
+	# AMENDED (FP37, FLAGGED): the stagings are re-derived
+	# for Track 01 and measured with this stage's own
+	# protocol before adoption - and they stage off the
+	# FEATURES, not literals, so a layout shift cannot
+	# stale them (the first FP37 form hard-coded the lip
+	# and went stale by 9 m when the S grew). The climb
+	# case launches off THE WALL's top (features
+	# climb_s1: 314 frames, 3.49 s, mid-band) and the
+	# lip case off the chasm lip (features gap_s0: 166
+	# frames, 1.84 s - the road falls away past the lip
+	# exactly as the old dip lip's did). The lost case
+	# keeps the lip staging; its conversion measured
+	# 208 frames (2.31 s), so its bound is re-derived
+	# < 230 - still inside the old 2.4 s timer the case
+	# exists to beat.
 	main._set_track("circuit")
 	await frames(3)
 	main.dip_timer = 1000.0
@@ -3049,21 +3083,22 @@ func _run() -> void:
 			if main.mode == main.MODE_HANG:
 				return [false, fa]
 		return [false, fa]
-	var climb29: Array = await fly_case.call(2125.0, 2.0, 0.0)
+	var feats29: Dictionary = main.track_data["circuit"]["features"]
+	var climb29: Array = await fly_case.call(float(feats29["climb_s1"]), 2.0, 0.0)
 	check(bool(climb29[0]) and int(climb29[1]) > 270 and int(climb29[1]) < 450,
 		"stage29: climb-top launch LANDS after %.2f s of flight (no snatch)" % (float(climb29[1]) / 90.0))
-	var lip29: Array = await fly_case.call(735.0, 2.0, 0.0)
+	var lip29: Array = await fly_case.call(float(feats29["gap_s0"]), 2.0, 0.0)
 	check(bool(lip29[0]) and int(lip29[1]) > 150 and int(lip29[1]) < 300,
-		"stage29: dip-lip flight LANDS after %.2f s" % (float(lip29[1]) / 90.0))
+		"stage29: gap-lip flight LANDS after %.2f s" % (float(lip29[1]) / 90.0))
 	# The lost case keeps the lip's pop (rebound 2.0, like the
 	# lip case): entering air at road height with rebound 0 on
 	# the lip's downslope lands on frame 1 - the landing test
 	# quite rightly sees a car still on the road. A real
 	# lateral exit leaves WITH the lip's unload; the kick is
 	# what makes it lost.
-	var lost29: Array = await fly_case.call(735.0, 2.0, 30.0)
-	check(not bool(lost29[0]) and int(lost29[1]) < 200,
-		"stage29: a lateral exit off the dip lip is genuinely lost - crane in %.2f s (lateral-exit rule)" % (float(lost29[1]) / 90.0))
+	var lost29: Array = await fly_case.call(float(feats29["gap_s0"]), 2.0, 30.0)
+	check(not bool(lost29[0]) and int(lost29[1]) < 230,
+		"stage29: a lateral exit off the gap lip is genuinely lost - crane in %.2f s (lateral-exit rule)" % (float(lost29[1]) / 90.0))
 	# FP23: Item 6's spur checks (merge heading residual,
 	# exit-leg unwind, guide strip, chevrons, LOOP gantry,
 	# rim band) are deleted with the loop; stage 21 now
@@ -3597,11 +3632,46 @@ func _run() -> void:
 	# over the gate's vy on its face, and still excluded, as
 	# they always were, by the air_from_release flag in the
 	# gate itself, never by their speed.)
+	# (FP37 note, FLAGGED: Track 01's chasm is the lab P4
+	# piece - its shaped +10 deg lip LAUNCHES the car, so at
+	# the old staging's 33 m/s the crossing arcs gently and
+	# the impact (vy ~2.9) never arms the gate: the spring
+	# route answered, throw 2.57, and this stage's gate
+	# assertion failed on a healthy model. The gated case
+	# is therefore staged at 48 m/s, where the flight
+	# carries past the landing straight and lands on the
+	# +8 deg exit climb - the rising-ground measurement
+	# this stage was always about: flight 149 frames,
+	# contact 17, rebound 96 (ratio 0.64, in the film
+	# band), gated throw 4.13 m/s, no rethrows. The
+	# window extends to gap+120 to hold the longer
+	# flight.)
 	main._set_track("circuit")
 	await frames(5)
 	var cf35: Dictionary = main.track_data["circuit"]["features"]
 	var gap35: float = float(cf35["gap_s0"])
 	main.debug_warp_to_s(gap35 - 25.0)
+	# Fixture hygiene (FP37, flagged): the same spring
+	# zeroing stage 29's fly_case carries - staged cold
+	# off the warp, the car hopped off the FLAT approach
+	# (a spurious 0.49 s first flight in the measured
+	# sequence) and the rebound ratio read the hop
+	# instead of the gap flight. With the springs
+	# settled the sequence is the piece itself: gap
+	# flight 79 frames, rebound 48 (ratio 0.61).
+	main.c_f = main.SUSP_REST
+	main.c_r = main.SUSP_REST
+	main.cv_f = 0.0
+	main.cv_r = 0.0
+	for kfix35: int in 4:
+		main.susp_c[kfix35] = [main.SUSP_REST, main.SUSP_REST, main.SUSP_REST, main.SUSP_REST][kfix35]
+	for kfix35: int in 4:
+		main.susp_cv[kfix35] = [0.0, 0.0, 0.0, 0.0][kfix35]
+	main.heave_off = 0.0
+	main.body_sink = 0.0
+	main.body_sink_v = 0.0
+	main.land_ramp_t = 9.0
+	await frames(3)
 	main.test_throttle = 0.0
 	main.wheel_angle = 0.0
 	var seq35: Array = [] # ["flight"|"contact", frames]
@@ -3610,8 +3680,8 @@ func _run() -> void:
 	var throw35: float = 0.0
 	var rethrows35: int = 0
 	var f35: int = 0
-	while main.car_s < gap35 + 55.0 and f35 < 700 and main.mode != main.MODE_HANG:
-		main.debug_pin_speed(33.0)
+	while main.car_s < gap35 + 120.0 and f35 < 700 and main.mode != main.MODE_HANG:
+		main.debug_pin_speed(48.0)
 		await physics_frame
 		f35 += 1
 		if main.bounce_pending and main.pending_rebound:
@@ -3637,7 +3707,7 @@ func _run() -> void:
 			flights35.append(int(e35[1]))
 		else:
 			contacts35.append(int(e35[1]))
-	print("stage35: circuit gap @33 sequence %s (frames at 90 Hz)" % str(seq35))
+	print("stage35: circuit gap @48 sequence %s (frames at 90 Hz)" % str(seq35))
 	check(flights35.size() >= 2,
 		"stage35: the gap landing rebounds - a second flight exists (%s)" % str(seq35))
 	if flights35.size() >= 2:
@@ -5225,12 +5295,18 @@ func _run() -> void:
 	# grab log now carries). Tolerance 3 deg. If a family
 	# convicts, this stage fails with its numbers printed.
 	main._set_track("circuit")
+	# AMENDED (FP37, FLAGGED): the census list is re-derived
+	# from Track 01's sector table (features["sectors"]) -
+	# one forced fall per sector family, sixteen in all.
 	var census49: Array = [
-		["home straight", 150.0], ["curve A (banked)", 550.0],
-		["dip descent", 830.0], ["dip floor", 960.0],
-		["mid straight", 1300.0], ["hairpin (banked)", 1650.0],
-		["signature climb", 2000.0], ["hump descent", 2300.0],
-		["curve C (banked)", 2600.0], ["tail return", 3050.0]]
+		["opening flat", 100.0], ["the flair (banked)", 430.0],
+		["first crest", 635.0], ["the dive", 760.0],
+		["valley floor", 940.0], ["off-camber S", 1040.0],
+		["the wall", 1200.0], ["edge run", 1390.0],
+		["west hairpin (banked)", 1670.0], ["crest launches", 1860.0],
+		["drumbeat ridge", 2090.0], ["compression-rebound", 2270.0],
+		["the escalator", 2480.0], ["long right (banked)", 2670.0],
+		["tail return", 3010.0], ["closing hairpin", 3280.0]]
 	var worst49: float = 0.0
 	for case49: Array in census49:
 		main.dip_timer = 1000.0
@@ -5263,7 +5339,12 @@ func _run() -> void:
 	# (a) THE FLAIR - out of the banked curve A, the falling
 	# side's wheels should catch air across the bank unwind
 	# while the held side stays loaded and the car does NOT
-	# fully leave (a two-wheel event); (b) THE HILLS - the
+	# fully leave (a two-wheel event). (FP37: Track 01's
+	# flair is a LEFT sweeper where the old circuit's curve
+	# A fell to the right - the falling side here is the
+	# LEFT, and the assertions below are mirrored to match;
+	# the measured event is the same size: FL 6, RL 7.)
+	# (b) THE HILLS - the
 	# circuit hump row at cruise throws drumbeat-band hops
 	# now, not only jumps; (c) the climb-top bend at cruise
 	# stays a NEGATIVE control (partial load, no separation -
@@ -5272,19 +5353,25 @@ func _run() -> void:
 	# dead-steady guard).
 	main._set_track("circuit")
 	var feats51: Dictionary = main.track_data["circuit"]["features"]
-	# (a) curve A exit: warp in, autopilot through the unwind
-	# (curve A ends s=720; the shaped unwind runs to ~740).
-	main.debug_warp_to_s(360.0)
+	# (a) the flair exit: warp in, autopilot through the
+	# unwind. AMENDED (FP37, FLAGGED): re-staged on Track
+	# 01's flair - warp s 200 (the run-up flies the opening
+	# hump and enters the arc at cruise), the arc ends
+	# s=575, the shaped unwind runs to ~595; the snapshot
+	# is taken at s 567 and the window closes at s 600.
+	# The piece itself is the old circuit's construction
+	# verbatim (26 deg bank, the same shaped unwind).
+	main.debug_warp_to_s(200.0)
 	main.test_throttle = 0.0
 	var snap51a: Array = [0, 0, 0, 0]
 	var took51a: bool = false
 	var air51a: bool = false
 	var t51a: int = 0
-	while main.car_s < 745.0 and t51a < 3000:
+	while main.car_s < 600.0 and t51a < 3000:
 		autopilot()
 		await physics_frame
 		t51a += 1
-		if not took51a and main.car_s >= 712.0:
+		if not took51a and main.car_s >= 567.0:
 			took51a = true
 			snap51a = main.wheel_air_frames.duplicate()
 		if took51a and main.mode == main.MODE_AIR:
@@ -5296,12 +5383,12 @@ func _run() -> void:
 		d51[w51] = main.wheel_air_frames[w51] - int(snap51a[w51])
 	print("stage51: curve A unwind - corner air frames in window FL %d FR %d RL %d RR %d, full-air %s" % [
 		int(d51[0]), int(d51[1]), int(d51[2]), int(d51[3]), str(air51a)])
-	check(int(d51[1]) >= 4 and int(d51[3]) >= 4,
-		"stage51: the flair - the falling (right) side's wheels catch air at the curve A exit (FR %d, RR %d frames)" % [int(d51[1]), int(d51[3])])
+	check(int(d51[0]) >= 4 and int(d51[2]) >= 4,
+		"stage51: the flair - the falling (left) side's wheels catch air at the flair exit (FL %d, RL %d frames)" % [int(d51[0]), int(d51[2])])
 	check(not air51a,
 		"stage51: the flair is a two-wheel event - the car never fully leaves at the exit")
-	check(int(d51[1]) + int(d51[3]) > int(d51[0]) + int(d51[2]),
-		"stage51: the exit separation is asymmetric (right %d frames vs left %d)" % [int(d51[1]) + int(d51[3]), int(d51[0]) + int(d51[2])])
+	check(int(d51[0]) + int(d51[2]) > int(d51[1]) + int(d51[3]),
+		"stage51: the exit separation is asymmetric (left %d frames vs right %d)" % [int(d51[0]) + int(d51[2]), int(d51[1]) + int(d51[3])])
 	# (b) the circuit hump row at cruise (pinned 24, the
 	# stage-10b idiom): count flights and the drumbeat band.
 	var hx51: float = float(feats51["ext_s0"])
@@ -5341,13 +5428,15 @@ func _run() -> void:
 	check(total51 >= 2.0,
 		"stage51: total hump air at cruise %.2f s (floor 2.0)" % total51)
 	# The drumbeat band on THIS row is counted and printed,
-	# not quota'd - honestly: the circuit row descends at
-	# -8 deg under its humps, so a separated car stays out
-	# ~1.1 s per hump and the band is filled only by
-	# phase-sensitive re-flights (the FP21 diag protocol
-	# measured 4 in band here; this suite protocol measured
-	# 0 - same model, different entry phase). The band's
-	# home geometry is the flat-based row, staged next.
+	# not quota'd - honestly: a separated car stays out
+	# ~1.1 s per hump on the primary flights and the band
+	# is filled only by phase-sensitive re-flights (the
+	# FP21 diag protocol measured 4 in band on the old
+	# circuit's descending row; this protocol measures
+	# the primaries and the occasional re-flight - same
+	# model, different entry phase). FP37: Track 01's row
+	# is the flat-based FP8 row, the same construction
+	# the ribbon row staged next is built from.
 	# (b2) the RIBBON hump row at cruise: same protocol.
 	main._set_track("ribbon")
 	main.debug_warp_to_s(main.ext_s0 - 10.0)
@@ -5403,15 +5492,28 @@ func _run() -> void:
 			break
 	check(not air51c,
 		"stage51: NEGATIVE CONTROL - no separation at the climb-top bend at cruise")
-	check(min51c > 0.2 and min51c < 0.9,
+	# AMENDED (FP37, FLAGGED): the band's floor is
+	# re-derived - Track 01's climb-top is THE WALL's
+	# long soft crest (45 m at 0.008/m), and at cruise
+	# it unloads to 0.06: near-separation, honestly
+	# lighter than the old circuit's tighter bend
+	# (which read inside 0.2-0.9). The control's
+	# content is the no-separation check above; this
+	# band now asserts the unload is real but partial
+	# (never a full 0.00, never a cruise launch).
+	check(min51c > 0.02 and min51c < 0.9,
 		"stage51: climb-top load at cruise stays partial (min %.2f)" % min51c)
-	# (d) the flat guard: the home straight separates nothing.
+	# (d) the flat guard: the opening flat separates nothing.
+	# AMENDED (FP37, FLAGGED): the window is s 60-200 -
+	# Track 01's opening carries its hump at s 220, which
+	# separates by design; the guard's span is the flat
+	# before it.
 	main.debug_warp_to_s(60.0)
 	main.test_throttle = 0.0
 	var waf51d: Array = main.wheel_air_frames.duplicate()
 	var min51d: float = 9.0
 	var t51d: int = 0
-	while main.car_s < 300.0 and t51d < 2000:
+	while main.car_s < 200.0 and t51d < 2000:
 		autopilot()
 		main.debug_pin_speed(34.0)
 		await physics_frame
@@ -5424,7 +5526,7 @@ func _run() -> void:
 	for w51e: int in 4:
 		sum51d += main.wheel_air_frames[w51e] - int(waf51d[w51e])
 	check(sum51d == 0 and min51d > 0.9,
-		"stage51: the flat home straight separates nothing (corner air frames %d, min corner load %.2f)" % [sum51d, min51d])
+		"stage51: the flat opening separates nothing (corner air frames %d, min corner load %.2f)" % [sum51d, min51d])
 	main.test_throttle = 0.0
 	main.wheel_angle = 0.0
 
