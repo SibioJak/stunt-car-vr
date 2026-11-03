@@ -95,9 +95,9 @@ VR (Quest):
   button (Fix Pass 12 — the boards are hidden by default; B
   calls them up and puts them away. Red dash button = restart)
 - Switch track (while dangling): GRIP near the purple dash button —
-  the mountain circuit (default) and the original test ribbon;
-  a circuit race is 3 laps to the finish, the ribbon is
-  point-to-point
+  Track 01 (default), the original test ribbon and the Feature
+  Lab; a Track 01 race is 3 laps to the finish, the ribbon is
+  point-to-point, the lab is the piece library as a practice lap
 - Recenter: click the left stick
 - Road-jitter experiment on/off: click the right stick (state shows
   as JIT in the DIAG block; default ON)
@@ -5279,6 +5279,181 @@ numbers to the digit (−1.65 / −3.56° / −8.92°; 0.72 spin;
   shapes (deferred by your ruling), the smoke's look
   (placeholder particles; the state is what's real).
 
+
+## Fix Pass 37 — TRACK 01: the first real circuit
+
+The owner's order (2026-11-02, queued behind FP36): "after
+that I'd like to see a track put together, a circuit, with
+all the track elements we have so far. lots of turns in
+both directions, steep climbs, steep descents. jumps." —
+and "replace first test track with it." The FP10 mountain
+circuit is REPLACED in slot 1: TRK now cycles Track 01 →
+the ribbon → the Feature Lab. The lab is untouched (it
+stays the piece library and the audit instrument) and so
+is the ribbon. BUILD_STAMP "FP37 · 2026-11-02".
+
+### The layout (3,493 m, closed, Drop Start at the head)
+
+Assembled per the prototype-first method: every sector is
+a piece already driven in the lab / on the ribbon / on the
+old circuit, plus the owner's steep grades built as
+first-class pieces. Spans are the builder's own
+(features["sectors"] — stage 18's census and stage 49's
+fall census read the same table):
+
+| sector | span (m) | what it is |
+|---|---|---|
+| T1 THE OPENING | 0–285 | Drop Start flat, ONE FP8 hump at s 220 — the launch straight is taxed from the first lap; its length also sets the tail's return |
+| T2 THE FLAIR | 285–595 | left sweeper R185, 26° bank, the shaped unwind at the exit (stage 51a stages here now) |
+| T2b FIRST CREST | 595–675 | a +12° slope-matched launch |
+| T3 THE DIVE | 675–965 | STEEP DESCENT −18° × 170 m, a flatten, one hump on the valley floor, a 55 m settle |
+| T4 OFF-CAMBER S | 965–1128 | the lab P5 family at R85, adverse ±10° banks, 30° per arc with a 55 m settle link (see "the S" below) |
+| T5 THE WALL | 1128–1343 | STEEP CLIMB +20° × 170 m, then a long soft crest flatten |
+| T6 THE EDGE RUN | 1343–1453 | flat taxed by edge markers on the line (lat ±5.85) + a ±4° bank sway |
+| T7 THE CHASM | 1453–1616 | the lab P4 piece: shaped +10° lip, 28 m of air, −3.4° landing straight, +8° exit climb |
+| T8 WEST HAIRPIN | 1616–1762 | left 180° at R40, banked 24° — the lap's slow corner |
+| T9 CREST LAUNCHES | 1762–1977 | the lab P3 pair (+14°, +20°), slope-matched |
+| T10 DRUMBEAT RIDGE | 1977–2222 | the FP8 hump row verbatim (five humps + settle, 245 m) |
+| T11 COMPRESSION→REBOUND | 2222–2344 | the lab P6 piece verbatim |
+| T12 STAIRCASE + ESCALATOR | 2344–2605 | six −22° steps down, then the second STEEP CLIMB +17° × 100 m, cresting off sharp — the top of the climb is itself a launch |
+| T13 THE LONG RIGHT HOME | 2605–2783 | right sweeper R100 at −26° bank, DESCENDING at −9° |
+| T14 THE LAST HUMP | 2783–2858 | one FP8 hump on the run south — the approach to the tail is taxed too |
+| T15 THE TAIL | 2858–3493 | solver territory: return straight (bank sway + its own FP8 hump 90 m into the hold) → closing left hairpin R118 |
+
+Closure is solved on the tail exactly as FP10 did it
+(return length / hold pitch / hairpin radius are the
+continuous variables): lr 247 m, phi_h −0.3°, R_e 123 m,
+residual 0.004 m. Lap elevation runs 5.2 m (the valley
+floor) to 85.5 m (the Escalator's crest). Head layout was
+iterated against a replica of the generator until the
+solver landed mid-range on all three variables — phi_h
+sat on its −0.03 rad clamp at one point (the head ended
+5.1 m too high for the return to shed), which is why T13
+descends at −9° rather than −7.5°: its grade is part of
+the lap's elevation budget, not decoration.
+
+### The grades, verified
+
+| grade | design | measured |
+|---|---|---|
+| THE DIVE (T3) | −18° × 170 m | drops 55.0 m from lip to valley floor (stage 18's census reads it off the built frames) |
+| THE WALL (T5) | +20° × 170 m | gains 52.4 m across the climb span (stage 18); topped at pace in every feasibility lap — the engine's 16 m/s² against the slope's 3.4 m/s² gravity component is never close |
+| THE ESCALATOR (T12) | +17° × 100 m | crests at the lap's high point, 85.5 m |
+| THE STAIRCASE (T12) | −22° steps × 6 | −11 m over 66 m |
+| THE LONG RIGHT (T13) | −9° × 157 m | gives back 19.8 m across the sector while turned at R100 |
+
+### Two convictions from the feasibility drive
+
+1. **The Dive → S sequence wedged the car (v2 layout).**
+   The valley hump's rebound second flight landed
+   CROSSED-UP inside the S's first arc (~s 861): the car
+   scrubbed to a stop on the adverse bank and pogoed on
+   its springs in a permanent AIR/DRIVE flicker no
+   lost-trigger could fire on. A track sequence defect
+   under the lab's own sequencing law (touchdown,
+   rebound and a settled run complete before the next
+   piece begins): the Dive's settle is 55 m in the final
+   layout, and the S is entered settled.
+2. **The S runs wide at racing pace (v3, then v4).** The
+   lab's 70°-per-arc piece survives the lab because its
+   feeders deliver it slowly; fed at racing pace off the
+   Dive it entered at 30.5 m/s and the adverse camber's
+   pull (~1.7 m/s² on top of the cornering demand, which
+   at the curvature cap already spends the whole grip
+   budget) bled lat to −4 m inside 50 m and off the road
+   at s 998. Shortening the sweep to 40° per arc was NOT
+   enough: the first arc's slide (−4.6 at the link) left
+   lateral velocity the 18 m link couldn't kill, and
+   the reversal threw the car off the second arc at
+   s 1085 carrying ~9 m/s sideways. The final circuit
+   instance keeps the piece's radius (R85) and banks
+   (±10° adverse), sweeps 30° per arc, and puts a 55 m
+   settle link between the arcs where the lateral
+   velocity dies: measured traversal at a sustained
+   30.7 m/s peaks at −2.89 m in the first arc and
+   +1.71 m in the second. The lab keeps the full piece
+   as the library original. The full feasibility drive
+   (stage 19's protocol) then ran 3 laps to DONE in
+   20,596 frames with ZERO falls.
+
+### The audits, repriced (stage 54's protocol, one lap)
+
+Track 01: **30.63 s of payable air, 259.1 units of
+projected income per lap, longest starved stretch
+250 m** — against the design target of < ~500 m, beaten
+by 2x. The sector geography (payable air per 250 m
+sector): [1.09, 0.77, 3.14, 1.33, 0, 1.00, 0.93, 6.84,
+6.07, 3.96, 1.73, 1.87, 1.90, 0] — only two zero sectors
+in the lap, each isolated (the S/Wall sector and the
+seam sector), so no two starved sectors ever touch.
+Alongside the standing figures: the lab pays 272.7, the
+ribbon 96.4, and the old circuit paid 79.4 with a
+2,000 m longest starved stretch — Track 01 pays
+near-lab income across a full 3.5 km lap and starves
+nowhere longer than a single sector.
+
+### Census — every stage the old circuit's geometry fed
+
+Re-derived and flagged in place (each carries its FP37
+note at the stage): **18** (lap band, the Wall's gain,
+the 28 m chasm, the home/mid straightaways replaced by
+the 16-sector census; the dip depth, curves census, seam
+and drop-qualification trio are features-driven and
+stand), **21** (the absence assertions stand; the
+clean-line window is now the opening flat, s 30–200,
+before the hump), **29** (stagings moved off
+literals onto the features — climb_s1 and gap_s0 — after
+the first form's hard-coded lip went stale by 9 m when
+the S grew; measured at the anchors: climb 314 frames,
+lip 166, the lost case's bound re-derived < 230 from
+its measured 208), **35** (the warp's spring-zeroing
+hygiene added — without it a spurious hop precedes the
+gap flight; and the gated case re-staged at 48 m/s:
+Track 01's chasm lip launches the car upward, so at the
+old 33 m/s staging the impact never armed the gate and
+the spring route answered at 2.57 — at 48 the flight
+lands on the rising exit climb, throw 4.13, rebound
+ratio 0.64 in the film band, the original bounds all
+standing), **49** (the fall census list re-derived from
+the sector table, sixteen falls), **51(a)** (the flair
+re-staged on Track 01's arc: warp 200, snapshot at 567,
+window to 600 — and the falling-side assertions
+mirrored: Track 01's flair is a LEFT sweeper, the event
+reproduces on the left wheels, FL 6 / RL 7), **51(c)**
+(the load band's floor re-derived to 0.02: the Wall's
+long soft crest unloads to 0.06 at cruise — near-
+separation without separating; the no-separation
+control itself stands), **51(d)** (the flat guard's
+window is s 60–200, before the opening hump). Verified unaffected
+and untouched: 19 (the feasibility laps themselves), 20
+(features-driven off gap/ext spans), 26 (its speed-run
+measurements complete by s ~120, before the hump), 34
+(its hairpin fall at s 3279 still lands inside the
+closing hairpin), 51(b)/(c) (features-driven off the
+ext/climb spans), 52(a), 54, 57, 58, 65. Ribbon and lab
+stages do not move; a failure there would be a real
+regression, not a census item.
+
+### Gates
+
+Preflight audit clean; parse warnings-as-errors
+clean; ClassDB XR guard ALL 71; full smoke **ALL 716
+CHECKS PASSED** (698 at FP36 + the census growth above).
+The render proof is the one gate the sandbox could not
+run to completion this pass: under neighbour load it
+segfaulted once at 429 MB free and then crawled at
+under 1% CPU, reaching 42 checks with the only failure
+being the standing hub-reach artifact (identical on
+the FP31-FP36 baselines). Nothing in this pass touches
+the rendering, cockpit or crane paths its captures
+exercise, and the FP37 stamp it would photograph is
+asserted in-suite by stage 62. The proof should be
+re-run on a quiet box; its captures in this commit are
+the FP36 set. No *.uid / *.png.import in the commit.
+UNVERIFIED until the owner drives it: the whole lap's
+feel — the S's new sweep, the Wall at pace, the
+Escalator's crest launch, and whether 3,493 m is the
+right lap length for a 3-lap race.
 
 ## Quest export — status
 
