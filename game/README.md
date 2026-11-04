@@ -6717,3 +6717,120 @@ verdict — the loop's feel (including the old 16–20
 band, now joins-clean), whether the helix's two rolls
 read as a corkscrew from the driver's seat, the
 wall-ride's wall, and the four jump-ins.
+
+## Fix Pass 44 — LONG GEARS + THE PEEL-OUT
+
+Ordered on the owner's FP42 verdict: "Gear ratios just
+aren't right. It runs through them too quickly, you
+reach top speed too quickly and are usually left
+wanting for more. An odd rod should always have more
+to give." Plus: "still not feeling effect from rear
+tires, no peeling out sensation."
+
+### Item 1 — long gears: top speed is a reserve
+
+The spread is rebuilt tall: bands [16, 30, 41, 71],
+forces [22, 15, 11, 8.5] (FP42: [12.5, 19, 33, 48] /
+[22, 19, 16.5, 12.5]), and the clamp rises 48 → 71 —
+not a new state to sit in but a reserve: top gear's
+faded force meets the drag at ~67–68 m/s on the flat,
+so the clamp is reached only with help. Staged: shifts
+at 1.64 / 3.21 / 5.37 s; 0–30 in 3.20 s (FP42: 3.14);
+0–45 in 6.76 s (5.40); the old 48 point arrives at
+7.63 s (6.01) deep in top gear at rev 0.23, still
+pulling +3.2 m/s². Pinned at 60 the car still pulls
+(62.15 after 2.25 s); pinned at 70 it falls away from
+the clamp toward equilibrium (68.97); boost from 60
+buys the ceiling back (70 in 0.62 s). THE INTERLOCK,
+against the owner's straights-are-breaths law: a
+staged Track 01 lap spent 10.74 s of 125.7 s AT the
+48 ceiling under FP42's box; under FP44 it spends
+0.00 s at the ceiling, with lap vmax 62.3 — past the
+old ceiling, never at the new one. First gear is
+untouched at 22, so the burnout and the 0.45 feather
+law survive by construction; the shift gap, rev sag,
+automatic box and GEAR on DIAG are kept whole.
+
+### Item 2 — the peel-out, as a sensation
+
+FP42's spin was real (peak 1.00) but reached the
+seated driver through no channel. Three channels now
+carry it, all staged in the new stage 71:
+
+- AUDIO: a dedicated spin voice (660 Hz fundamental
+  with exact-cycle partials + shredded noise), keyed
+  to wheelspin × rear load, peaking at −10 dB over the
+  engine's −17 dB song; staged gain 1.00 in the burn,
+  0.003 a second after the hook. Full latch/watchdog/
+  silence-by-default discipline. The skid voice's
+  wheelspin component is removed (flagged) — the spin
+  has its own voice now.
+- SEAT: a spin-driven shudder at the body application
+  (8 Hz; 0.0119 m peak-to-peak in the burn, 0.0001 m
+  once hooked), on its own envelope — FP32's sink law
+  and FP42's pitch channel are untouched, and
+  `body_sink` never carries it.
+- YAW HUNT: a 2.1 Hz yaw oscillation under power
+  while the rears spin (3.23° peak-to-peak of heading
+  wander in the burn, 0.18° after the hook, 0.000° on
+  a feather). Applied as an offset on the frame's yaw
+  only — never written into the yaw state, so a
+  separation still stores the wheel's yaw. (The first
+  form wrote it into the state and the yaw lag
+  integrated it ~6×, to a 20.7° wander; its own probe
+  convicted it before the suite saw it.)
+
+### Census and the three fixture defects
+
+The FP41–43 census holds (loop window and crown,
+helix hold, wall-ride law, storm law, stage 65's
+spin law). The retention law is untouched and its
+fixtures pass in their FP42 bands; their point
+readings are now 1.000 / 0.631 / 0.446 / 0.228
+because the staged arrivals finally fly on their
+own basis (tilts 5° / 11° / 11° / 27° — the FP42-era
+readings were taken through a stale one).
+Legitimate moves, re-derived and flagged in place:
+the fishtail's standard-corner readings (peak
+3.59° → 2.52°, sustained 2.09° → 1.76° — second gear
+asks less of the rear at the staged 18 m/s in both
+eras; the tax constants are untouched), stage 26's
+powertrain stations (its run now ends at the s 220
+hump at 47.7; its pitch stations move into third
+gear, reading 0.99 / 2.39 against the formula's
+0.97 / 2.56), and stage 9's height tier (0.022 →
+0.030 on a one-variable proof: FP43 constants on
+this tree read 0.0175). The pass also caught three
+fixture defects, all flagged at the site: the lap
+loops' instant release wedging forever on an
+attach-phase drop at a fall site (they now release
+at the dangle; production's any-phase release is
+untouched); stage 67's fairness-audit lap running
+the raised envelope its driver cannot brake for
+(it now runs at its design pace — J2's foot reads
+0.02 — and the raised pace's lap is stage 71's
+subject); and the staged-landing helpers never
+recording a takeoff basis, so graded landings flew
+on stale state (one line each; the fixtures now
+read their staged arrivals honestly).
+
+Economy repricing, report only (dials untouched,
+per the 2026-11-02 ruling): Track 01's projected
+income 181.3 → 187.0/lap on payable air 18.70 s;
+the ribbon 104.5 → 96.3 on 11.66 s; starved
+stretches unchanged (500 m / 250 m).
+
+Gates: preflight audit clean; parse clean; SMOKE
+ALL 832 (810 + stage 71's 22), API GUARD ALL 71;
+render proof 172/173 (the standing wheel-hub reach
+artifact only, identical on every baseline since
+FP31).
+
+Stamp: FP44 · 2026-11-03. What the seat still owes:
+whether the long pulls feel like an Odd Rod that
+always has more to give; whether the peel-out lands
+— the squeal over the engine, the shudder through
+the seat, the hunt at the wheel; and the carried
+FP43 verdicts (loop feel incl. the 16 m/s crown
+transient, the helix from the seat, the wall-ride,
+the four jump-ins).

@@ -167,7 +167,7 @@ const STEER_FALLOFF_SPEED: float = 26.0 # lock scale = 1 / (1 + (vf/this)^2)
 # range; the coincidence is noted, not engineered). The
 # engine/brake/drag terms are UNCHANGED (10 / 14 / 0.10), so
 # the run up is the same curve reaching further.
-const TOP_SPEED: float = 48.0
+const TOP_SPEED: float = 71.0 # Fix Pass 44: was 48.0 - the clamp is now a RESERVE, not a state (see the FP44 gearbox note below): flat-ground equilibrium of the faded top gear sits at ~67-68, so the clamp is reachable only with help (descent, boost, a genuinely long run)
 # Steering above the FP10 envelope: the falloff speed blends
 # 26 -> 40 m/s across 24..40 m/s (smoothstep), so lock at 48
 # is 0.410 instead of the old curve's 0.227 - present but
@@ -230,8 +230,36 @@ const BOOST_ACCEL: float = 16.0 # the boost's added tire force (was 9.0) - boost
 # 0.45 of first gear's 22 is still 9.9 against the 11.0
 # cap, so a gentle launch still hooks clean.
 const GEAR_COUNT: int = 4
-const GEAR_TOP_SPEEDS: Array = [12.5, 19.0, 33.0, 48.0] # vf at which each gear lets go (upshift point)
-const GEAR_FORCES: Array = [22.0, 19.0, 16.5, 12.5] # engine tire force at each band's bottom
+# Fix Pass 44 (Item 1): LONG GEARS. The owner's FP42 verdict:
+# "Gear ratios just aren't right. It runs through them too
+# quickly, you reach top speed too quickly and are usually
+# left wanting for more. An odd rod should always have more
+# to give." FP42's box reached the 48 clamp in 5.98 s and
+# then SAT there (a staged Track 01 lap spent 10.74 s of its
+# 125.7 s AT the ceiling - a state, not an event). The
+# spread is rebuilt TALL: bands [16, 30, 41, 71], forces
+# [22, 15, 11, 8.5] - each gear a long pull (staged shifts
+# at ~1.6 / 3.2 / 5.4 s), first gear untouched at the savage
+# 22 (the burnout and the 0.45 feather law survive by
+# construction: 0.45 x 22 = 9.9 < the 11.0 cap). The law the
+# spread serves: TOP SPEED IS A RESERVE, NOT A STATE. Top
+# gear's faded force meets the 0.10 drag at ~67-68 m/s on
+# the flat, so on level ground the car pulls through every
+# speed our tracks use and is still pulling (+3.2 m/s^2) at
+# the old 48 point, deep in top gear at rev 0.23; the 71
+# clamp itself is reached only with help - the Dive's slope
+# term (+2.57), boost (+16 after the box), or a run longer
+# than any straight we own. Staged (the suite, this
+# build): 0-30 3.20 s, 0-45 6.76 s (stage 68's direct
+# standing run; stage 71's composed run agrees), 0-48
+# 7.63 s composed from staged segments (the unsteered
+# launch leaves the road before 45 under the tall box),
+# and a staged Track 01 lap spends 0.00 s at the ceiling
+# (was 10.74 s at FP42) with lap vmax 62.3.
+# The FP42 drama is kept whole: the 0.22 s shift gap, the
+# rev sag in the gap, automatic selection, GEAR on DIAG.
+const GEAR_TOP_SPEEDS: Array = [16.0, 30.0, 41.0, 71.0] # vf at which each gear lets go (upshift point)
+const GEAR_FORCES: Array = [22.0, 15.0, 11.0, 8.5] # engine tire force at each band's bottom
 const GEAR_BAND_FADE: float = 0.25 # force fraction surrendered across a band
 const SHIFT_GAP_S: float = 0.22 # the engine's silence inside a shift (FP42: was 0.13)
 const SHIFT_HYSTERESIS: float = 1.5 # m/s below a band's floor before the box takes the lower gear
@@ -321,6 +349,45 @@ const SPIN_KINETIC: float = 0.72 # a spinning tire's pull, fraction of the cap's
 const SPIN_FULL_EXCESS: float = 5.0 # demand excess (accel units) that reads as full spin
 const SPIN_ATTACK: float = 10.0 # 1/s, the spin state's bite
 const SPIN_RELEASE: float = 3.5 # 1/s, its decay (also the airborne decay)
+# Fix Pass 44 (Item 2c): THE YAW HUNT. FP42's spin was real
+# in the model (peak 1.00) but no channel reaching a seated
+# driver carried it - the rear wheels are invisible from the
+# cockpit and the smoke is behind him. While the rears spin
+# hard under power the car now HUNTS: a small yaw oscillation
+# (HUNT_AMP rad/s at HUNT_FREQ Hz) applied as an offset on
+# each frame's yaw step (never accumulated into the yaw
+# state - see _update_drive), so the driver corrects it
+# with the wheel - a hunt, not a slide. The envelope arms
+# only on a LOADED rear (load_r > 0.5): a crest separation
+# at full throttle must not arm it. Sizing: at full envelope
+# the heading wanders ~+-1.65 deg (3.3 deg peak-to-peak) at
+# 2.1 Hz - felt, correctable, and dead the moment the tires
+# hook (the envelope decays at 2.2/s once the spin state
+# falls under HUNT_SPIN_ARM).
+const HUNT_SPIN_ARM: float = 0.35 # wheelspin state that arms the hunt
+const HUNT_LOAD_MIN: float = 0.5 # rear load factor the hunt requires (a weighted tire hunts; an unloaded one just spins)
+const HUNT_AMP: float = 0.38 # rad/s of yaw oscillation at full envelope
+const HUNT_FREQ: float = 2.1 # Hz
+const HUNT_ENV_ATTACK: float = 3.0 # 1/s, envelope rise
+const HUNT_ENV_DECAY: float = 2.2 # 1/s, envelope fall once the spin lets go
+# Fix Pass 44 (Item 2b): THE SEAT SHUDDER. The second new
+# channel: while the rears spin, a vibration through the
+# body/seat stack - direct synthesis (a phase accumulator
+# and an envelope, no new spring), so FP32's sink law and
+# FP42's load-pitch oscillator are untouched BY CONSTRUCTION:
+# the shudder lives in its own vars and is added only at the
+# body node's placement, never into body_sink (stage 2e
+# reads body_sink directly and must not see it). Amplitude
+# 6 mm vertical at ~8 Hz with a 0.4x lateral component on a
+# phase offset - the tires hunting for grip, felt in the
+# seat. The envelope follows the spin state itself, so the
+# shudder dies the frame the tires hook.
+const SHUDDER_AMP: float = 0.006 # m, vertical shudder amplitude at full envelope
+const SHUDDER_LAT_K: float = 0.4 # lateral component, fraction of the vertical
+const SHUDDER_LAT_PHASE: float = -1.1 # rad, lateral phase offset (not a copy of the vertical)
+const SHUDDER_FREQ: float = 8.0 # Hz at full envelope (0.65x at rest)
+const SHUDDER_ENV_ATTACK: float = 9.0 # 1/s
+const SHUDDER_ENV_RELEASE: float = 4.5 # 1/s
 # Yaw through flight (Part C): a car's rotation does not
 # vanish because it left the ground. The HEADING still
 # freezes airborne (FP8's law, untouched - stage 10b
@@ -810,6 +877,24 @@ const AUDIO_ENGINE_DB: float = -17.0 # engine level at full song
 const AUDIO_ENGINE_IDLE_DB: float = -23.0 # engine level at idle / hang
 const AUDIO_SKID_MAX_DB: float = -13.0 # skid level at full slip
 const AUDIO_SKID_FLOOR_DB: float = -34.0 # skid level at the onset of slip
+# Fix Pass 44 (Item 2a): THE SPIN VOICE. A dedicated tire
+# squeal/shred for the driven wheels' breakaway, keyed to
+# the wheelspin state x the rear load - the third channel
+# of the peel-out package (the seat shudder and the yaw
+# hunt are the other two). FP36 had folded the spin into
+# the skid voice at the skid's polite levels (max(f slip,
+# spin) peaking at -13 dB under the engine's -17 full
+# song); a burning tire is LOUDER than the engine while it
+# lasts, so this voice peaks at -10 dB. Same discipline as
+# every voice: synthesized loop, started only in a live
+# race, stopped (not faded) by the teardown latch, gain cut
+# by the stall watchdog, silent by default. With the spin
+# carried here, the skid voice returns to slip_state alone
+# (FP44 amendment to FP36's fold - flagged in _update_audio).
+const AUDIO_SPIN_MAX_DB: float = -10.0 # spin level at full burn (over the engine's -17)
+const AUDIO_SPIN_FLOOR_DB: float = -30.0 # spin level at the onset of breakaway
+const AUDIO_SPIN_ATTACK: float = 14.0 # 1/s, the spin gain's rise
+const AUDIO_SPIN_RELEASE: float = 6.0 # 1/s, its fall (the hook silences it fast)
 const AUDIO_SLIP_ONSET: float = 1.2 # |lateral velocity| (m/s) where tires start to sing
 const AUDIO_SLIP_SPAN: float = 3.8 # lateral-velocity range from onset to full slip
 const AUDIO_STALL_MS: int = 600 # physics-tick gap that counts as a stall
@@ -1311,6 +1396,13 @@ var gear_rev: float = 0.0 # Fix Pass 40 (Item 2): fraction through the current g
 var shift_t: float = 0.0 # Fix Pass 40 (Item 2): the shift thrust-gap timer, seconds remaining
 var rear_u: float = 0.0 # Fix Pass 40 (Item 3): rear longitudinal utilisation (engine demand / spin test cap) - the fishtail tax's input
 var throttle_prev: float = 0.0 # Fix Pass 42 (Item 2): last DRIVE frame's throttle - the catch arms on the driver's lift
+var hunt_env: float = 0.0 # Fix Pass 44 (Item 2c): the yaw hunt's envelope, 0..1
+var hunt_ph: float = 0.0 # Fix Pass 44 (Item 2c): the hunt's phase, rad
+var hunt_yaw: float = 0.0 # Fix Pass 44 (Item 2c): this frame's hunt yaw rate, rad/s (surfaced for the suite)
+var spin_shudder: float = 0.0 # Fix Pass 44 (Item 2b): the seat shudder's vertical offset, m (applied at the body node only - never in body_sink)
+var spin_shudder_lat: float = 0.0 # Fix Pass 44 (Item 2b): the shudder's lateral offset, m
+var spin_shudder_env: float = 0.0 # Fix Pass 44 (Item 2b): the shudder's envelope, 0..1
+var spin_shudder_ph: float = 0.0 # Fix Pass 44 (Item 2b): the shudder's phase, rad
 var tail_catch_t: float = 0.0 # Fix Pass 42 (Item 2): seconds of catch boost remaining
 var load_pitch: float = 0.0 # Fix Pass 42 (Item 4): the body load-pitch channel, rad (negative = nose up under power)
 var load_pitch_v: float = 0.0 # Fix Pass 42 (Item 4): the load-pitch spring's velocity
@@ -1339,6 +1431,8 @@ var audio_stalled: bool = false
 var audio_last_physics_ms: int = 0
 var audio_rpm: float = 0.8 # smoothed engine speed factor (pitch scale)
 var audio_skid_now: float = 0.0 # smoothed skid gain, 0..1
+var audio_spin_now: float = 0.0 # Fix Pass 44 (Item 2a): smoothed spin-voice gain, 0..1
+var spin_player: AudioStreamPlayer # Fix Pass 44 (Item 2a): the driven wheels' squeal/shred voice
 var engine_player: AudioStreamPlayer
 var skid_player: AudioStreamPlayer
 # Fix Pass 15 (Item 1): the telegraph state. tire_ratio is the
@@ -1612,7 +1706,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP43 · 2026-11-03"
+const BUILD_STAMP: String = "FP44 · 2026-11-03"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -7121,6 +7215,7 @@ func _process(_delta: float) -> void:
 			audio_stalled = true
 			engine_player.volume_db = -60.0
 			skid_player.volume_db = -60.0
+			spin_player.volume_db = -60.0 # Fix Pass 44 (Item 2a): the spin voice is under the watchdog too
 			song_player.volume_db = -60.0 # Fix Pass 15 (Item 1): the watchdog covers every voice
 			rumble_player.volume_db = -60.0
 			scrape_player.volume_db = -60.0
@@ -7362,6 +7457,33 @@ func _update_drive(delta: float) -> void:
 	var front_angle: float = steer * MAX_LOCK_RAD * lock_scale
 	var omega_target: float = clampf(-vf / WHEELBASE * tan(front_angle), -MAX_YAW_RATE, MAX_YAW_RATE)
 	yaw_rate = lerpf(yaw_rate, omega_target, clampf(delta / YAW_TAU, 0.0, 1.0))
+	# Fix Pass 44 (Item 2c): THE YAW HUNT. While the driven
+	# wheels spin hard under power on a loaded rear, the car
+	# hunts around its heading - an oscillation ADDED to the
+	# yaw rate the wheel just produced, so the driver's
+	# corrections fight it through the same lag (YAW_TAU)
+	# every other yaw command uses. The envelope arms only
+	# while all three conditions hold (spin up, throttle in,
+	# rear loaded - a crest separation at full throttle has
+	# load_r ~0 and arms nothing), and decays the moment the
+	# spin lets go: the hunt dies with the hook, by the same
+	# clock as the shudder and the spin voice.
+	var hunt_target44: float = 0.0
+	if wheelspin > HUNT_SPIN_ARM and in_throttle > 0.5 and load_r > HUNT_LOAD_MIN:
+		hunt_target44 = 1.0
+	var hunt_k44: float = HUNT_ENV_ATTACK if hunt_target44 > hunt_env else HUNT_ENV_DECAY
+	hunt_env = lerpf(hunt_env, hunt_target44, clampf(delta * hunt_k44, 0.0, 1.0))
+	hunt_ph += TAU * HUNT_FREQ * delta
+	hunt_yaw = sin(hunt_ph) * HUNT_AMP * hunt_env
+	# The hunt is an OFFSET on this frame's applied yaw, NOT
+	# an addition to the yaw_rate state: the lerp above only
+	# decays the state ~7% per tick, so an added oscillation
+	# would integrate through it (the first form measured a
+	# 20.7 deg heading wander - a swerve, not a hunt). The
+	# rotation step below applies (yaw_rate + hunt_yaw); the
+	# state itself stays the wheel's, so a separation stores
+	# the wheel's yaw (stage 65 C2's contract) and the hunt
+	# cannot leak into the air.
 	# Fix Pass 41 (Item 1): the yaw turns the forward IN THE
 	# ROAD PLANE - a rotation about the road's up by the same
 	# yaw increment the heading used to integrate. On the
@@ -7374,8 +7496,8 @@ func _update_drive(delta: float) -> void:
 	# vector is what creates lateral velocity in the first
 	# place.
 	var v_acc: Vector3 = d41 * vf + r41 * vl
-	if yaw_rate != 0.0:
-		d41 = d41.rotated(up41, yaw_rate * delta).normalized()
+	if yaw_rate + hunt_yaw != 0.0:
+		d41 = d41.rotated(up41, (yaw_rate + hunt_yaw) * delta).normalized() # Fix Pass 44: the hunt rides this frame's step only (see _update_drive's hunt block)
 		drive_fwd = d41
 		r41 = d41.cross(up41)
 	vf = v_acc.dot(d41)
@@ -9046,11 +9168,14 @@ func _update_view_spring() -> void:
 	# one-sided brake term is deleted - the channel
 	# covers both signs at full strength).
 	var b_pitch: float = body_sink * BODY_PITCH_K + load_pitch
+	# Fix Pass 44 (Item 2b): the seat shudder enters HERE -
+	# the body node's placement only. body_sink itself is
+	# never written with it (stage 2e's law reads body_sink).
 	if body_node != null:
-		body_node.position = Vector3(0.0, -body_sink, 0.0)
+		body_node.position = Vector3(spin_shudder_lat, -body_sink + spin_shudder, 0.0)
 		body_node.rotation = Vector3(b_pitch, 0.0, 0.0)
 	if body_node_fb != null:
-		body_node_fb.position = Vector3(0.0, -body_sink, 0.0)
+		body_node_fb.position = Vector3(spin_shudder_lat, -body_sink + spin_shudder, 0.0)
 		body_node_fb.rotation = Vector3(b_pitch, 0.0, 0.0)
 	if fallback_cam != null:
 		fallback_cam.rotation = Vector3(v_pitch, 0.0, v_roll)
@@ -9113,6 +9238,20 @@ func _update_body_spring(delta: float) -> void:
 	var lp_acc: float = (lp_target - load_pitch) * LOAD_PITCH_SPRING - LOAD_PITCH_DAMP * load_pitch_v
 	load_pitch_v += lp_acc * delta
 	load_pitch = clampf(load_pitch + load_pitch_v * delta, -LOAD_PITCH_MAX * 1.3, LOAD_PITCH_MAX * 1.3)
+	# Fix Pass 44 (Item 2b): THE SEAT SHUDDER. Direct
+	# synthesis on its own envelope - it never touches
+	# body_sink, body_vel or the pitch channel above, so
+	# FP32's sink law and FP42's pitch law are unmoved by
+	# construction (stage 2e reads body_sink and cannot see
+	# this). The envelope follows the spin state (DRIVE
+	# only); the offsets are consumed at the body node's
+	# placement in _update_view_spring.
+	var shud_target44: float = wheelspin if mode == MODE_DRIVE else 0.0
+	var shud_k44: float = SHUDDER_ENV_ATTACK if shud_target44 > spin_shudder_env else SHUDDER_ENV_RELEASE
+	spin_shudder_env = lerpf(spin_shudder_env, shud_target44, clampf(delta * shud_k44, 0.0, 1.0))
+	spin_shudder_ph += TAU * SHUDDER_FREQ * (0.65 + 0.5 * spin_shudder_env) * delta
+	spin_shudder = sin(spin_shudder_ph) * SHUDDER_AMP * spin_shudder_env
+	spin_shudder_lat = sin(spin_shudder_ph + SHUDDER_LAT_PHASE) * SHUDDER_AMP * SHUDDER_LAT_K * spin_shudder_env
 
 
 func denti_clamp() -> int:
@@ -9141,6 +9280,15 @@ func _build_audio() -> void:
 	skid_player.stream = _make_skid_stream()
 	skid_player.volume_db = -60.0
 	add_child(skid_player)
+	# Fix Pass 44 (Item 2a): the spin voice - same discipline
+	# as every player here (synthesized loop, silent at
+	# build, started only in a live race, stopped by the
+	# teardown latch, gain cut by the watchdog).
+	spin_player = AudioStreamPlayer.new()
+	spin_player.name = "SpinAudio"
+	spin_player.stream = _make_spin_stream()
+	spin_player.volume_db = -60.0
+	add_child(spin_player)
 	# Fix Pass 15 (Item 1): the telegraph's three voices - the
 	# tire SONG (pre-limit band), the off-road RUMBLE and the
 	# edge SCRAPE. Same discipline as the first two players:
@@ -9234,6 +9382,48 @@ func _make_skid_stream() -> AudioStreamWAV:
 			s16b += 65536
 		data[j * 2] = s16b & 0xFF
 		data[j * 2 + 1] = (s16b >> 8) & 0xFF
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = rate
+	stream.data = data
+	stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	stream.loop_begin = 0
+	stream.loop_end = frames
+	return stream
+
+
+func _make_spin_stream() -> AudioStreamWAV:
+	# Fix Pass 44 (Item 2a): the spin voice's buffer - 1 s at
+	# 22050 Hz. A tonal squeal stack (660 Hz fundamental with
+	# exact-cycle partials at 2x, 1.5x and 3x - every partial
+	# completes whole cycles in the buffer, so the loop wraps
+	# seamlessly at any pitch_scale) shredded with
+	# high-passed noise (deterministic seed, the skid
+	# buffer's recipe): the squeal is the pitch, the shred
+	# is the surface tearing. pitch_scale in _update_audio
+	# climbs with the burn and the road speed.
+	var rate: int = 22050
+	var frames: int = rate
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4244
+	var lp: float = 0.0
+	var prev_lp: float = 0.0
+	var data := PackedByteArray()
+	data.resize(frames * 2)
+	for i: int in frames:
+		var ph: float = TAU * 660.0 * float(i) / float(rate)
+		var v: float = sin(ph) + 0.45 * sin(ph * 2.0) + 0.30 * sin(ph * 1.5) \
+			+ 0.14 * sin(ph * 3.0)
+		var wht: float = rng.randf_range(-1.0, 1.0)
+		lp = lerpf(lp, wht, 0.35)
+		var hp: float = lp - prev_lp
+		prev_lp = lp
+		v = clampf(v * 0.34 + hp * 1.15, -0.85, 0.85)
+		var s16: int = int(round(v * 32767.0))
+		if s16 < 0:
+			s16 += 65536
+		data[i * 2] = s16 & 0xFF
+		data[i * 2 + 1] = (s16 >> 8) & 0xFF
 	var stream := AudioStreamWAV.new()
 	stream.format = AudioStreamWAV.FORMAT_16_BITS
 	stream.mix_rate = rate
@@ -9429,7 +9619,7 @@ func _set_audio_latched(on: bool) -> void:
 	# not just gains down - so nothing can sound while latched.
 	audio_latched = on
 	if on:
-		for pl: AudioStreamPlayer in [engine_player, skid_player, song_player, rumble_player, scrape_player, thump_f_player, thump_r_player]:
+		for pl: AudioStreamPlayer in [engine_player, skid_player, spin_player, song_player, rumble_player, scrape_player, thump_f_player, thump_r_player]:
 			if pl != null and pl.playing:
 				pl.stop()
 
@@ -9443,14 +9633,15 @@ func _update_audio(delta: float) -> void:
 		return
 	var running: bool = race_started and not audio_latched
 	if not running:
-		for pl2: AudioStreamPlayer in [engine_player, skid_player, song_player, rumble_player, scrape_player, thump_f_player, thump_r_player]:
+		for pl2: AudioStreamPlayer in [engine_player, skid_player, spin_player, song_player, rumble_player, scrape_player, thump_f_player, thump_r_player]:
 			if pl2 != null and pl2.playing:
 				pl2.stop()
+		audio_spin_now = 0.0 # Fix Pass 44 (Item 2a): the spin drive dies with the race too
 		audio_song_now = 0.0 # Fix Pass 15 (Item 1): the smoothed drives die with the race
 		audio_rumble_now = 0.0
 		audio_scrape_now = 0.0
 		return
-	for pl3: AudioStreamPlayer in [engine_player, skid_player, song_player, rumble_player, scrape_player]:
+	for pl3: AudioStreamPlayer in [engine_player, skid_player, spin_player, song_player, rumble_player, scrape_player]:
 		if pl3 != null and not pl3.playing:
 			pl3.play()
 	# Engine: the rev target follows speed first; throttle flares
@@ -9493,19 +9684,36 @@ func _update_audio(delta: float) -> void:
 	# Skid: fast attack (tires speak the moment they slide), fast
 	# release (unloaded tires go quiet). slip_state is already 0
 	# outside DRIVE, so the skid is silent airborne by construction.
-	# Fix Pass 36 (Item B2): the same voice carries the
-	# wheelspin's squeal while grounded - a tire burning
-	# against the road is the same instrument as a tire
-	# sliding across it, and the driver hears the spin state
-	# in it (the rev flare above is the other half of the tell).
-	var spin_voice36: float = wheelspin if mode == MODE_DRIVE else 0.0
-	var skid_in36: float = maxf(slip_state, spin_voice36)
-	var rate_k: float = 16.0 if skid_in36 > audio_skid_now else 22.0
-	audio_skid_now = lerpf(audio_skid_now, skid_in36, clampf(delta * rate_k, 0.0, 1.0))
+	# AMENDED (Fix Pass 44, FLAGGED): FP36 folded the wheelspin
+	# into this voice (maxf(slip_state, wheelspin)); the spin
+	# now has its own dedicated voice below, at its own level,
+	# so the skid returns to slip_state alone - one voice per
+	# physical story, and neither masks the other.
+	var rate_k: float = 16.0 if slip_state > audio_skid_now else 22.0
+	audio_skid_now = lerpf(audio_skid_now, slip_state, clampf(delta * rate_k, 0.0, 1.0))
 	if audio_skid_now < 0.01:
 		skid_player.volume_db = -60.0
 	else:
 		skid_player.volume_db = lerpf(AUDIO_SKID_FLOOR_DB, AUDIO_SKID_MAX_DB, audio_skid_now)
+	# Fix Pass 44 (Item 2a): THE SPIN VOICE. The drive is the
+	# spin state weighted by the rear load - a tire must be
+	# pressed to the road to shred audibly; airborne the state
+	# itself decays (SPIN_RELEASE's airborne clause), so the
+	# voice dies with the flight. Attack fast, release faster
+	# than the state: the hook is the loudest silence in the
+	# package. The pitch climbs with the burn and with road
+	# speed (the tire's note rises as it spins faster against
+	# faster ground).
+	var spin_drive44: float = 0.0
+	if mode == MODE_DRIVE:
+		spin_drive44 = wheelspin * clampf(load_r, 0.0, 1.25)
+	var spin_k44: float = AUDIO_SPIN_ATTACK if spin_drive44 > audio_spin_now else AUDIO_SPIN_RELEASE
+	audio_spin_now = lerpf(audio_spin_now, spin_drive44, clampf(delta * spin_k44, 0.0, 1.0))
+	if audio_spin_now < 0.01:
+		spin_player.volume_db = -60.0
+	else:
+		spin_player.volume_db = lerpf(AUDIO_SPIN_FLOOR_DB, AUDIO_SPIN_MAX_DB, audio_spin_now)
+	spin_player.pitch_scale = 0.9 + 0.45 * audio_spin_now + minf(speed, 40.0) * 0.004
 	# Fix Pass 15 (Item 1): the SONG - the band fraction,
 	# smoothed a touch slower than the skid (the warning should
 	# feel like strain building, not a switch). Gain rides the
@@ -9552,6 +9760,20 @@ func audio_engine_pitch() -> float:
 func audio_skid_gain() -> float:
 	# Test accessor: the skid's current gain, 0..1 of full slip.
 	return audio_skid_now
+
+
+func audio_spin_gain() -> float:
+	# Fix Pass 44 (Item 2a) test accessor: the spin voice's
+	# current gain, 0..1 of a full burn.
+	return audio_spin_now
+
+
+func audio_spin_db() -> float:
+	# Fix Pass 44 (Item 2a) test accessor: the spin voice's
+	# current level (-60 while silent).
+	if spin_player == null:
+		return -60.0
+	return spin_player.volume_db
 
 
 func audio_song_gain() -> float:
@@ -9747,6 +9969,7 @@ func debug_force_fall_at(s: float) -> void:
 	lost_lat_t = 0.0
 	air_vel = Vector3(0.0, -6.0, 0.0)
 	car.global_position = frf["pos"] - Vector3.UP * 20.0
+	air_basis0 = car.global_transform.basis # Fix Pass 44: as debug_stage_landing - a direct AIR entry records its takeoff basis
 
 
 func debug_audit_begin() -> void:
@@ -9841,6 +10064,17 @@ func debug_stage_landing(s: float, height: float, fwd_speed: float) -> void:
 	car.global_transform = Transform3D(
 		Basis(fr["side"], fr["up"], -fr["tan"]),
 		fr["pos"] + fr["up"] * (CLEARANCE + height))
+	# Fix Pass 44 (flagged): record the takeoff basis. A
+	# direct AIR entry bypasses _enter_air, which is the
+	# only place air_basis0 is set - so a staged landing
+	# used to fly (and grade) on whatever basis the last
+	# real takeoff in the suite's choreography left
+	# behind. It passed for years on that coincidence;
+	# FP44's reshuffled flights exposed it (stage 68's
+	# retention fixtures all graded SCRUBBED off a stale
+	# basis ~7 deg off the ribbon's frame). The staged
+	# basis IS the takeoff basis - say so.
+	air_basis0 = car.global_transform.basis
 
 
 # --- Fix Pass 11 (Item 2): the lever-zone geometry audit ---------

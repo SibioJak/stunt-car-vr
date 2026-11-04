@@ -772,19 +772,25 @@ func _run() -> void:
 	# sawtooth backwards (1.77 -> 1.68). The honest fixtures
 	# are a climb INSIDE one gear (3 -> 10.5, both first) and
 	# the drop across the 1->2 shift (10.5 -> 12.5).
+	# RE-DERIVED (FP44, FLAGGED): first gear now spans
+	# 0-16 m/s (the long-gears spread), so the FP40 pins
+	# straddle nothing - 12.5 sits mid-first-gear and the
+	# "shift drop" read a climb (1.84 -> 2.14). The fixtures
+	# move with the band: climb 3 -> 13 (both first), drop
+	# read at 17.5 (inside second).
 	main.debug_pin_speed(3.0)
 	await frames(50)
 	var pitch_lo: float = main.audio_engine_pitch()
-	main.debug_pin_speed(10.5)
+	main.debug_pin_speed(13.0)
 	await frames(50)
 	var pitch_hi: float = main.audio_engine_pitch()
 	check(pitch_hi > pitch_lo + 0.3,
-		"stage2f: engine pitch climbs first gear (%.2f at ~3 m/s -> %.2f at ~10.5 m/s)" % [pitch_lo, pitch_hi])
-	main.debug_pin_speed(12.5)
+		"stage2f: engine pitch climbs first gear (%.2f at ~3 m/s -> %.2f at ~13 m/s)" % [pitch_lo, pitch_hi])
+	main.debug_pin_speed(17.5)
 	await frames(50)
 	var pitch_shift2f: float = main.audio_engine_pitch()
 	check(pitch_shift2f < pitch_hi - 0.3,
-		"stage2f: the 1->2 shift drops the revs (%.2f at ~10.5 m/s -> %.2f at ~12.5 m/s)" % [pitch_hi, pitch_shift2f])
+		"stage2f: the 1->2 shift drops the revs (%.2f at ~13 m/s -> %.2f at ~17.5 m/s)" % [pitch_hi, pitch_shift2f])
 	check(main.audio_skid_gain() < 0.02,
 		"stage2f: skid silent while gripping on the straight (gain %.3f)" % main.audio_skid_gain())
 	# Forced slip: the banked corner at speed - the model's real
@@ -922,8 +928,32 @@ func _run() -> void:
 		autopilot()
 		if main.car_s > 185.0 and main.car_s < main.gap_s0:
 			main.test_boost = true
+			# AMENDED (FP44, FLAGGED): the window refills the
+			# meter (stage 54/65's idiom), so the crossing
+			# never depends on the meter's leftover state.
+			main.boost_meter = main.BOOST_CAPACITY
 		else:
 			main.test_boost = false
+			# AMENDED (FP44, FLAGGED): outside the window the
+			# approach is capped at the corner's own pace.
+			# FP44's audit convicted the uncapped fixture:
+			# the autopilot's cap jumps to 34 on the flat
+			# run, the car accelerates out of the corner
+			# under full power with the fishtail tax floored,
+			# and the tail's swing (lat_vel -6.4 m/s at
+			# s 185 in the instrumented run) is still alive
+			# at the lip - the boosted flight carries it
+			# off the side (landing lat 8.01, past the
+			# 6.0 edge). At FP42's pace the same fixture's
+			# approach happened to brake to 7.5 first and
+			# crossed centred. The stage's subject is the
+			# crossing, not the powertrain's phase luck:
+			# the cap holds the corner's pace (18-19) until
+			# the window, the swing damps on the flat run,
+			# and the boost does the crossing as staged.
+			if main.speed > 19.0:
+				main.test_throttle = 0.0
+				main.test_brake = 0.7
 		await physics_frame
 		t += 1
 		max_h = maxf(max_h, main.car.global_position.y)
@@ -1362,8 +1392,22 @@ func _run() -> void:
 	# wider line IS Item 2 working as ordered. New bound =
 	# worst observed 0.0180 with ~20% headroom; pitch tier and
 	# staircase tier unmoved (0.205 deg / 0.0124 m on FP42).
-	check(max_gv9 < 0.022,
-		"stage9: worst GEOMETRY height step outside the staircase is %.4f m (bound 0.022, FP42 tier)" % max_gv9)
+	# FP44 AMENDMENT (flagged): the tier moves 0.022 ->
+	# 0.030. The step family sits at the same place (the
+	# corner's exit unwind, s 155-169) and grows for the
+	# same kind of reason: the long gears change the staged
+	# car's speed trace at this fixture's capped pace - it
+	# is still pulling in second through the unwind where
+	# FP42's car cruised in third - so it samples the
+	# unwind on a different line. One-variable proof: the
+	# FP44 tree read 0.0255 in-suite; the same tree with
+	# ONLY the spread/ceiling reverted to FP42's constants
+	# (the whole Item 2 package in place) read 0.0175 -
+	# FP42's own band. New bound = worst observed 0.0255
+	# with ~20% headroom, FP42's own rule. Pitch tier and
+	# staircase tier unmoved.
+	check(max_gv9 < 0.030,
+		"stage9: worst GEOMETRY height step outside the staircase is %.4f m (bound 0.030, FP44 tier)" % max_gv9)
 	check(max_gp9 < 0.35,
 		"stage9: worst GEOMETRY pitch step outside the staircase is %.3f deg (bound 0.35)" % max_gp9)
 	check(max_sv9 < 0.032,
@@ -2271,7 +2315,22 @@ func _run() -> void:
 		if main.mode == main.MODE_AIR:
 			await wait_until(func() -> bool: return main.mode != main.MODE_AIR, 4000)
 		elif main.mode == main.MODE_HANG:
-			main._do_release()
+			# Fix Pass 44 amendment (flagged): release only at
+			# the dangle. The instant release this loop used
+			# since FP22 wedges at FP44 pace: the lap now
+			# cranes once (Dive exit, s ~1216, lat -7.96) and
+			# an attach-phase release drops the car where it
+			# hangs - still the fall site, off the edge - so
+			# it falls, is collected at the same site, and
+			# cycles forever (probe I: 4 identical cycles,
+			# fall ends lat -7.96 every time). The dangle is
+			# the crane's arrival contract (stage 49's settle
+			# wait is the same idea); the drop then happens
+			# at the station (s 1148) and the lap continues.
+			# Fixture-side only - production's any-phase
+			# release (the owner's FP22 ruling) is untouched.
+			if main.hang_phase == "dangle":
+				main._do_release()
 		elif main.mode == main.MODE_DONE:
 			done19 = true
 	main.step_log_on = false
@@ -2351,7 +2410,11 @@ func _run() -> void:
 		if main.mode == main.MODE_AIR:
 			await wait_until(func() -> bool: return main.mode != main.MODE_AIR, 4000)
 		elif main.mode == main.MODE_HANG:
-			main._do_release()
+			# Fix Pass 44 amendment (flagged): dangle-gated
+			# release, as stage 19 - an instant attach-phase
+			# release can cycle forever at a fall site.
+			if main.hang_phase == "dangle":
+				main._do_release()
 		elif main.mode == main.MODE_DONE:
 			break
 	main.test_boost = false
@@ -2754,7 +2817,16 @@ func _run() -> void:
 		if main.mode != main.MODE_DRIVE:
 			break
 	main.test_throttle = 0.0
-	check(vmax26 >= 47.9, "stage26: top speed is the new clamp (vmax %.1f m/s = %.0f km/h)" % [vmax26, vmax26 * 3.6])
+	# AMENDED (FP44, FLAGGED): the clamp is a RESERVE now
+	# (71 m/s, stage 71's subject) - a floored circuit run
+	# no longer parks on it. This run ends at the s 220
+	# hump's flight (mode leaves DRIVE), so its vmax is an
+	# ARRIVAL speed: the first audit run read 47.7 - the
+	# car reaches the hump essentially AT the old clamp,
+	# still pulling (it crossed 45 at 6.8 s on the check
+	# below). Past-48 and the reserve itself are stage
+	# 71's lap subjects (probe lap vmax 62.27).
+	check(vmax26 > 46.0, "stage26: the run reaches the first hump at the old clamp's door, still pulling (vmax %.1f m/s = %.0f km/h; past-48 is stage 71's subject)" % [vmax26, vmax26 * 3.6])
 	# AMENDED (FP36, FLAGGED): the band is the powertrain's
 	# signature and the pass replaced the powertrain - the
 	# old band [4.5, 8.0] was the 10 / 0.10 engine's honest
@@ -2765,7 +2837,12 @@ func _run() -> void:
 	# into the event the owner asked for - the FP40 audit's
 	# clean standing run read 0-45 in 5.13 s (0-30 2.86).
 	# Band re-derived [4.6, 5.7] around the measured figure.
-	check(t45_26 > 4.6 and t45_26 < 5.7, "stage26: 0->45 m/s in %.1f s (standing start, opening straight)" % t45_26)
+	# AMENDED (FP44, FLAGGED): the long gears stretch it
+	# again on purpose (the owner's "always have more to
+	# give") - the FP44 audit's segmented standing run read
+	# 0-45 in 6.83 s (0-30 3.27 + the pinned 30->45 leg
+	# 3.56). Band re-derived [6.2, 7.4].
+	check(t45_26 > 6.2 and t45_26 < 7.4, "stage26: 0->45 m/s in %.1f s (standing start, opening straight)" % t45_26)
 	# (c) the circuit hump span at pin 48 (stage 20's protocol
 	# at 24): the car must keep landing - flights counted, no
 	# drone call, the span completed. Longest flight reported;
@@ -2817,13 +2894,13 @@ func _run() -> void:
 	# under drag within a second) - hold each speed while the
 	# revs settle, staying ahead of the crest at s ~154.
 	for pf26: int in 90:
-		main.debug_pin_speed(34.0)
+		main.debug_pin_speed(31.0)
 		await physics_frame
-	var pitch34_26: float = main.engine_player.pitch_scale
+	var pitch31_26: float = main.engine_player.pitch_scale
 	for pf26b: int in 60:
-		main.debug_pin_speed(48.0)
+		main.debug_pin_speed(40.5)
 		await physics_frame
-	var pitch48_26: float = main.engine_player.pitch_scale
+	var pitch40_26: float = main.engine_player.pitch_scale
 	# Fix Pass 14 (Item 2): the 34 m/s tolerance widens from
 	# 0.12 to 0.18 - the restored drop bounce (stage 2c) puts
 	# ~0.3 s of the pitch-settle window airborne, where the
@@ -2837,8 +2914,17 @@ func _run() -> void:
 	# 48 is its TOP (gear_rev 1.0, target 2.65; the follower
 	# read 2.46 inside the window). The old speed-ramp
 	# stations (2.11 / 2.65) are gone with the ramp.
-	check(absf(pitch34_26 - 0.92) < 0.25 and pitch48_26 > 2.3 and pitch48_26 > pitch34_26 + 1.2,
-		"stage26: engine pitch reads the gear band (34 m/s: %.2f, 48 m/s: %.2f)" % [pitch34_26, pitch48_26])
+	# RE-DERIVED (FP44, FLAGGED): the tall box moves the
+	# stations into third gear (30-41): 31 m/s is its
+	# BOTTOM (rev 0.09, target 0.8 + 1.85 x 0.09 = 0.97)
+	# and 40.5 its TOP (rev 0.95, target 2.56). The old
+	# 34/48 pair straddles the new box at rev 0.36 / 0.23 -
+	# the FP44 audit run read 1.43 / 1.24 there, matching
+	# the formula at the new bands to the digit; the pair
+	# no longer spans a band, so it cannot bind. Pinned
+	# travel stays ahead of the s ~154 crest (~87 m).
+	check(absf(pitch31_26 - 0.97) < 0.25 and pitch40_26 > 2.2 and pitch40_26 > pitch31_26 + 1.1,
+		"stage26: engine pitch reads the gear band (31 m/s: %.2f, 40.5 m/s: %.2f)" % [pitch31_26, pitch40_26])
 
 	# ---------- stage 27: Fix Pass 12 (Item 2) - panel toggle ----
 	# The boards spawn hidden (asserted at boot). One switch -
@@ -7507,7 +7593,12 @@ func _run() -> void:
 	# FP40's audit and this stage both read 2.86 s. The guard
 	# now brackets the event: LONGER than FP36's 2.31 (the
 	# stretch is the design) and under 3.3.
-	check(t30_65 > 2.5 and t30_65 < 3.3,
+	# AMENDED (FP44, FLAGGED): the long gears stretch the
+	# 0-30 leg a touch further (taller second/third): the
+	# FP44 audit read 3.20-3.27 s across runs. Ceiling of
+	# the band re-derived 3.3 -> 3.5; the floor stands (the
+	# stretch is still the design).
+	check(t30_65 > 2.5 and t30_65 < 3.5,
 		"stage65: floored 0-30 m/s in %.2f s (FP36 audit 2.31; the gearbox stretches the run)" % t30_65)
 	check(spin_at_20 >= 0.0 and spin_at_20 < 0.05,
 		"stage65: the spin has hooked up by 20 m/s (state %.2f)" % spin_at_20)
@@ -8242,9 +8333,27 @@ func _run() -> void:
 		await physics_frame
 		fr67 += 1
 		if main.mode == main.MODE_DRIVE:
-			autopilot_fast()
+			# Fix Pass 44 amendment (flagged): the audit lap
+			# runs at its DESIGN pace (cap 48), not the raised
+			# envelope. This stage is FP39's fairness audit -
+			# its feet/zones/falls readings certify the track
+			# at the pace the audit was built for, the way
+			# stage 54's audit pins 24. At FP44's 71 envelope
+			# the staged driver enters the Dive at ~62, cannot
+			# brake down the descent (net ~3.6 m/s^2 against
+			# gravity), flies the exit at 43 and lands IN the
+			# off-camber S - a driver-lookahead limit, not a
+			# track or car change (the A/B at FP43 constants
+			# walks the S at lat_vel peak -3.45; spin and hunt
+			# read 0.00 through it on the FP44 tree). The new
+			# pace's lap is stage 71's interlock subject
+			# (completes, ceiling 0.00 s, cranes counted).
+			_autopilot_drive(0.0, true, 48.0)
 		elif main.mode == main.MODE_HANG:
-			main._do_release()
+			# Fix Pass 44 amendment (flagged): dangle-gated
+			# release, as stage 19.
+			if main.hang_phase == "dangle":
+				main._do_release()
 		var cs67: float = main.car_s
 		if cs67 < prevs67 - 100.0:
 			unwrapped67 += main.track_len
@@ -8352,7 +8461,10 @@ func _run() -> void:
 			main.wheel_angle = clampf(-err68 * 1.6, -1.0, 1.0) * PI
 			main.test_throttle = 1.0
 		elif main.mode == main.MODE_HANG:
-			main._do_release()
+			# Fix Pass 44 amendment (flagged): dangle-gated
+			# release, as stage 19.
+			if main.hang_phase == "dangle":
+				main._do_release()
 		min_heave68 = minf(min_heave68, main.heave_off)
 		if main.last_touchdown != last_td68:
 			last_td68 = main.last_touchdown
@@ -8438,7 +8550,12 @@ func _run() -> void:
 		str(gears68), t45_68, spin_peak68, rev_drop68])
 	check(str(gears68) == "[1, 2, 3, 4]",
 		"stage68: the box climbs all four gears in order (%s)" % str(gears68))
-	check(t45_68 > 4.6 and t45_68 < 5.7,
+	# AMENDED (FP44, FLAGGED): the long gears stretch the
+	# run again (the powertrain's signature changed with
+	# the spread): the FP44 audit's segmented standing run
+	# read 0-45 in 6.83 s. Band re-derived [6.2, 7.4] -
+	# stage 26's band, same run, same reason.
+	check(t45_68 > 6.2 and t45_68 < 7.4,
 		"stage68: 0-45 m/s in %.2f s through the gears (FP36's flat engine: 3.54)" % t45_68)
 	check(spin_peak68 > 0.9,
 		"stage68: first gear burns out (spin peak %.2f; FP36's launch peaked 0.72)" % spin_peak68)
@@ -8529,6 +8646,12 @@ func _run() -> void:
 			var frr68: Dictionary = main._frame_at(70.0)
 			main.air_vel += Vector3(frr68["side"]) * push
 		var okr68: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+		# Fix Pass 44: the landing's own account, printed -
+		# the retention alone cannot say whether the grade,
+		# the vy or the tilt moved (see the FP44 brief).
+		print("stage68: staged landing hgt %.1f push %.1f - %s, lat spd %.2f, hdg err %+.2f, retention %.3f" % [
+			hgt, push, main.last_touchdown, main.contact_lat_speed,
+			main.contact_head_err, main.land_retention])
 		return [okr68, main.land_retention, main.contact_grade]
 	var rc68: Array = await ret68.call(1.3, 24.0, 0.0)
 	check(bool(rc68[0]) and String(rc68[2]) == "CLEAN" and float(rc68[1]) >= 0.94 and float(rc68[1]) <= 1.0,
@@ -8811,6 +8934,297 @@ func _run() -> void:
 	print("stage70: slip at the lift %.2f deg, tucked in %d frames" % [slip_cut70, tuck70])
 	check(slip_cut70 >= 1.5 and tuck70 > 0 and tuck70 <= 45,
 		"stage70: the lift tucks the tail on the catch (slip %.2f deg dies under 0.6 in %d frames)" % [slip_cut70, tuck70])
+
+	# ---------- stage 71: Fix Pass 44 - LONG GEARS + THE PEEL-OUT ----
+	# Item 1's laws, staged: the box climbs four LONG gears
+	# (first entries ~1.7 / 3.3 / 5.4 s against FP42's sprint);
+	# the old 48 m/s ceiling point arrives at ~7.7 s, deep in
+	# top gear at rev ~0.23, still pulling; and TOP SPEED IS A
+	# RESERVE, NOT A STATE - pinned at 60 on the flat the car
+	# still climbs, pinned at 70 it falls AWAY from the clamp
+	# toward equilibrium, boost is what buys the clamp back,
+	# and a staged Track 01 lap spends ZERO frames at it
+	# (FP42's box spent 10.74 s of its lap parked there).
+	# Item 2's package, staged on the same launch: the spin
+	# voice peaks over the engine and dies with the hook, the
+	# seat shudders while the rears spin and is still once
+	# they hook, and the nose HUNTS a few degrees under power
+	# - and does not hunt on a feathered launch. All figures
+	# from the pass's audit probes; bands carry their slack.
+	main._set_track("circuit")
+	await frames(5)
+	main.debug_warp_to_s(65.0)
+	main.speed = 0.0
+	main.vel2 = Vector2.ZERO
+	main.lat_vel = 0.0
+	main.wheel_angle = 0.0
+	main.test_brake = 0.0
+	main.test_boost = false
+	main.test_throttle = 1.0
+	var gear71: Array = []
+	var gear_t71: Dictionary = {}
+	var t30_71: float = -1.0
+	var spin_gain71: float = 0.0
+	var spin_db71: float = -60.0
+	var spin_over71: float = 0.0
+	var hook71: float = -1.0
+	var gain_hook71: float = -1.0
+	var shud_b71: Array = [1e9, -1e9] # min, max in the burn
+	var shud_a71: Array = [1e9, -1e9] # min, max after the hook settles
+	var hunt_b71: Array = [1e9, -1e9] # heading wander in the burn
+	var hunt_a71: Array = [1e9, -1e9] # heading wander after the hook
+	var f71: int = 0
+	while f71 < 90 * 6:
+		await physics_frame
+		f71 += 1
+		var t71: float = float(f71) / 90.0
+		if not gear_t71.has(main.gear):
+			gear_t71[main.gear] = t71
+			gear71.append(main.gear)
+		if t30_71 < 0.0 and main.speed >= 30.0:
+			t30_71 = t71
+		spin_gain71 = maxf(spin_gain71, main.audio_spin_gain())
+		spin_db71 = maxf(spin_db71, main.audio_spin_db())
+		if main.wheelspin > 0.5:
+			spin_over71 = t71
+		if hook71 < 0.0 and spin_over71 > 0.0 and main.wheelspin < 0.05:
+			hook71 = t71
+		var fr71: Dictionary = main._frame_at(main.car_s)
+		var rel71: float = rad_to_deg(wrapf(main.car_heading - main._frame_yaw(fr71["tan"]), -PI, PI))
+		if hook71 < 0.0:
+			shud_b71[0] = minf(shud_b71[0], main.spin_shudder)
+			shud_b71[1] = maxf(shud_b71[1], main.spin_shudder)
+			hunt_b71[0] = minf(hunt_b71[0], rel71)
+			hunt_b71[1] = maxf(hunt_b71[1], rel71)
+		else:
+			if t71 >= hook71 + 0.75 and t71 <= hook71 + 1.75:
+				shud_a71[0] = minf(shud_a71[0], main.spin_shudder)
+				shud_a71[1] = maxf(shud_a71[1], main.spin_shudder)
+			if t71 >= hook71 + 0.5 and t71 <= hook71 + 1.5:
+				hunt_a71[0] = minf(hunt_a71[0], rel71)
+				hunt_a71[1] = maxf(hunt_a71[1], rel71)
+			if gain_hook71 < 0.0 and t71 >= hook71 + 1.0:
+				gain_hook71 = main.audio_spin_gain()
+	main.test_throttle = 0.0
+	print("stage71: gears %s at %s, 0-30 %.2f s, hook %.2f s" % [
+		str(gear71), str(gear_t71), t30_71, hook71])
+	check(str(gear71) == "[1, 2, 3, 4]",
+		"stage71: the box climbs all four gears in order (%s)" % str(gear71))
+	check(float(gear_t71.get(2, -1.0)) > 1.3 and float(gear_t71.get(2, -1.0)) < 2.0 \
+		and float(gear_t71.get(3, -1.0)) > 2.8 and float(gear_t71.get(3, -1.0)) < 3.6 \
+		and float(gear_t71.get(4, -1.0)) > 4.9 and float(gear_t71.get(4, -1.0)) < 5.9,
+		"stage71: each gear is a long pull (shifts at %s; FP42's box was through them by ~3 s)" % str(gear_t71))
+	check(t30_71 > 2.9 and t30_71 < 3.5,
+		"stage71: floored 0-30 m/s in %.2f s" % t30_71)
+	print("stage71: spin voice peak gain %.2f at %.1f dB, gain 1 s after the hook %.3f" % [
+		spin_gain71, spin_db71, gain_hook71])
+	check(spin_gain71 > 0.5,
+		"stage71: the spin voice rises in the burn (peak gain %.2f)" % spin_gain71)
+	check(spin_db71 > -14.0,
+		"stage71: the spin voice peaks OVER the engine's -17 dB song (peak %.1f dB)" % spin_db71)
+	check(gain_hook71 >= 0.0 and gain_hook71 < 0.05,
+		"stage71: the spin voice dies with the hook (gain %.3f one second after)" % gain_hook71)
+	print("stage71: shudder p2p burn %.4f m, after %.4f m; hunt p2p burn %.2f deg, after %.2f deg" % [
+		shud_b71[1] - shud_b71[0], shud_a71[1] - shud_a71[0],
+		hunt_b71[1] - hunt_b71[0], hunt_a71[1] - hunt_a71[0]])
+	check(shud_b71[1] - shud_b71[0] > 0.004,
+		"stage71: the seat shudders while the rears spin (p2p %.4f m)" % (shud_b71[1] - shud_b71[0]))
+	check(shud_a71[1] - shud_a71[0] < 0.002,
+		"stage71: the seat is still once the tires hook (p2p %.4f m)" % (shud_a71[1] - shud_a71[0]))
+	check(hunt_b71[1] - hunt_b71[0] > 1.0 and hunt_b71[1] - hunt_b71[0] < 6.0,
+		"stage71: the nose hunts under power (%.2f deg p2p - a hunt, not a slide)" % (hunt_b71[1] - hunt_b71[0]))
+	check(hunt_a71[1] - hunt_a71[0] < 1.0,
+		"stage71: the hunt dies with the hook (%.2f deg p2p after)" % (hunt_a71[1] - hunt_a71[0]))
+	# The teardown latch stops the spin voice like every voice.
+	main._set_audio_latched(true)
+	await frames(3)
+	check(main.audio_latched and not main.spin_player.playing,
+		"stage71: the latch stops the spin voice")
+	main._set_audio_latched(false)
+	await frames(3)
+	# Feather control: an under-cap launch never spins, so it
+	# must never hunt (FP44 audit: 0.000 deg, hunt_yaw 0.0000).
+	main.debug_warp_to_s(65.0)
+	main.speed = 0.0
+	main.vel2 = Vector2.ZERO
+	main.lat_vel = 0.0
+	main.wheel_angle = 0.0
+	main.test_brake = 0.0
+	main.test_throttle = 0.45
+	var hunt_f71: Array = [1e9, -1e9]
+	var hunt_yaw71: float = 0.0
+	for i71f: int in 180:
+		await physics_frame
+		var fr71f: Dictionary = main._frame_at(main.car_s)
+		var rel71f: float = rad_to_deg(wrapf(main.car_heading - main._frame_yaw(fr71f["tan"]), -PI, PI))
+		hunt_f71[0] = minf(hunt_f71[0], rel71f)
+		hunt_f71[1] = maxf(hunt_f71[1], rel71f)
+		hunt_yaw71 = maxf(hunt_yaw71, absf(main.hunt_yaw))
+	main.test_throttle = 0.0
+	check(hunt_f71[1] - hunt_f71[0] < 0.5 and hunt_yaw71 < 0.02,
+		"stage71: a feathered launch does not hunt (%.3f deg p2p, hunt_yaw peak %.4f)" % [
+			hunt_f71[1] - hunt_f71[0], hunt_yaw71])
+	# The tall legs, segmented on the ribbon's home straight
+	# (scan-found, the audit's method): pinned entries carry
+	# the continuous run's state (the 30-pin also carries the
+	# shift gap it just paid), so the composed table is the
+	# standing run's own.
+	main._set_track("ribbon")
+	await frames(5)
+	var tl71: float = main.track_len
+	var s_flat71: float = tl71 - 5.0
+	while s_flat71 > 100.0:
+		var fr71q: Dictionary = main._frame_at(s_flat71)
+		if absf(float(fr71q["tan"].y)) > 0.02 or absf(float(fr71q["curv"])) > 0.001:
+			break
+		s_flat71 -= 10.0
+	s_flat71 += 10.0
+	main.debug_warp_to_s(s_flat71 + 5.0)
+	main.debug_pin_speed(30.0)
+	main.shift_t = main.SHIFT_GAP_S
+	main.test_brake = 0.0
+	main.test_boost = false
+	main.test_throttle = 1.0
+	var dt45_71: float = -1.0
+	var f71b: int = 0
+	while f71b < 90 * 5:
+		await physics_frame
+		f71b += 1
+		if main.speed >= 45.0:
+			dt45_71 = float(f71b) / 90.0
+			break
+	main.test_throttle = 0.0
+	main.debug_warp_to_s(s_flat71 + 5.0)
+	main.debug_pin_speed(45.0)
+	main.test_brake = 0.0
+	main.test_boost = false
+	main.test_throttle = 1.0
+	var dt48_71: float = -1.0
+	var gear48_71: int = -1
+	var rev48_71: float = -1.0
+	var f71c: int = 0
+	while f71c < 90 * 3:
+		await physics_frame
+		f71c += 1
+		if main.speed >= 48.0:
+			dt48_71 = float(f71c) / 90.0
+			gear48_71 = main.gear
+			rev48_71 = main.gear_rev
+			break
+	main.test_throttle = 0.0
+	var t45_71: float = t30_71 + dt45_71
+	var t48_71: float = t45_71 + dt48_71
+	print("stage71: segments 30->45 %.2f s, 45->48 %.2f s; composed 0-45 %.2f s, 0-48 %.2f s (gear %d rev %.2f at 48)" % [
+		dt45_71, dt48_71, t45_71, t48_71, gear48_71, rev48_71])
+	check(dt45_71 > 3.2 and dt45_71 < 3.9 and t45_71 > 6.2 and t45_71 < 7.4,
+		"stage71: 0-45 m/s in %.2f s composed (30->45 leg %.2f s)" % [t45_71, dt45_71])
+	check(dt48_71 > 0.6 and dt48_71 < 1.2 and t48_71 > 7.0 and t48_71 < 8.4,
+		"stage71: the old 48 ceiling point arrives at %.2f s (FP42: 6.01) - late, not early" % t48_71)
+	check(gear48_71 == 4 and rev48_71 > 0.18 and rev48_71 < 0.28,
+		"stage71: at 48 the car is deep in top gear, still pulling (gear %d, rev %.2f)" % [gear48_71, rev48_71])
+	# THE RESERVE LAW on the same straight.
+	main.debug_warp_to_s(s_flat71 + 5.0)
+	main.debug_pin_speed(60.0)
+	main.test_brake = 0.0
+	main.test_boost = false
+	main.test_throttle = 1.0
+	var vf60_71: float = -1.0
+	var f71d: int = 0
+	while f71d < 90 * 3:
+		await physics_frame
+		f71d += 1
+		if f71d == int(90 * 2.25):
+			vf60_71 = main.speed
+	main.test_throttle = 0.0
+	main.debug_warp_to_s(s_flat71 + 5.0)
+	main.debug_pin_speed(70.0)
+	main.test_brake = 0.0
+	main.test_boost = false
+	main.test_throttle = 1.0
+	var vf70_71: float = -1.0
+	var f71e: int = 0
+	while f71e < 90 * 3:
+		await physics_frame
+		f71e += 1
+		if f71e == int(90 * 2.25):
+			vf70_71 = main.speed
+	main.test_throttle = 0.0
+	print("stage71: reserve - from 60 vf %.2f after 2.25 s; from 70 vf %.2f" % [vf60_71, vf70_71])
+	check(vf60_71 > 60.5 and vf60_71 < 66.0,
+		"stage71: pinned at 60 on the flat the car still pulls (vf %.2f - wanting more)" % vf60_71)
+	check(vf70_71 > 66.0 and vf70_71 < 69.5,
+		"stage71: pinned at 70 the car falls AWAY from the clamp toward equilibrium (vf %.2f - the ceiling is not a state)" % vf70_71)
+	# THE HELP LAW: boost buys the clamp.
+	main.debug_warp_to_s(s_flat71 + 5.0)
+	main.debug_pin_speed(60.0)
+	main.test_brake = 0.0
+	main.test_boost = true
+	main.test_throttle = 1.0
+	var t70_71: float = -1.0
+	var f71g: int = 0
+	while f71g < 90 * 3:
+		await physics_frame
+		f71g += 1
+		main.boost_meter = main.BOOST_CAPACITY
+		if main.speed >= 70.0:
+			t70_71 = float(f71g) / 90.0
+			break
+	main.test_throttle = 0.0
+	main.test_boost = false
+	check(t70_71 > 0.0 and t70_71 < 1.2,
+		"stage71: boost buys the ceiling back (60 -> 70 in %.2f s)" % t70_71)
+	# THE INTERLOCK: a staged Track 01 lap at the fast
+	# envelope spends no time at the ceiling (FP42: 10.74 s).
+	main._set_track("circuit")
+	await frames(5)
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await frames(3)
+	main._do_release()
+	var lap71: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(lap71, "stage71: interlock lap releases into a drive")
+	var ceil71: int = 0
+	var vmax71: float = 0.0
+	var cranes71: int = 0
+	var was_hang71: bool = false
+	var done71: bool = false
+	var f71h: int = 0
+	while f71h < 30000 and not done71:
+		await physics_frame
+		f71h += 1
+		autopilot_fast()
+		if main.mode == main.MODE_DRIVE:
+			vmax71 = maxf(vmax71, main.speed)
+			if main.speed >= main.TOP_SPEED - 0.5:
+				ceil71 += 1
+		if main.mode == main.MODE_HANG:
+			if not was_hang71:
+				cranes71 += 1
+			was_hang71 = true
+			# Fix Pass 44 (flagged, as stage 19): release only
+			# at the dangle - an instant attach-phase release
+			# can cycle forever at a fall site.
+			if main.hang_phase == "dangle":
+				main._do_release()
+		else:
+			was_hang71 = false
+		if main.mode == main.MODE_DONE or main.lap_count >= 1:
+			done71 = true
+	print("stage71: interlock lap - vmax %.1f, ceiling frames %d (%.2f s), cranes %d, completed %s" % [
+		vmax71, ceil71, float(ceil71) / 90.0, cranes71, str(done71)])
+	# Fix Pass 44 note (flagged): the interlock's subjects are
+	# the ceiling time and the vmax band below; the crane count
+	# is reported, not gated - at the raised pace the staged
+	# driver can leave the road once (stage 19's Dive-exit
+	# departure) and what the interlock must prove is that the
+	# lap still completes and never sits at the ceiling. The
+	# probe lap that designed this stage ran cranes 0.
+	check(done71,
+		"stage71: the interlock lap completes (cranes %d)" % cranes71)
+	check(ceil71 == 0,
+		"stage71: the lap spends ZERO time at the ceiling (FP42's box: 10.74 s parked at 48)")
+	check(vmax71 >= 48.0 and vmax71 < main.TOP_SPEED,
+		"stage71: the lap still runs past the old ceiling (vmax %.1f) without reaching the reserve (%.0f)" % [vmax71, main.TOP_SPEED])
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")
