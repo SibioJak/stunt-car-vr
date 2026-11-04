@@ -465,6 +465,67 @@ func measure_shelf(jit_window: bool) -> Array:
 	return [hf_p2p(sf), hf_p2p(sr), hf_p2p(savg)]
 
 
+func fp45_walk(n: Node, path: String, out: Dictionary, main_node: Node) -> void:
+	# Fix Pass 45 (stage 72): every Node3D local transform
+	# under the car body, keyed by tree path - minus the
+	# nodes posed from live state: the wheels (suspension /
+	# steer pose; skipped by identity - two of the four
+	# carry auto-generated names, so name patterns cannot
+	# find them) and the flask's slosh assembly (pruned at
+	# its pivot: the liquid is a spring witness, not a
+	# static part).
+	if n == main_node.flask_liquid_pivot:
+		return
+	if n is Node3D and not main_node.wheel_mis.has(n):
+		out[path] = (n as Node3D).transform
+	for c45: Node in n.get_children():
+		fp45_walk(c45, path + "/" + c45.name, out, main_node)
+
+
+func fp45_snapshot(main_node: Node) -> Dictionary:
+	var out: Dictionary = {}
+	fp45_walk(main_node.car_body, "Body", out, main_node)
+	return out
+
+
+func fp45_worst_delta(a: Dictionary, b: Dictionary) -> Array:
+	# Fix Pass 45 (stage 72): worst local-transform movement
+	# over the STATIC body inventory (the snapshot already
+	# pruned the live-state nodes; the body node itself is
+	# posed by the body spring, so it is compared by eye in
+	# the printout, not gated here). The FP45 probe measured
+	# every true static at exactly 0.00000 across this
+	# battery; the gate below carries 0.001 of slack.
+	# Returns [path, basis_dev, org_dev].
+	var worst_path: String = ""
+	var worst_dev: float = 0.0
+	var worst_org: float = 0.0
+	for p45: String in a:
+		if p45 == "Body":
+			continue
+		if not b.has(p45):
+			continue
+		var t1: Transform3D = a[p45]
+		var t2: Transform3D = b[p45]
+		var rel: Basis = t2.basis * t1.basis.inverse()
+		var dev: float = 0.0
+		dev = maxf(dev, absf(rel.x.x - 1.0))
+		dev = maxf(dev, absf(rel.x.y))
+		dev = maxf(dev, absf(rel.x.z))
+		dev = maxf(dev, absf(rel.y.x))
+		dev = maxf(dev, absf(rel.y.y - 1.0))
+		dev = maxf(dev, absf(rel.y.z))
+		dev = maxf(dev, absf(rel.z.x))
+		dev = maxf(dev, absf(rel.z.y))
+		dev = maxf(dev, absf(rel.z.z - 1.0))
+		var org: float = (t2.origin - t1.origin).length()
+		if dev > worst_dev:
+			worst_dev = dev
+			worst_path = p45
+		worst_org = maxf(worst_org, org)
+	return [worst_path, worst_dev, worst_org]
+
+
 func frames(n: int, drive: bool = false) -> void:
 	for i: int in n:
 		if drive:
@@ -9225,6 +9286,133 @@ func _run() -> void:
 		"stage71: the lap spends ZERO time at the ceiling (FP42's box: 10.74 s parked at 48)")
 	check(vmax71 >= 48.0 and vmax71 < main.TOP_SPEED,
 		"stage71: the lap still runs past the old ceiling (vmax %.1f) without reaching the reserve (%.0f)" % [vmax71, main.TOP_SPEED])
+
+	# ---------- stage 72: Fix Pass 45 - THE TURNED BLOCK + THE TOP-GEAR VOICE ----
+	# Item 1: the FP24 dent placeholder wrote dent_level x 4
+	# deg of roll (plus a squash) onto the orange nose EVERY
+	# FRAME, from an accumulator _land grows on HARD
+	# touchdowns and only a race restart clears - the
+	# owner's FP44 photo: the block under the engine turned
+	# and stayed turned. FP45 deletes the write; dent_level
+	# remains a DIAG counter. The battery: three staged
+	# terminal falls - the nose must read identity after
+	# EVERY one, the whole static body inventory must not
+	# move, the dent counter must still count (the ruling
+	# is surfaced, not carved into the bodywork), and the
+	# flask must still slosh (no cosmetic channel frozen).
+	main._set_track("ribbon")
+	await frames(5)
+	main.test_throttle = 0.0
+	main.test_brake = 0.0
+	main.wheel_angle = 0.0
+	var snap72: Dictionary = fp45_snapshot(main)
+	var dents0_72: int = main.dent_level
+	var nose_ok72: bool = true
+	var slosh_lo72: float = 1e9
+	var slosh_hi72: float = -1e9
+	for k72: int in 3:
+		main.debug_stage_landing(70.0, 45.0, 24.0)
+		main.air_from_release = false
+		main.air_from_gap = false
+		main.air_from_rebound = false
+		var ok72: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+		if not ok72:
+			nose_ok72 = false
+		if k72 == 0:
+			for i72: int in 90:
+				await physics_frame
+				var fx72: float = main.flask_liquid_pivot.rotation.x
+				slosh_lo72 = minf(slosh_lo72, fx72)
+				slosh_hi72 = maxf(slosh_hi72, fx72)
+		main.test_throttle = 0.0
+		main.test_brake = 1.0
+		var bz72: int = 0
+		while (main.mode != main.MODE_DRIVE or main.speed > 0.01) and bz72 < 900:
+			await physics_frame
+			bz72 += 1
+		main.test_brake = 0.0
+		await frames(30)
+		if main.nose_mi.rotation != Vector3.ZERO or main.nose_mi.scale != Vector3.ONE:
+			nose_ok72 = false
+	var snap72b: Dictionary = fp45_snapshot(main)
+	var w72: Array = fp45_worst_delta(snap72, snap72b)
+	print("stage72: falls done - dent %d -> %d, static worst %s dev %.4f org %.4f, slosh range %.3f rad" % [
+		dents0_72, main.dent_level, String(w72[0]), float(w72[1]), float(w72[2]), slosh_hi72 - slosh_lo72])
+	check(nose_ok72 and main.nose_mi.rotation == Vector3.ZERO and main.nose_mi.scale == Vector3.ONE,
+		"stage72: the nose keeps its build transform across staged hard landings (rot %s, scale %s)" % [
+			str(main.nose_mi.rotation), str(main.nose_mi.scale)])
+	check(float(w72[1]) < 0.001 and float(w72[2]) < 0.001,
+		"stage72: no static body part moves across the landing battery (worst %s, dev %.4f, org %.4f)" % [
+			String(w72[0]), float(w72[1]), float(w72[2])])
+	check(main.dent_level > dents0_72,
+		"stage72: the dent counter still rules the hard landings (+%d) - surfaced on DIAG, not written on the car" % [
+			main.dent_level - dents0_72])
+	check(slosh_hi72 - slosh_lo72 > 0.01,
+		"stage72: the flask still sloshes after the falls (range %.3f rad) - no cosmetic channel frozen" % [
+			slosh_hi72 - slosh_lo72])
+	# Item 2: top gear's AUDIO rev is compressed onto
+	# [0.35, 1] (AUDIO_REV4_FLOOR); the gear_rev state is
+	# untouched and gears 1-3 read it raw. Staged: pin the
+	# car at four speeds inside fourth's band and read both
+	# revs - the state must sit on the raw band fraction,
+	# the audio on the compressed curve; then hold 48 and
+	# require the settled note to clear FP44's target by a
+	# wide margin (FP44 targeted 1.45 there; FP45: 1.95).
+	main.debug_warp_to_s(2.0)
+	await frames(3)
+	main.test_brake = 0.0
+	main.test_boost = false
+	main.test_throttle = 1.0
+	var pins72: Array = [48.0, 55.0, 62.0, 68.0]
+	var revs_ok72: bool = true
+	var arevs72: Array = []
+	for v72: float in pins72:
+		var got72: int = 0
+		var guard72: int = 0
+		while got72 < 12 and guard72 < 600:
+			await physics_frame
+			guard72 += 1
+			if main.mode == main.MODE_DRIVE:
+				main.debug_pin_speed(v72)
+				got72 += 1
+			else:
+				got72 = 0
+		var raw72: float = (v72 - 41.0) / 30.0
+		arevs72.append(snappedf(main.audio_rev, 0.001))
+		if main.gear != 4 or absf(main.gear_rev - raw72) > 0.02 \
+				or absf(main.audio_rev - (0.35 + 0.65 * raw72)) > 0.01:
+			revs_ok72 = false
+		print("stage72: pin %.0f - gear %d, gear_rev %.3f (raw %.3f), audio_rev %.3f (curve %.3f)" % [
+			v72, main.gear, main.gear_rev, raw72, main.audio_rev, 0.35 + 0.65 * raw72])
+	check(revs_ok72,
+		"stage72: top gear's audio rev rides the compressed curve while the state stays raw (audio %s)" % str(arevs72))
+	var rpm_tail72: Array = []
+	var held72b: int = 0
+	var guard72b: int = 0
+	while held72b < 150 and guard72b < 3000:
+		await physics_frame
+		guard72b += 1
+		if main.mode == main.MODE_DRIVE:
+			main.debug_pin_speed(48.0)
+			held72b += 1
+			rpm_tail72.append(main.audio_rpm)
+			if rpm_tail72.size() > 60:
+				rpm_tail72.pop_front()
+		else:
+			held72b = 0
+			rpm_tail72.clear()
+			main.debug_warp_to_s(2.0)
+	main.test_throttle = 0.0
+	var rpm_read72: float = 1e9
+	for r72: float in rpm_tail72:
+		rpm_read72 = minf(rpm_read72, r72)
+	var raw48_72: float = (48.0 - 41.0) / 30.0
+	var fp44_target72: float = 0.8 + raw48_72 * 1.85 + 0.22
+	print("stage72: settled note at 48 - audio_rpm %.3f (FP44 target %.3f, FP45 target %.3f)" % [
+		rpm_read72, fp44_target72, 0.8 + (0.35 + 0.65 * raw48_72) * 1.85 + 0.22])
+	check(rpm_tail72.size() == 60 and rpm_read72 > fp44_target72 + 0.30,
+		"stage72: at 48 in top gear the note reads alive (audio_rpm %.3f vs FP44's %.3f target)" % [
+			rpm_read72, fp44_target72])
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")

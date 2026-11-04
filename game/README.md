@@ -6834,3 +6834,80 @@ the seat, the hunt at the wheel; and the carried
 FP43 verdicts (loop feel incl. the 16 m/s crown
 transient, the helix from the seat, the wall-ride,
 the four jump-ins).
+
+## Fix Pass 45 — THE TURNED BLOCK + THE TOP-GEAR VOICE
+
+Ordered on the owner's FP44 verdicts: the gears and
+the peel-out both read "better" from the seat, with
+two notes — "last gear sounds so low, it doesn't
+'feel' very powerful," and a photo: "the orange
+block under the engine gets turned... I dont know
+if that supposed to be damage or what."
+
+- THE TURNED BLOCK (Item 1): it was not damage — no
+  damage system exists. Convicted by probe: the FP24
+  dent placeholder in _refresh_car_visuals wrote
+  nose_mi.rotation.z = dent_level × 4° EVERY FRAME
+  (the roll UNCLAMPED; the squash beside it was
+  capped at 3 via denti_clamp), from an accumulator
+  _land grows on every HARD touchdown (vy > 9 or
+  tilt > 30° at first contact) and only a race
+  restart ever clears. The probe's staged terminal
+  falls stepped it in lockstep — dent 1/2/3, nose
+  roll exactly 4°/8°/12°, squash (1, .90, .92) →
+  (1, .80, .84) → (1, .70, .76) — persisting across
+  every later arrival in the race, circuit arrivals
+  included. Within one long race the nose only ever
+  twisted further. The write is DELETED: the nose
+  keeps its build transform, full stop. dent_level
+  remains what stage 68 already treated it as — a
+  HARD-landing counter, surfaced on DIAG, reset per
+  race, read by no part's transform; real carnage
+  visuals belong to the held carnage build. New
+  smoke stage 72 pins the law: three staged terminal
+  falls, the nose at exact identity after every one,
+  the whole static body inventory at 0.0000 (wheels
+  and the flask assembly pruned as live-state poses;
+  the flask still sloshes, 0.286 rad of range sampled
+  mid-battery — no cosmetic channel frozen), and the
+  dent counter still counting (+3).
+- THE TOP-GEAR VOICE (Item 2): fourth spans
+  41–71 m/s, so the raw gear_rev lives at 0.23–0.47
+  through the working range and the engine note sat
+  at the bottom of its curve. The AUDIO rev in top
+  gear is now compressed onto [0.35, 1]
+  (AUDIO_REV4_FLOOR; audio_rev = 0.35 + 0.65 ×
+  gear_rev, gear 4 only, in _update_audio's DRIVE
+  branch). The gear_rev STATE — shift logic, force
+  fade, DIAG — is untouched, and gears 1–3 read the
+  raw value, so their audio is identical to FP44 by
+  construction; shift blips, the FP42 sag, the boost
+  lift and the spin flare all read the same terms as
+  before. Staged audio-rev (state raw beside it):
+  48 m/s — 0.233 → 0.502; 55 — 0.467 → 0.653;
+  62 — 0.700 → 0.805; 68 — 0.900 → 0.935; the curve
+  still tops out at the 71 clamp (1.000 → 1.000).
+  The settled note at 48 (floored, rpm_target terms):
+  FP44 targeted 1.452, FP45 targets 1.948, staged
+  read 1.979.
+
+Census: unmoved — the full suite passes with no
+re-derived numbers (stage 10b's no-damage dent
+check and stage 68's dent-spam bound hold as
+written; the stage-54 economy census reads
+identically). No gearing, economy or funlab work
+in this pass.
+
+Gates: preflight audit clean; parse clean; SMOKE
+ALL 838 (832 + stage 72's 6), API GUARD ALL 71;
+render proof 172/173 (the standing wheel-hub reach
+artifact only, identical on every baseline since
+FP31).
+
+Stamp: FP45 · 2026-11-04. What the seat still owes:
+the FP44 pair (the long pulls' feel; the peel-out
+package) plus this pass's one question — whether
+top gear sounds like it has more to give now; and
+the carried FP43 verdicts (loop feel incl. the
+16 m/s crown transient, the helix from the seat,
+the wall-ride, the four jump-ins).

@@ -877,6 +877,18 @@ const AUDIO_ENGINE_DB: float = -17.0 # engine level at full song
 const AUDIO_ENGINE_IDLE_DB: float = -23.0 # engine level at idle / hang
 const AUDIO_SKID_MAX_DB: float = -13.0 # skid level at full slip
 const AUDIO_SKID_FLOOR_DB: float = -34.0 # skid level at the onset of slip
+# Fix Pass 45 (Item 2): TOP GEAR'S AUDIO FLOOR. Fourth
+# spans 41-71 m/s, so the raw gear_rev lives at 0.1-0.3
+# through the whole working range and the engine note
+# sat at the bottom of its curve exactly where the car
+# should feel endless (owner's FP44 verdict: "last gear
+# sounds so low, it doesn't feel very powerful"). The
+# AUDIO rev in top gear is compressed onto [FLOOR, 1]:
+# audio_rev = FLOOR + (1 - FLOOR) * gear_rev, gear 4
+# only. The gear_rev STATE (shift logic, force fade,
+# DIAG) is untouched - this is a presentation mapping
+# on the audio side, applied in _update_audio.
+const AUDIO_REV4_FLOOR: float = 0.35
 # Fix Pass 44 (Item 2a): THE SPIN VOICE. A dedicated tire
 # squeal/shred for the driven wheels' breakaway, keyed to
 # the wheelspin state x the rear load - the third channel
@@ -1430,6 +1442,7 @@ var audio_latched: bool = false
 var audio_stalled: bool = false
 var audio_last_physics_ms: int = 0
 var audio_rpm: float = 0.8 # smoothed engine speed factor (pitch scale)
+var audio_rev: float = 0.0 # Fix Pass 45 (Item 2): the rev the engine note actually reads (gear_rev, remapped in top gear - see AUDIO_REV4_FLOOR)
 var audio_skid_now: float = 0.0 # smoothed skid gain, 0..1
 var audio_spin_now: float = 0.0 # Fix Pass 44 (Item 2a): smoothed spin-voice gain, 0..1
 var spin_player: AudioStreamPlayer # Fix Pass 44 (Item 2a): the driven wheels' squeal/shred voice
@@ -1706,7 +1719,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP44 · 2026-11-03"
+const BUILD_STAMP: String = "FP45 · 2026-11-04"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -9105,10 +9118,24 @@ func _refresh_car_visuals() -> void:
 			wheel_mis[wi].position.z = wl25.y - WHEEL_FWD_F_VIS
 			wheel_mis[wi].rotation_degrees.y = -rad_to_deg(fa_vis)
 	_update_view_spring()
-	# dent carnage placeholder: nose crumples/tilts with dent level
-	if nose_mi != null:
-		nose_mi.rotation_degrees.z = float(dent_level) * 4.0
-		nose_mi.scale = Vector3(1.0, 1.0 - 0.10 * float(denti_clamp()), 1.0 - 0.08 * float(denti_clamp()))
+	# Fix Pass 45 (Item 1): THE TURNED BLOCK, convicted and
+	# removed. The FP24 dent placeholder stood here: every
+	# frame it wrote nose_mi.rotation.z = dent_level * 4 deg
+	# (UNCLAMPED - the squash beside it was capped at 3) and
+	# a dent_level squash, from an accumulator _land grows
+	# on every HARD touchdown and only a race restart ever
+	# clears. So the orange nose under the engine rolled
+	# 4 deg per hard landing and STAYED rolled for the rest
+	# of the race - the owner's FP44 photo (nose at 12 deg
+	# after three staged falls in the FP45 probe, dent 1/2/3
+	# stepping in lockstep). It is not damage - no damage
+	# system exists; the carnage build owns real carnage
+	# visuals when it comes. dent_level remains what stage
+	# 68 already treated it as: a HARD-landing counter,
+	# surfaced on DIAG and reset per race, read by NO part's
+	# transform. The nose keeps its build transform, full
+	# stop; smoke stage 72 pins the whole body inventory
+	# invariant across staged hard landings.
 	# state label text
 	if state_label != null:
 		if mode == MODE_HANG:
@@ -9255,6 +9282,9 @@ func _update_body_spring(delta: float) -> void:
 
 
 func denti_clamp() -> int:
+	# Fix Pass 45 (Item 1): retained as the dent counter's
+	# display clamp for the future carnage build; its only
+	# FP24 consumer (the nose squash) is deleted above.
 	return mini(dent_level, 3)
 
 
@@ -9648,6 +9678,7 @@ func _update_audio(delta: float) -> void:
 	# it, boost lifts it further, and AIRBORNE unloads it - with
 	# the throttle open the revs climb free of the road.
 	var rpm_target: float = 0.8
+	audio_rev = gear_rev # Fix Pass 45 (Item 2): the DRIVE branch remaps this in top gear
 	var gain_target: float = AUDIO_ENGINE_IDLE_DB
 	if mode == MODE_DRIVE or mode == MODE_DONE:
 		# Fix Pass 40 (Item 2): the revs read the GEARBOX now -
@@ -9656,7 +9687,17 @@ func _update_audio(delta: float) -> void:
 		# instead of ramping once. (Pre-FP40: a single ramp
 		# off speed/TOP_SPEED - the audio half of the owner's
 		# "2 gears" verdict.)
-		rpm_target = 0.8 + gear_rev * 1.85 \
+		# Fix Pass 45 (Item 2): in TOP GEAR the note reads a
+		# compressed rev (AUDIO_REV4_FLOOR) - the raw band
+		# fraction spends the working range at 0.1-0.3 and
+		# the note sat lazy at the bottom of its curve.
+		# audio_rev is the presentation value; gear_rev the
+		# state is untouched, and gears 1-3 read it raw, so
+		# their audio is identical to FP44 by construction.
+		audio_rev = gear_rev
+		if gear == GEAR_COUNT:
+			audio_rev = AUDIO_REV4_FLOOR + (1.0 - AUDIO_REV4_FLOOR) * gear_rev
+		rpm_target = 0.8 + audio_rev * 1.85 \
 			+ in_throttle * 0.22
 		if in_boost and boost_meter > 0.0:
 			rpm_target += 0.35
