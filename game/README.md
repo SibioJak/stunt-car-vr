@@ -113,13 +113,15 @@ VR (Quest):
   Track 01 (default), the original test ribbon, the Feature Lab
   and TRK2 (the funlab); a Track 01 race is 3 laps to the finish,
   the ribbon is point-to-point, the lab is the piece library as a
-  practice lap, TRK2 is the extremes course — loop, corkscrew,
-  barrel roll and wall-ride on one straight line
+  practice lap, TRK2 is the extremes course — the loop and the
+  spiral bowl on one straight line (Fix Pass 46 re-cut it to the
+  Hot Wheels direction: the corkscrew, barrel roll and wall-ride
+  were convicted and removed)
 - Jump to a TRK2 element (Fix Pass 41): GRIP near the green ELEM
   dash button — the crane collects the car from wherever it is
   and stations it at the NEXT element's run-up, so no element
-  gates another; desktop E cycles and F1/F2/F3/F4 jump straight
-  to E1/E2/E3/E4 (F4 added Fix Pass 43 with the fourth element).
+  gates another; desktop E cycles and F1/F2 jump straight to
+  E1/E2 (F3/F4 went with E3/E4 in Fix Pass 46).
   On any other track the button is inert
 - Recenter: click the left stick
 - Road-jitter experiment on/off: click the right stick (state shows
@@ -6911,3 +6913,119 @@ top gear sounds like it has more to give now; and
 the carried FP43 verdicts (loop feel incl. the
 16 m/s crown transient, the helix from the seat,
 the wall-ride, the four jump-ins).
+
+## Fix Pass 46 — THE FUNLAB RE-CUT (loop entry decode, spiral bowl)
+
+The owner's direction verdict (2026-11-03) governs:
+"the overall design of typical hot wheels tracks is
+the direction" — the test for every piece is whether
+it would work for an UNGUIDED toy car. Two items,
+TRK2 only; Track 01, the ribbon and the Feature Lab
+are untouched, no economy or powertrain dials moved.
+
+ITEM 1 — THE LOOP ENTRY, DECODED FROM THE SEAT. The
+FP43 ring was proven and the owner looped it himself,
+then: "the entry to the loop remains a non entry."
+Diagnosis was rendered, not reasoned: driver's-eye
+frames at 120/80/50/30/15/5 m out and at the ELEM
+jump-in, before any fix. The approach geometry is
+INNOCENT (110 m dead straight, dead level, bank 0 —
+the car arrives settled). Convicted instead:
+(1) THERE IS NO ENTRY BECAUSE THERE IS NO DOORWAY.
+The loop was bare ribbon; from the driver's low eye
+the ring's opening is occluded by the ribbon's own
+climbing wall and the far side presents its brown
+underside, so at every approach distance the element
+reads as a SOLID WALL the road runs into — no circle,
+no hole, no mouth, nothing to aim at. From the side
+the ring is perfect; the driver never sits at the
+side. A third facet the frames exposed: the ring's
+descending leg leans back over its own entry (at
+beam height it hangs ~8 m in front of the mouth's
+plane), an overhanging brown ceiling over the last
+metres of approach.
+(2) THE ENTRY SOLVES ~5 M OUT. Between the 15 m
+frame (bulk and wall, no read) and the 5 m frame
+(edges finally sweeping up) the climb becomes
+legible only inside ~10 m — under half a second at
+approach speed. Even the ELEM jump-in (s 90) drops
+the driver inside the blind zone, the roadside board
+half out of frame.
+THE FIX is the Hot Wheels form — a toy loop is a
+ring structure the track threads — and it is pure
+dressing (the FP43 spine is not touched): RING RAILS,
+unshaded toy-orange fins just outside both road
+edges following the loop's own stations, so the path
+is drawn in the air and the ring reads as a ring from
+the whole approach; THE PORTAL, legs beside the road
+and a beam over it carrying THE LOOP, standing 14 m
+before the mouth — the station is measured: a first
+placement at 4 m stood in the descending leg's
+shadow and its beam never reached the eye (convicted
+by an occlusion bisect: hide the skirt mesh and the
+beam renders); and THE THRESHOLD, the start line's
+chequer across the last flat metre. The E1 board now
+reads "AIM THROUGH THE RING - CLEAN 18+ OR FLOORED".
+After-frames: at 30 m the gate frames the ring; at
+25 m from the portal the doorway and its name read
+whole; at 5 m the rails sweep up both sides of the
+climb. THE LOOP BOARD IS RE-PROVEN on the shipped
+arrays: held 18/20/22 CLEAN with no separation, out
+at entry speed; floored from 24 all the way around;
+at 16 it separates on the crown approach (max phi
+158°) and the crane collects it; at 14 it hops over
+the top (7 airs, travel to phi 358°) — FP43's board,
+to the letter, nothing degraded.
+
+ITEM 2 — THE LAB RE-CUT. REMOVED, convicted by the
+direction verdict: the helix corkscrew, the barrel
+roll, the wall-ride (their layout code and the helix
+builders are deleted; the -2·TAU bank-offset chain
+dies with them). IN: E2 THE SPIRAL BOWL, the Hot
+Wheels spiral — entry radius 32 m tightening to
+26 m, 48° of bank (neutral 18.7 m/s at R 32, 16.8 at
+R 26), 373.8° of turn over 224 m, paying out 6.70 m
+of height, entered from the loop's run-out straight
+and left onto a plain 260 m runout apron home (the
+former E3/E4 ground; no replacement pieces invented).
+The FP46 pin sweep, stage-66 recorder: EVERY pin
+from 14 to 32 completes — no separation, no air, no
+crane, out at entry speed, never more than 2.90 m
+off centre on a 6 m half-road — an 18 m/s-wide
+measured hold band against the brief's 12 m/s floor.
+Hands-off at 20/24 it sheds to the crane (lat ~8),
+so the board is honest: "STEER IT - HOLDS 14-32 -
+NEUTRAL NEAR 18". ELEM jump-ins re-derived: E1 s 90
+(unchanged), E2 s 300. Course: 806 m, two elements.
+The commands list follows the roster: F1/F2 jump to
+element 1/2 (the F3/F4 arms are deleted).
+
+RE-DERIVED FUNLAB NUMBERS (all flagged in place):
+stage 66's roster/boards (4 → 2), its barrel and
+helix shape checks replaced by the bowl's (373.8°
+of turn, 6.70 m drop, 48° bank mid-span, flat 8 m
+past the end), its entry-state check (both elements
+now entered flat — the helix's pre-rolled descent
+entry is gone), its element drives (corkscrew ×2,
+barrel, wall-ride out; bowl pins 14/20/32 in), its
+finish run (now from E2's mouth at 22); stage 69's
+jump-in audit walks the element table (2, not 4).
+Check arithmetic closes exactly: 838 − 6 (stage 69's
+two deleted jump-in audits) + 1 (stage 66 net) = 833.
+Track 01 / ribbon / Feature Lab census unmoved
+(stage 54 reads 187.0 units, 500 m starved, as FP44
+left it).
+
+Gates: preflight clean (import + boot), SMOKE ALL
+833, API GUARD ALL 71, render proof 172/173 (the
+standing wheel-hub artifact only). One process note:
+the first full-suite run was killed by the pass's
+own 25-minute timebox at 524 PASS / 0 FAIL (slow
+box, not a hang — its log kept growing); the second
+run, in a 55-minute box, completed green.
+
+Stamp: FP46 · 2026-11-04. What the seat still owes:
+whether the loop's entry now READS as an entry (the
+decode is frame-proven here, felt proof is his), and
+the bowl's band from the seat. Still unverified
+until he drives it.
