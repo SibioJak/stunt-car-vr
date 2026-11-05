@@ -7029,3 +7029,157 @@ whether the loop's entry now READS as an entry (the
 decode is frame-proven here, felt proof is his), and
 the bowl's band from the seat. Still unverified
 until he drives it.
+
+
+## Fix Pass 47 — THE HOOP (the loop as a placed structure, the bowl's exit re-laid)
+
+THE OWNER'S VERDICT ON FP46, from the seat, with a
+run video and a reference photo: "You guys are
+killing me with your attempts at a loop de loop. The
+'loop' works, but visually it's completely wrong.
+Once again I'm driving through the loop to get to
+the loop." Plus the form law: "this is how its
+done!" — a free-standing HOOP, its hole open to the
+sky — and "its gotta bend/twist," sharpened by his
+model-orbit video: the ring is a shallow HELIX, the
+descending leg coming down BESIDE the ascending
+leg, entry and exit lanes side by side at the base.
+
+THE POST-MORTEM, ONE SENTENCE: FP41, FP43 and FP46
+all briefed the loop inside the road/ribbon system,
+so it always came back a curled road — Ø 25.8 m
+against a 12 m road, the far leg filling the hole,
+the descending leg overhanging the approach; FP46's
+dressing put a sign on the wall. This pass builds
+the piece the photo shows.
+
+ITEM 1 — THE LOOP AS A PLACED HOOP. The road leaves
+the generator for the element's span: 172 stations
+of 1.0 m integrated in the entry frame from a
+curvature profile with clothoid feet (join ramp
+0 → R 20 across the first tenth, an ease to the
+crown's R 29, mirrored out; per-step turns are the
+profile weights normalised to sum TAU, so the ring
+closes by construction), plus a smooth lateral
+drift of one full surface width distributed around
+the ring (rate zero at both feet — entry and exit
+tangents stay exactly parallel to their straights).
+Measured on the shipped arrays: crown +49.77 m over
+the entry (ring Ø ≈ 4.2× the FULL 12 m surface —
+the surface is NOT narrowed; the model's own
+proportions, reached by ring size), base closure
+forward +0.60 m / side +12.00 m / height 0.00, exit
+heading identical to entry. The BODY (_build_loop_
+structure): side cheeks just outside the road's
+edges (lip 0.70 above the surface, section down
+2.40), the outer rim closing the band's back, a
+footing pad under the base zone with legs to the
+desert, lattice gussets at both feet, the chequer
+threshold kept; the generic stilts are suppressed
+across the span (a post through the hole is the old
+wall in a new costume). FP46's rails and portal are
+deleted. The band's greys were lightened one step
+after the first frames: near-black read as void
+from the seat; the far side now reads as structure.
+
+TWO CONVICTIONS THE GEOMETRY EXPOSED. (1) THE
+FRAME NEVER FOLDED: the fold detector's signature
+(the level up reversing against itself) assumes the
+tangent's horizontal component dies through the
+pitch plane at the vertical; the drift keeps a
+sideways component alive, the level up rotated
+smoothly instead, and the frame barrel-rolled
+around the ring — up.y read +1.00 at the crown and
+kvf priced the whole top half as a crest of R 29,
+so the load law let go of every car at the wall.
+The gate gains a |tan.y| > 0.90 arm (engage the
+carry within ~25° of the vertical). Census safety
+is measured, not argued: circuit / ribbon / lab
+peak at |tan.y| 0.34, their carried-frame arrays
+stay empty, their frames are bit-identical.
+(2) THE TWIST'S HOLONOMY: the transported frame
+comes off a helix rolled ~27° (2π·sinβ of the
+tangent's side-tilt), and the old release (level
+up agrees again) can never fire downstream. The
+carry now RE-LEVELS on ordinary road (tangent near
+level AND barely turning — inside any element the
+turn rate is 20× the gate) at ≤ 0.008 rad/station,
+and the release tightens to 0.9995. Measured tilt:
+35.3° at the exit foot, 21.5° at +30 m, 3.2° at
++70 m, 0.0° by +90 m — the course visibly untwists
+along its run-out, the bowl untouched by it.
+
+THE DRIVE. The twisted centreline is not a
+geodesic: it carries ~1°/m of in-plane curvature,
+so the piece is STEERED through its steep arc — a
+centred wheel walks off the wall at every speed
+(the recorder, not the car). The stage recorder's
+steep-zone law is in-plane now (slip of the forward
+against the tangent + the lane; the yaw bearing is
+not a steering signal on an inverted wall — it
+swings and wraps). Measured band, pins: 18–26
+CLEAN (no separation, no air, max lat 2.08 m at 26);
+17 separates at the crown (the static floor is
+√(g·29) = 16.9); 12 separates on the crown
+approach; every slow failure is collected by the
+crane, nothing wedges. FP43's floored claim is
+retired: a floored entry reaches the descent too
+fast for the twist's in-plane demand and washes
+off it. The board reads "STEER THE TWIST - CLEAN
+18-26 - LIFT FOR THE DROP". Jump-ins re-derived:
+E1 s 90, E2 s 380 (the bowl moved with the ring's
+growth). Course: 886 m, two elements.
+
+ITEM 2 — THE BOWL'S EXIT (the owner's verdict: the
+bowl "worked well, but had an exit problem; it was
+too high and you run through the next section up").
+The core is untouched. The mechanism, measured:
+the yaw budget overshot the full circle by 18.5°,
+so the bowl's last station aimed 13.8° across the
+runout, and the _gen_yaw = 0 snap then whipped the
+heading back 18.2° inside 3 m of ribbon — a kink,
+not a continuation (the exit's HEIGHT was innocent:
+dead level with the runout all along). A floored
+cruise out of the ramp-out swung lat +2.3 → −8.0
+and left the road within 25 m. The re-lay: the
+budget now totals exactly TAU (the R 26 hold is
+solved from the budget, 47.4 m, not rounded), the
+ramp-out gains a fifth chunk that walks the yaw
+rate itself to ~zero, and the snap is deleted
+(the accumulated yaw is normalised by TAU — the
+same heading by construction). Measured: total
+turn 359.9°, drop 6.54 m, per-step heading deltas
+through the exit ≤ 0.07°, and the lift-out cruise
+(pin 23 to the ramp-out, then off the throttle)
+rolls onto the runout dead straight — exit lat
+−0.37, |lat| ≤ 0.4 for 90 m, no air. The pins are
+unmoved (14/20/22/32 complete, max lat ≤ 2.48).
+
+RE-DERIVED NUMBERS (all flagged in place): stage
+66's dressing check (hoop nodes in, rails/portal
+asserted gone), crown bound (25 → 45), the new
+base-closure / heading / untwist checks, the bowl
+turn check (373.8 → 360.0) and drop text (6.70 →
+6.54), the new no-snap exit check, the loop drives
+(pin band 18/24 clean, 17 at the crown, 12 on the
+approach; floored retired), the lift-out cruise,
+stage 69's crown drive on the same in-plane law.
+Check arithmetic closes exactly: 833 + 4 (stage
+66: the closure check, the no-snap check, the
+17-pin, the lift-out cruise; the pin-24 check
+replaces FP46's floored check one-for-one) = 837. Track 01 /
+ribbon / Feature Lab census unmoved.
+
+Gates: preflight clean (import + boot), SMOKE ALL
+837, API GUARD ALL 71, render proof 172/173 (the
+standing wheel-hub artifact only).
+
+Stamp: FP47 · 2026-11-04. What the seat still owes:
+the hoop's form from the driver's eye (from
+distance the ring reads as a blade — any in-plane
+ring does; the hole opens on approach and is
+unmistakable by 50 m, and at the mouth the road
+bends up the band's inside with the exit lane
+coming down beside it), the band from the seat,
+and the bowl's exit flow. Still unverified until
+he drives it.

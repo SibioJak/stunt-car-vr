@@ -1719,7 +1719,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP46 · 2026-11-04"
+const BUILD_STAMP: String = "FP47 · 2026-11-04"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -2974,6 +2974,52 @@ func _build_lab_furniture(root: Node3D, pieces: Array) -> void:
 		_box(root, Vector3(0.55, 0.6, 0.55), pos_m, _mat_unshaded(Color(1.0, 0.72, 0.10)), "SlalomMarker%d" % mk)
 
 
+func _loop_kappa47(u: float, kf: float, kc: float, ja: float,
+		jb: float) -> float:
+	# Fix Pass 47: the hoop's curvature profile over u in
+	# [0, 1], mirrored about the crown: a join ramp eases the
+	# curvature 0 -> kf across the first ja of the ring (the
+	# clothoid foot - the road starts level and the bend
+	# grows into it), then an ease from the foot curvature kf
+	# to the crown curvature kc across [ja, jb], then the
+	# crown plateau. Symmetric, so the exit foot un-eases the
+	# same way. Returns absolute curvature (1/m).
+	var uu: float = u if u < 0.5 else 1.0 - u
+	var e: float = clampf(uu / ja, 0.0, 1.0)
+	var join: float = e * e * (3.0 - 2.0 * e)
+	var base: float = kc
+	if uu <= ja:
+		base = kf
+	elif uu <= jb:
+		var t: float = clampf((uu - ja) / (jb - ja), 0.0, 1.0)
+		base = lerpf(kf, kc, t * t * (3.0 - 2.0 * t))
+	return base * join
+
+func _loop_driftq47(th: float) -> float:
+	# Fix Pass 47: the helix's lateral drift rate shape over
+	# the ring angle th in [0, TAU] (the owner's model: the
+	# ring is a shallow helix - the descending leg comes down
+	# BESIDE the ascending leg, the twist distributed around
+	# the whole ring). Zero at both feet (tapered over
+	# 0.55 rad, so the entry and exit tangents stay exactly
+	# parallel to the straights they join), weighted to the
+	# walls (sin^2 - the crown's middle is left nearly
+	# planar), leaning late (1 + 0.5 sin(th/2)): the ring
+	# reads as a ring first, then gives up its offset.
+	var w: float = 1.0
+	if th < 0.55:
+		var e1: float = clampf(th / 0.55, 0.0, 1.0)
+		w = e1 * e1 * e1 * (e1 * (e1 * 6.0 - 15.0) + 10.0)
+	elif th > TAU - 0.55:
+		var e2: float = clampf((TAU - th) / 0.55, 0.0, 1.0)
+		w = e2 * e2 * e2 * (e2 * (e2 * 6.0 - 15.0) + 10.0)
+	var s: float = sin(th)
+	return w * (0.25 + 0.75 * s * s) * (1.0 + 0.5 * sin(th * 0.5))
+
+func _hoop_pt(fr: Dictionary, lat: float, upoff: float) -> Vector3:
+	return Vector3(fr["pos"]) + Vector3(fr["side"]) * lat \
+		+ Vector3(fr["up"]) * upoff
+
 func _build_funlab() -> Dictionary:
 	# Fix Pass 38: TRK2 - THE FUNLAB. The owner's order
 	# (2026-11-02): "and I still need a loop, barrel roll,
@@ -3084,21 +3130,95 @@ func _build_funlab() -> Dictionary:
 	# lands on each target exactly); _gen_phi then
 	# resets to 0 (TAU unwound), as before.
 	var e1_s0: float = float(b_pts.size() - 1)
-	var n1_43: int = 92
-	var w1_43: Array[float] = []
-	var sum1_43: float = 0.0
-	for j1_43: int in range(1, n1_43 + 1):
-		var u1_43: float = (float(j1_43) - 0.5) / float(n1_43)
-		var e1u_43: float = clampf((u1_43 if u1_43 < 0.5 else 1.0 - u1_43) / 0.12, 0.0, 1.0)
-		var wj1_43: float = maxf(e1u_43 * e1u_43 * (3.0 - 2.0 * e1u_43), 0.000001)
-		w1_43.append(wj1_43)
-		sum1_43 += wj1_43
-	var th1_43: float = 0.0
-	for j1b_43: int in n1_43:
-		th1_43 += TAU * w1_43[j1b_43] / sum1_43
-		_gen_step(1.0, 0.0, th1_43, 0.0, false, 0.09, 0.012)
+	# Fix Pass 47 (the owner's hoop): THE LOOP AS A PLACED
+	# HOOP, not a curled road. FP41 curled the road and it
+	# read as a wall; FP43 rebuilt the curl at the base and
+	# it still read as a wall; FP46 dressed the wall with a
+	# sign. The reference photo and the owner's orbit model
+	# say what the piece IS: a free-standing band standing
+	# on the ground, its hole open to the sky, the road
+	# threading its base and bending up its inside - and a
+	# SHALLOW HELIX, not a planar ring: the track twists
+	# gradually through the element, the descending leg
+	# comes down BESIDE the ascending leg, entry and exit
+	# lanes side by side at the base, never stacked, never
+	# crossing ("its gotta bend/twist").
+	# The geometry, solved offline before it was coded:
+	# N = 172 stations of 1.0 m; curvature profile
+	# (_loop_kappa47) with clothoid feet - a join ramp eases
+	# the bend 0 -> 1/20 across the first tenth of the ring,
+	# an ease carries it to the crown's 1/29, mirrored out;
+	# per-step turns are the profile weights normalised to
+	# sum TAU exactly (FP43's device), so the ring closes by
+	# construction. Ring height ~50 m against the FULL 12 m
+	# road (ratio ~4.2, the model's own proportions - the
+	# surface is NOT narrowed: narrowing moves the crown's
+	# physics and the piece's identity; quadrupling the RING
+	# is the honest lever). The crown's static floor is
+	# sqrt(g * 29) = 16.9 m/s, inside the <= ~20 guardrail.
+	# Positions are integrated here in the entry frame, NOT
+	# through _gen_step: the helix's lateral drift (a full
+	# surface width by the exit foot, rate shape in
+	# _loop_driftq47) is a centreline motion the generator's
+	# yaw/pitch state cannot speak. The drift's feet are
+	# rate-zero, so the entry and exit tangents stay exactly
+	# parallel to the straights they join; the base closure
+	# (exit vs entry) solves to side +12.0, forward ~+0.6 -
+	# the base zone of the brief, as side-by-side lanes.
+	# The transported frame pays the helix's holonomy
+	# (2*pi*sin(beta) ~ 27 deg of roll at the exit);
+	# _finalize_track's untwist (FP47) rights it along the
+	# run-out. The band that renders the hoop stands in
+	# _build_loop_structure.
+	var n1_47: int = 172
+	var kf47: float = 1.0 / 20.0
+	var kc47: float = 1.0 / 29.0
+	var ja47: float = 0.10
+	var jb47: float = 0.35
+	var w1_47: Array[float] = []
+	var sum1_47: float = 0.0
+	for j1_47: int in range(1, n1_47 + 1):
+		var wj1_47: float = _loop_kappa47((float(j1_47) - 0.5)
+			/ float(n1_47), kf47, kc47, ja47, jb47)
+		w1_47.append(wj1_47)
+		sum1_47 += wj1_47
+	var th1_47: Array[float] = []
+	var acc1_47: float = 0.0
+	for j2_47: int in n1_47:
+		acc1_47 += TAU * w1_47[j2_47] / sum1_47
+		th1_47.append(acc1_47)
+	var q1_47: Array[float] = []
+	var qsum47: float = 0.0
+	for j3_47: int in n1_47:
+		var thm47: float = th1_47[j3_47] - 0.5 * TAU * w1_47[j3_47] / sum1_47
+		var qj47: float = _loop_driftq47(thm47)
+		q1_47.append(qj47)
+		qsum47 += qj47
+	var dscale47: float = 12.0 / qsum47
+	var o47: Vector3 = _gen_pos
+	var f47: Vector3 = Vector3(-sin(_gen_yaw), 0.0, -cos(_gen_yaw))
+	var s47: Vector3 = f47.cross(Vector3.UP).normalized()
+	var y47: float = 0.0
+	var fw47: float = 0.0
+	var x47: float = 0.0
+	var prev47: Vector3 = o47
+	var thp47: float = 0.0
+	for j4_47: int in n1_47:
+		var thm47b: float = 0.5 * (thp47 + th1_47[j4_47])
+		y47 += sin(thm47b)
+		fw47 += cos(thm47b)
+		x47 += dscale47 * q1_47[j4_47]
+		var pos47: Vector3 = o47 + f47 * fw47 + Vector3.UP * y47 + s47 * x47
+		b_pts.append(pos47)
+		b_tan.append((pos47 - prev47).normalized())
+		b_bank.append(0.0)
+		b_curv.append(0.0)
+		b_gap.append(false)
+		prev47 = pos47
+		thp47 = th1_47[j4_47]
+	_gen_pos = prev47
 	_gen_phi = 0.0
-	elements.append(["E1 THE LOOP", e1_s0, float(b_pts.size() - 1), 24.0, "AIM THROUGH THE RING - CLEAN 18+ OR FLOORED"])
+	elements.append(["E1 THE LOOP", e1_s0, float(b_pts.size() - 1), 24.0, "STEER THE TWIST - CLEAN 18-26 - LIFT FOR THE DROP"])
 	# Run-out: 120 m of flat - a failed loop needs room to
 	# land, be craned, and be re-taken.
 	_walk(120, 0.0, 0.0, 0.0, false)
@@ -3124,11 +3244,42 @@ func _build_funlab() -> Dictionary:
 	# 0.500 rad + hold at R 32 2.500 + rate transition
 	# 0.837 + hold at R 26 2.154 + ramp-out 0.615 = 6.606
 	# rad = 378.5 deg of turn over 224 m of ribbon.
+	# Fix Pass 47 (Addition 2 - the owner's bowl verdict:
+	# "worked well, but had an exit problem; it was too
+	# high and you run through the next section up"): the
+	# CORE above is approved and untouched. The EXIT was
+	# convicted by measurement: the budget OVERSHOT the
+	# full circle by 18.5 deg, so the bowl's last station
+	# aimed 13.8 deg across the runout - and the
+	# _gen_yaw = 0.0 snap then whipped the heading back
+	# 18.2 deg inside 3 m of ribbon. A driver exits at
+	# speed aimed across the apron; the road snaps
+	# sideways under him and he runs across the whole
+	# next section and off its far edge (probe: floored
+	# cruise out of the ramp-out swings lat +2.3 -> -8.0
+	# and leaves the road within 25 m of the exit). The
+	# re-lay: the budget now totals EXACTLY TAU (the R 26
+	# hold is solved from the budget below, not rounded),
+	# the ramp-out gains a fifth chunk that walks the yaw
+	# rate itself down to ~zero (0.03 x om26) so the exit
+	# tangent is the runout's tangent, and the snap is
+	# gone - the accumulated yaw is normalised by TAU,
+	# the same heading by construction. The exit station
+	# is plain straight road at the runout's height, on
+	# its line: the bowl lands the car INTO what follows.
+	# New budget: ramp-in 0.500 + R 32 hold 2.500 +
+	# transition 0.837 + R 26 hold 1.822 (47.4 m, solved)
+	# + ramp-out 0.625 = TAU over ~223 m.
 	var om32_46: float = 1.0 / 32.0
 	var om26_46: float = 1.0 / 26.0
 	var beta2_46: float = deg_to_rad(48.0)
 	var brate2_46: float = beta2_46 / 32.0
 	var prate2_46: float = deg_to_rad(2.0) / 32.0
+	var brate2o_47: float = beta2_46 / 40.0
+	var prate2o_47: float = deg_to_rad(2.0) / 40.0
+	var h2_47: float = (TAU - (0.5 + 80.0 * om32_46
+		+ 24.0 * (om32_46 + om26_46) * 0.5
+		+ 8.0 * om26_46 * (0.875 + 0.625 + 0.375 + 0.125 + 0.03))) / om26_46
 	var e2_s0: float = float(b_pts.size() - 1)
 	_walk(8, om32_46 * 0.125, deg_to_rad(-2.0), beta2_46, false, prate2_46, brate2_46)
 	_walk(8, om32_46 * 0.375, deg_to_rad(-2.0), beta2_46, false, prate2_46, brate2_46)
@@ -3136,12 +3287,13 @@ func _build_funlab() -> Dictionary:
 	_walk(8, om32_46 * 0.875, deg_to_rad(-2.0), beta2_46, false, prate2_46, brate2_46)
 	_walk(80, om32_46, deg_to_rad(-2.0), beta2_46, false)
 	_walk(24, (om32_46 + om26_46) * 0.5, deg_to_rad(-2.0), beta2_46, false)
-	_walk(56, om26_46, deg_to_rad(-2.0), beta2_46, false)
-	_walk(8, om26_46 * 0.875, 0.0, 0.0, false, prate2_46, brate2_46)
-	_walk(8, om26_46 * 0.625, 0.0, 0.0, false, prate2_46, brate2_46)
-	_walk(8, om26_46 * 0.375, 0.0, 0.0, false, prate2_46, brate2_46)
-	_walk(8, om26_46 * 0.125, 0.0, 0.0, false, prate2_46, brate2_46)
-	_gen_yaw = 0.0
+	_walkf(h2_47, om26_46, deg_to_rad(-2.0), beta2_46, false)
+	_walk(8, om26_46 * 0.875, 0.0, 0.0, false, prate2o_47, brate2o_47)
+	_walk(8, om26_46 * 0.625, 0.0, 0.0, false, prate2o_47, brate2o_47)
+	_walk(8, om26_46 * 0.375, 0.0, 0.0, false, prate2o_47, brate2o_47)
+	_walk(8, om26_46 * 0.125, 0.0, 0.0, false, prate2o_47, brate2o_47)
+	_walk(8, om26_46 * 0.03, 0.0, 0.0, false, prate2o_47, brate2o_47)
+	_gen_yaw -= TAU
 	_gen_bank = 0.0
 	elements.append(["E2 THE SPIRAL BOWL", e2_s0, float(b_pts.size() - 1), 22.0, "STEER IT - HOLDS 14-32 - NEUTRAL NEAR 18"])
 	# The runout apron home: the former E3/E4 ground is
@@ -3154,6 +3306,7 @@ func _build_funlab() -> Dictionary:
 		"gap2_s0": -1.0, "gap2_s1": -1.0,
 		"ext_s0": -1.0, "sweeper_s0": -1.0, "sweeper_s1": -1.0,
 		"stairs_s0": -1.0, "stairs_s1": -1.0,
+		"hoop_span": [e1_s0, float(elements[0][2])],
 		"elements": elements}
 	var d: Dictionary = _finalize_track(false, feats)
 	d["root"] = root
@@ -3183,7 +3336,7 @@ func _build_funlab() -> Dictionary:
 		el41.append(ds41)
 	_build_track_meshes(d)
 	_build_funlab_furniture(root, elements)
-	_build_loop_dressing(root, e1_s0, float(elements[0][2]))
+	_build_loop_structure(root, e1_s0, float(elements[0][2]))
 	return d
 
 
@@ -3231,116 +3384,165 @@ func _build_funlab_furniture(root: Node3D, elements: Array) -> void:
 		bnode.add_child(adv)
 
 
-func _build_loop_dressing(root: Node3D, s0f: float, s1f: float) -> void:
-	# Fix Pass 46 (Item 1): THE LOOP ENTRY, DECODED AND
-	# DRESSED. The diagnosis (driver's-eye frames at 120 /
-	# 80 / 50 / 30 / 15 / 5 m out and at the ELEM jump-in,
-	# rendered before this fix): the approach geometry is
-	# innocent - 110 m dead straight, dead level, bank 0,
-	# the car arrives settled. What is convicted is the
-	# READ. The loop was bare ribbon: from the driver's
-	# low eye the ring's opening is occluded by the
-	# ribbon's own climbing wall and the descending far
-	# side presents its brown underside, so at every
-	# approach distance the element reads as a SOLID WALL
-	# the road runs into - no circle, no hole, no mouth,
-	# no doorway, nothing to aim at. The climb only
-	# becomes legible inside ~5 m (the m015 frame is bulk
-	# and wall; the m005 frame's edges finally sweep up) -
-	# under half a second at approach speed. Even the
-	# ELEM jump-in (s 90, 20 m out) deposits the driver
-	# inside the blind zone, and the roadside board at the
-	# mouth is half out of frame there. From the SIDE the
-	# ring is perfect (render proof, ext_side) - the
-	# driver never sits at the side.
-	# The fix is the Hot Wheels form: a toy loop is a
-	# RING STRUCTURE the track threads - legs beside the
-	# track at the base, the ring visible as a ring from
-	# the front, the threshold flush. Three pieces, all
-	# pure dressing (the FP43 spine is untouched):
-	# (1) RING RAILS - unshaded toy-orange fins standing
-	#     just outside both road edges, following the
-	#     loop's own stations from mouth to exit, so the
-	#     path the road takes is drawn in the air: from
-	#     anywhere on the approach the driver sees the
-	#     circle, the hole it frames, and the rails
-	#     converging to the mouth on his own line. Being
-	#     built from the shipped stations, the rails can
-	#     never lie about the path.
-	# (2) THE PORTAL - two legs beside the road 14 m
-	#     before the mouth and a beam over it carrying
-	#     THE LOOP in the furniture's amber: a doorway to
-	#     aim through, present from the whole approach.
-	#     The station is measured, not guessed: the
-	#     ring's descending leg leans back over its own
-	#     entry (at beam height it hangs ~8 m in front of
-	#     the mouth's plane - the overhanging brown
-	#     ceiling in the m015 frame), so a portal at the
-	#     mouth itself stands in the leg's shadow and
-	#     its beam never reaches the driver's eye (the
-	#     FP46 occlusion bisect: with the skirt mesh
-	#     hidden the beam renders; in front of it, the
-	#     leg). Fourteen metres out, the gate stands
-	#     clear of the curl, in the open.
-	# (3) THE THRESHOLD - the start line's chequer paint
-	#     across the last flat metre before the climb, so
-	#     the exact metre the element begins has a line
-	#     the driver can call.
-	var rail_pos := PackedVector3Array()
-	var rail_nrm := PackedVector3Array()
-	var rail_col := PackedColorArray()
-	var rail_c := Color(1.0, 0.5, 0.05)
-	var lat46: float = HALF_WIDTH + 0.30
-	for i46: int in range(int(s0f), int(s1f)):
-		var fa46: Dictionary = _frame_at(float(i46))
-		var fb46: Dictionary = _frame_at(float(i46 + 1))
-		for sgn46: float in [-1.0, 1.0]:
-			var pa46: Vector3 = fa46["pos"]
-			var pb46: Vector3 = fb46["pos"]
-			var sa46: Vector3 = fa46["side"]
-			var sb46: Vector3 = fb46["side"]
-			var ua46: Vector3 = fa46["up"]
-			var ub46: Vector3 = fb46["up"]
-			var b046: Vector3 = pa46 + sa46 * (lat46 * sgn46) - ua46 * 0.45
-			var b146: Vector3 = pb46 + sb46 * (lat46 * sgn46) - ub46 * 0.45
-			var t046: Vector3 = pa46 + sa46 * (lat46 * sgn46) + ua46 * 0.95
-			var t146: Vector3 = pb46 + sb46 * (lat46 * sgn46) + ub46 * 0.95
-			var n46: Vector3 = (sa46 + sb46) * 0.5 * sgn46
-			_add_quad_m(rail_pos, rail_nrm, rail_col, b046, b146, t146, t046, n46, rail_c)
-			_add_quad_m(rail_pos, rail_nrm, rail_col, b146, b046, t046, t146, -n46, rail_c)
-	_add_mesh(rail_pos, rail_nrm, rail_col, "LoopRails", true, root)
-	# the portal, 14 m before the mouth (clear of the
-	# ring's overhang, see above), oriented on its frame
-	var fp46: Dictionary = _frame_at(s0f - 14.0)
-	var ppos46: Vector3 = fp46["pos"]
-	var pside46: Vector3 = fp46["side"]
-	var pup46: Vector3 = fp46["up"]
-	var portal := Node3D.new()
-	portal.name = "LoopPortal"
-	root.add_child(portal)
-	portal.global_transform = Transform3D(Basis(pside46, pup46, pside46.cross(pup46)), ppos46)
-	var post_c := _mat(Color(1.0, 0.5, 0.05))
-	_box(portal, Vector3(0.5, 8.4, 0.5), Vector3(-(HALF_WIDTH + 1.3), 4.2, 0.0), post_c)
-	_box(portal, Vector3(0.5, 8.4, 0.5), Vector3(HALF_WIDTH + 1.3, 4.2, 0.0), post_c)
-	_box(portal, Vector3(2.0 * (HALF_WIDTH + 1.3) + 0.5, 0.7, 0.5), Vector3(0.0, 8.05, 0.0), post_c)
-	var plab := Label3D.new()
-	plab.name = "PortalLabel"
-	plab.text = "THE LOOP"
-	plab.font_size = 128
-	plab.pixel_size = 0.01
-	plab.modulate = Color(1.0, 0.85, 0.2)
-	plab.outline_size = 12
-	plab.outline_modulate = Color(0.05, 0.05, 0.06)
-	plab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	plab.position = Vector3(0.0, 9.4, 0.0)
-	portal.add_child(plab)
-	# the threshold chequer across the last flat metre
+func _build_loop_structure(root: Node3D, s0f: float, s1f: float) -> void:
+	# Fix Pass 47: THE HOOP'S BODY. FP46's dressing (rails
+	# tracing the ribbon, a portal sign, a chequer line)
+	# decorated a curled road; this builds the structure
+	# the owner's photo and orbit model actually show - a
+	# BAND standing on the ground with its hole open:
+	#   - side CHEEKS just outside the road's edges, from a
+	#     lip 0.70 m above the surface down the band's
+	#     outside (2.40 m of section), so from the seat the
+	#     road runs inside a band with a visible edge and
+	#     thickness, and from outside the ring is a solid
+	#     dark shell standing on its base;
+	#   - the OUTER RIM closing the section on the outside
+	#     of the ring (the band's back), read across the
+	#     hole - the far side of the ring is a band, not a
+	#     ribbon seen edge-on;
+	#   - a FOOTING PAD under the base zone both lanes
+	#     plant on, with legs to the desert;
+	#   - LATTICE gussets at both feet, the model's lattice
+	#     supports, tying the band's feet to the pad;
+	#   - the chequer threshold across the last flat metre
+	#     (kept from FP46 - it was never the problem).
+	# Cheeks and rim follow the HELIX (the frames carry the
+	# twist), so the band twists with the road it carries.
+	# The generic stilts are suppressed across the span
+	# (features.hoop_span) - a stilt through the hole is
+	# the old wall in a new costume.
+	var shell_c := Color(0.23, 0.24, 0.28)
+	var rim_c := Color(0.38, 0.40, 0.45)
+	var steel_c := Color(0.38, 0.39, 0.43)
+	var pos := PackedVector3Array()
+	var nrm := PackedVector3Array()
+	var col := PackedColorArray()
+	var lat_in: float = HALF_WIDTH + 0.05
+	var lat_out: float = HALF_WIDTH + 0.55
+	var lip: float = 0.70
+	var depth: float = -2.40
+	for i47: int in range(int(s0f), int(s1f)):
+		var fa: Dictionary = _frame_at(float(i47))
+		var fb: Dictionary = _frame_at(float(i47 + 1))
+		var ua: Vector3 = fa["up"]
+		var ub: Vector3 = fb["up"]
+		for sgn: float in [-1.0, 1.0]:
+			var li: float = lat_in * sgn
+			var lo: float = lat_out * sgn
+			var n_side: Vector3 = (Vector3(fa["side"]) * sgn
+				+ Vector3(fb["side"]) * sgn).normalized()
+			# the section's four faces, both windings
+			_add_quad_m(pos, nrm, col,
+				_hoop_pt(fa, li, lip), _hoop_pt(fb, li, lip),
+				_hoop_pt(fb, lo, lip), _hoop_pt(fa, lo, lip),
+				(ua + ub).normalized(), shell_c)
+			_add_quad_m(pos, nrm, col,
+				_hoop_pt(fa, lo, lip), _hoop_pt(fb, lo, lip),
+				_hoop_pt(fb, li, lip), _hoop_pt(fa, li, lip),
+				(ua + ub).normalized(), shell_c)
+			_add_quad_m(pos, nrm, col,
+				_hoop_pt(fa, lo, lip), _hoop_pt(fb, lo, lip),
+				_hoop_pt(fb, lo, depth), _hoop_pt(fa, lo, depth),
+				n_side, shell_c)
+			_add_quad_m(pos, nrm, col,
+				_hoop_pt(fa, lo, depth), _hoop_pt(fb, lo, depth),
+				_hoop_pt(fb, lo, lip), _hoop_pt(fa, lo, lip),
+				n_side, shell_c)
+			_add_quad_m(pos, nrm, col,
+				_hoop_pt(fa, lo, depth), _hoop_pt(fb, lo, depth),
+				_hoop_pt(fb, li, depth), _hoop_pt(fa, li, depth),
+				-(ua + ub).normalized(), shell_c)
+			_add_quad_m(pos, nrm, col,
+				_hoop_pt(fa, li, depth), _hoop_pt(fb, li, depth),
+				_hoop_pt(fb, lo, depth), _hoop_pt(fa, lo, depth),
+				-(ua + ub).normalized(), shell_c)
+			_add_quad_m(pos, nrm, col,
+				_hoop_pt(fa, li, depth), _hoop_pt(fb, li, depth),
+				_hoop_pt(fb, li, lip), _hoop_pt(fa, li, lip),
+				-n_side, shell_c)
+			_add_quad_m(pos, nrm, col,
+				_hoop_pt(fa, li, lip), _hoop_pt(fb, li, lip),
+				_hoop_pt(fb, li, depth), _hoop_pt(fa, li, depth),
+				-n_side, shell_c)
+		# the outer rim: the band's back skin, straight
+		# across the section between the cheeks' bottoms
+		_add_quad_m(pos, nrm, col,
+			_hoop_pt(fa, -lat_out, depth), _hoop_pt(fb, -lat_out, depth),
+			_hoop_pt(fb, lat_out, depth), _hoop_pt(fa, lat_out, depth),
+			-(ua + ub).normalized(), rim_c)
+		_add_quad_m(pos, nrm, col,
+			_hoop_pt(fa, lat_out, depth), _hoop_pt(fb, lat_out, depth),
+			_hoop_pt(fb, -lat_out, depth), _hoop_pt(fa, -lat_out, depth),
+			-(ua + ub).normalized(), rim_c)
+	_add_mesh(pos, nrm, col, "LoopHoop", false, root)
+	# Lattice gussets at both feet, both sides.
+	var lpos := PackedVector3Array()
+	var lnrm := PackedVector3Array()
+	var lcol := PackedColorArray()
+	for sf47: float in [s0f + 2.0, s1f - 2.0]:
+		var fr47: Dictionary = _frame_at(sf47)
+		var pc47: Vector3 = fr47["pos"]
+		var tn47: Vector3 = fr47["tan"]
+		var up47: Vector3 = fr47["up"]
+		var sd47: Vector3 = fr47["side"]
+		for sgn2: float in [-1.0, 1.0]:
+			var cc47: Vector3 = pc47 + sd47 * (sgn2 * (HALF_WIDTH + 0.30))
+			var nn47: Vector3 = sd47 * sgn2
+			var c00: Vector3 = cc47 - tn47 * 2.4 + up47 * 0.6
+			var c01: Vector3 = cc47 + tn47 * 2.4 + up47 * 0.6
+			var c11: Vector3 = cc47 + tn47 * 2.4 - up47 * 4.6
+			var c10: Vector3 = cc47 - tn47 * 2.4 - up47 * 4.6
+			# border strips (0.35 wide, in the panel plane)
+			_lat_strip(lpos, lnrm, lcol, c00, c01, up47, 0.35, nn47, steel_c)
+			_lat_strip(lpos, lnrm, lcol, c10, c11, up47, 0.35, nn47, steel_c)
+			_lat_strip(lpos, lnrm, lcol, c00, c10, tn47, 0.35, nn47, steel_c)
+			_lat_strip(lpos, lnrm, lcol, c01, c11, tn47, 0.35, nn47, steel_c)
+			# the X
+			_lat_strip(lpos, lnrm, lcol, c00, c11,
+				(c11 - c00).normalized().cross(nn47), 0.32, nn47, steel_c)
+			_lat_strip(lpos, lnrm, lcol, c01, c10,
+				(c10 - c01).normalized().cross(nn47), 0.32, nn47, steel_c)
+	_add_mesh(lpos, lnrm, lcol, "LoopLattice", false, root)
+	# The footing pad: one slab under the whole base zone,
+	# centred between the two lanes, legs to the desert.
+	var fe47: Dictionary = _frame_at(s0f)
+	var fx47: Dictionary = _frame_at(s1f)
+	var pad := Node3D.new()
+	pad.name = "LoopPad"
+	var midpoint47: Vector3 = (Vector3(fe47["pos"]) + Vector3(fx47["pos"])) * 0.5
+	midpoint47.y = Vector3(fe47["pos"]).y - 1.0
+	var psd47: Vector3 = fe47["side"]
+	var pup47: Vector3 = fe47["up"]
+	pad.global_transform = Transform3D(Basis(psd47, pup47,
+		psd47.cross(pup47)), midpoint47)
+	root.add_child(pad)
+	var shell_mat := StandardMaterial3D.new()
+	shell_mat.albedo_color = shell_c
+	shell_mat.roughness = 0.9
+	_box(pad, Vector3(27.0, 1.0, 19.0), Vector3.ZERO, shell_mat)
+	var steel_mat := StandardMaterial3D.new()
+	steel_mat.albedo_color = steel_c
+	steel_mat.roughness = 0.85
+	for lx47: float in [-12.0, 12.0]:
+		for lz47: float in [-8.0, 8.0]:
+			_box(pad, Vector3(0.55, 59.0, 0.55),
+				Vector3(lx47, -29.5, lz47), steel_mat)
+	# The chequer threshold on the last flat metre (FP46's,
+	# kept: it marks the mouth, it was never the problem).
 	var thr_pos := PackedVector3Array()
 	var thr_nrm := PackedVector3Array()
 	var thr_col := PackedColorArray()
 	_add_line_stripe(thr_pos, thr_nrm, thr_col, s0f - 1.0)
 	_add_mesh(thr_pos, thr_nrm, thr_col, "LoopThreshold", true, root)
 
+func _lat_strip(pp: PackedVector3Array, nn: PackedVector3Array,
+		cc: PackedColorArray, a: Vector3, b: Vector3,
+		across: Vector3, width: float, n: Vector3, c: Color) -> void:
+	# One lattice bar from a to b, `width` wide along the
+	# in-plane `across` direction, both windings.
+	var h: Vector3 = across.normalized() * (width * 0.5)
+	_add_quad_m(pp, nn, cc, a - h, b - h, b + h, a + h, n, c)
+	_add_quad_m(pp, nn, cc, a + h, b + h, b - h, a - h, n, c)
 
 func _project_wide_s(pos: Vector3) -> float:
 	# Whole-track nearest sample (coarse then refined) - used
@@ -3538,10 +3740,54 @@ func _finalize_track(closed: bool, features: Dictionary) -> Dictionary:
 				carry41 = carry41.rotated(ax41.normalized(),
 					asin(clampf(ax41.length(), -1.0, 1.0)))
 			carry41 = (carry41 - tt0 * carry41.dot(tt0)).normalized()
-			if lv41.dot(carry41) > 0.99 and absf(tt0.y) < 0.85:
+			# Fix Pass 47: THE UNTWIST. A twisted element
+			# (the funlab's helix loop, FP47) leaves the
+			# transported up rolled about the tangent by
+			# the ring's holonomy (~27 deg): the level up
+			# never agrees again, the release below never
+			# fires, and the roll would ride the rest of
+			# the course. On genuinely ordinary road -
+			# tangent near level AND the spine barely
+			# turning (inside any element the turn rate is
+			# 20x this gate) - the carried up now rights
+			# itself toward the level up at <= 0.008 rad
+			# per station: the course visibly untwists
+			# along its exit straight, exactly as the
+			# element's own twist wound up along its ring.
+			# The release is tightened to 0.9995: the
+			# planar ring's homecoming is exact to
+			# numerical dust, so nothing that released
+			# before is delayed, and the re-level's last
+			# < 2 deg snaps home invisibly. Census tracks
+			# never fold - this branch is unreachable
+			# there and their upfix stays empty.
+			if absf(tt0.y) < 0.85 and ax41.length() < 0.0025:
+				var ax47: Vector3 = carry41.cross(lv41)
+				if ax47.length() > 0.000001:
+					var st47: float = minf(0.008, asin(clampf(
+						ax47.length(), -1.0, 1.0)))
+					carry41 = carry41.rotated(ax47.normalized(), st47)
+					carry41 = (carry41 - tt0 * carry41.dot(tt0)).normalized()
+			if lv41.dot(carry41) > 0.9995 and absf(tt0.y) < 0.85:
 				in_carry41 = false
 				carry41 = lv41
-		elif lv41.dot(carry41) < 0.0:
+		elif lv41.dot(carry41) < 0.0 or absf(tt0.y) > 0.90:
+			# Fix Pass 47: the |tan.y| arm of the gate. The
+			# reversal signature above assumes the tangent's
+			# horizontal component dies through the pitch
+			# plane at the vertical; the twisted hoop's
+			# tangent keeps a sideways horizontal component
+			# (the drift) all the way up the wall, the level
+			# up rotates smoothly instead of reversing, and
+			# the fold never fired - the frame barrel-rolled
+			# around the ring, up.y read +1 at the crown and
+			# kvf read the whole top half as a crest. Within
+			# ~25 deg of the vertical the level construction
+			# is not to be trusted anyway; engage the carry
+			# there. No census track's tangent comes within
+			# 55 deg of the vertical, and a track that merely
+			# climbs steeply and comes back transports home
+			# to the level up and releases as before.
 			in_carry41 = true
 			folds41 = true
 			var ax42: Vector3 = b_tan[ui41 - 1].cross(tt0)
@@ -3755,7 +4001,14 @@ func _build_track_meshes(d: Dictionary) -> void:
 		# stilts every 10 m down to the ground (Fix Pass 9: the
 		# desert floor, ~60 m below the datum - the stilts now
 		# land on something instead of ending in the void)
-		if i % 10 == 0:
+		# Fix Pass 47: no stilts through the hoop - inside
+		# the loop span (plus a margin) the band stands on
+		# its own footing pad; a centreline post there
+		# would spear the hole the driver must see through.
+		var hoop47: Array = d["features"].get("hoop_span", [])
+		if i % 10 == 0 and not (hoop47.size() == 2
+				and float(i) > float(hoop47[0]) - 4.0
+				and float(i) < float(hoop47[1]) + 4.0):
 			var top: Vector3 = p0
 			var bot := Vector3(p0.x, DESERT_FLOOR_Y, p0.z)
 			_add_box_verts(stilt_pos, stilt_nrm, stilt_col, (top + bot) * 0.5,

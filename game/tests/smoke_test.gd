@@ -7915,6 +7915,32 @@ func _run() -> void:
 	# E3/E4 ground is runout apron, and the loop's entry
 	# is dressed (rails, portal, threshold - Item 1).
 	# Two elements, two boards.
+	# Fix Pass 47 amended in place: THE LOOP IS A HOOP
+	# (the owner's photo and orbit model): a placed band
+	# standing on the ground, hole open, the road threading
+	# its base through clothoid feet - and a shallow HELIX:
+	# the descending leg lands BESIDE the ascending leg
+	# (exit lane offset one full surface width, +12.0 m,
+	# forward closure +0.6 m), ring ~49.8 m over a full
+	# 12 m surface. Two convictions ride along: the frame
+	# fold detector gained a |tan.y| arm (the twisted
+	# tangent never reverses the level up, so the frame
+	# barrel-rolled and priced the top half as a crest),
+	# and the transported frame now UNTWISTS along the
+	# run-out (tilt 35 deg at the exit foot, 0 by +90 m).
+	# The twisted centreline is not a geodesic: it carries
+	# ~1 deg/m of in-plane curvature, so the piece is
+	# STEERED through its steep arc - the recorder's
+	# steep-zone law is in-plane now (the yaw bearing is
+	# not a steering signal on an inverted wall), and the
+	# measured band is CLEAN 18-26 (17 separates at the
+	# crown, 12 on the approach; floored entry washes off
+	# the descent - the board says LIFT FOR THE DROP).
+	# The bowl's exit is re-laid (Addition 2): the turn
+	# budget totals exactly 360.0 deg (was 373.8 - the
+	# 18.2 deg heading snap in 3 m at the exit is gone,
+	# per-step deltas <= 0.07 deg), drop 6.54 m, and a
+	# lift-out cruise tracks the runout dead straight.
 	main._set_track("funlab")
 	main.test_brake = 0.0
 	var fun66: Dictionary = main.track_data["funlab"]
@@ -7953,26 +7979,32 @@ func _run() -> void:
 			boards_ok66 = false
 	check(boards_ok66,
 		"stage66: two roadside boards carry the element names and their measured advisories")
-	# Fix Pass 46 (Item 1): the loop's entry dressing
-	# exists - the ring rails that draw the path, the
-	# portal at the mouth, the threshold chequer - under
-	# the funlab root, beside the boards.
-	check(froot66.get_node_or_null("LoopRails") != null
-			and froot66.get_node_or_null("LoopPortal") != null
-			and froot66.get_node_or_null("LoopThreshold") != null,
-		"stage66: the loop's entry is dressed - rails, portal and threshold on the funlab root")
+	# Fix Pass 47: the hoop's body exists - the band
+	# (cheeks + outer rim), the lattice gussets, the
+	# footing pad, the threshold chequer - under the
+	# funlab root, beside the boards; FP46's rails and
+	# portal (a sign on a wall) are gone.
+	check(froot66.get_node_or_null("LoopHoop") != null
+			and froot66.get_node_or_null("LoopLattice") != null
+			and froot66.get_node_or_null("LoopPad") != null
+			and froot66.get_node_or_null("LoopThreshold") != null
+			and froot66.get_node_or_null("LoopRails") == null
+			and froot66.get_node_or_null("LoopPortal") == null,
+		"stage66: the loop stands as a hoop - band, lattice, pad and threshold on the funlab root")
 	# The built shape, read off the shipped arrays: the
 	# loop's unwrapped pitch (from the tangents) passes
-	# 180 deg at mid-span and the crown stands ~26 m over
-	# the entry; the bowl turns a full circle and more
-	# inside its span (the unwrapped heading gains
-	# 373.8 deg), pays out 6.70 m of height, rides at its
-	# 48 deg design bank mid-span (up.y = cos 48 = 0.669)
-	# and is flat again 8 m past its end. (Fix Pass 46:
-	# these replace the barrel roll's and the helix's
-	# shape checks, deleted with those elements; with the
-	# -2*TAU bank-offset chain gone, the bowl's banks are
-	# stored plain and read plain.)
+	# 180 deg at mid-span and the crown stands ~49.8 m
+	# over the entry; the helix's base closure lands the
+	# exit lane one surface width beside the entry lane
+	# (side +12.0 m, forward +0.6 m, headings identical)
+	# and the transported frame untwists along the
+	# run-out (level again by exit+90). The bowl turns
+	# exactly a full circle inside its span (360.0 deg,
+	# FP47's re-laid budget), pays out 6.54 m of height,
+	# rides at its 48 deg design bank mid-span
+	# (up.y = cos 48 = 0.669), is flat again 8 m past its
+	# end, and its heading steps through the exit without
+	# a snap (max per-step delta <= 0.07 deg, measured).
 	var tan66: Array = fun66["tan"]
 	var phi66: Array = []
 	var prev66: float = 0.0
@@ -7994,8 +8026,25 @@ func _run() -> void:
 	for ci66: int in range(int(e1_66[1]), int(e1_66[2]) + 1):
 		crown66 = maxf(crown66, (fun66["pts"][ci66] as Vector3).y)
 	var entry_y66: float = float(main._frame_at(float(e1_66[1]))["pos"].y)
-	check(crown66 - entry_y66 > 25.0,
+	check(crown66 - entry_y66 > 45.0,
 		"stage66: the loop's crown stands %.1f m over its entry" % (crown66 - entry_y66))
+	# Fix Pass 47: the helix's base closure and the
+	# untwist, read off the frames: exit lane beside the
+	# entry lane, exit heading the entry heading, and the
+	# frame level again 90 m past the exit foot.
+	var fre1_66: Dictionary = main._frame_at(float(e1_66[1]))
+	var frx1_66: Dictionary = main._frame_at(float(e1_66[2]))
+	var dcl66: Vector3 = Vector3(frx1_66["pos"]) - Vector3(fre1_66["pos"])
+	var side_cl66: float = dcl66.dot(Vector3(fre1_66["side"]))
+	var fwd_cl66: float = dcl66.dot(Vector3(fre1_66["tan"]))
+	var hdg_cl66: float = absf(rad_to_deg(wrapf(
+		main._frame_yaw(frx1_66["tan"]) - main._frame_yaw(fre1_66["tan"]), -PI, PI)))
+	var fru66: Dictionary = main._frame_at(float(e1_66[2]) + 90.0)
+	var tilt_u66: float = rad_to_deg(acos(clampf((fru66["up"] as Vector3).y, -1.0, 1.0)))
+	check(side_cl66 > 10.5 and side_cl66 < 13.5 and absf(fwd_cl66) < 2.5
+			and hdg_cl66 < 1.0 and tilt_u66 < 2.0,
+		"stage66: the hoop's lanes sit side by side at the base (side %+.1f m, forward %+.1f m, heading delta %.2f deg) and the frame is level by exit+90 (tilt %.1f deg)" % [
+			side_cl66, fwd_cl66, hdg_cl66, tilt_u66])
 	var yaw66: float = 0.0
 	var prev_y66: float = 0.0
 	for yi66: int in range(int(elems66[1][1]), int(elems66[1][2]) + 1):
@@ -8007,9 +8056,21 @@ func _run() -> void:
 	var drop66: float = float(main._frame_at(float(elems66[1][1]))["pos"].y) \
 		- float(main._frame_at(float(elems66[1][2]))["pos"].y)
 	var midb66: Dictionary = main._frame_at((float(elems66[1][1]) + float(elems66[1][2])) * 0.5)
-	check(rad_to_deg(yaw66) > 360.0 and drop66 > 4.0 and drop66 < 8.0,
+	check(absf(rad_to_deg(yaw66) - 360.0) < 3.0 and drop66 > 4.0 and drop66 < 8.0,
 		"stage66: the bowl turns %.0f deg in-span and pays out %.2f m of height (a descending full-turn spiral)" % [
 			rad_to_deg(yaw66), drop66])
+	# Fix Pass 47 (Addition 2): the exit's heading steps -
+	# no snap where the snap used to live: the largest
+	# single-station heading change across the exit seam
+	# (was 9.2 deg in one step, 18.2 deg over three).
+	var snap66: float = 0.0
+	var pyaw66: float = main._frame_yaw(tan66[int(elems66[1][2]) - 4])
+	for sy66: int in range(int(elems66[1][2]) - 3, int(elems66[1][2]) + 11):
+		var cy66: float = main._frame_yaw(tan66[sy66])
+		snap66 = maxf(snap66, absf(rad_to_deg(wrapf(cy66 - pyaw66, -PI, PI))))
+		pyaw66 = cy66
+	check(snap66 < 1.0,
+		"stage66: the bowl's heading steps through its exit without a snap (max step %.2f deg)" % snap66)
 	check(absf((midb66["up"] as Vector3).y - 0.669) < 0.07
 			and absf(rad_to_deg(float(midb66["bank"])) - 48.0) < 2.0,
 		"stage66: the bowl rides at its 48 deg design bank mid-span (up.y %.3f)" % (midb66["up"] as Vector3).y)
@@ -8065,7 +8126,7 @@ func _run() -> void:
 		main.test_throttle = 0.0
 		main.test_boost = false
 		main.debug_warp_to_s(maxf(s0 - 60.0, 5.0))
-		var r: Dictionary = {"sep": false, "sep_bank": -1.0, "hung": false,
+		var r: Dictionary = {"sep": false, "sep_bank": -1.0, "sep_s": -1.0, "hung": false,
 			"max_phi": -1.0, "max_bank": -1.0, "max_lat": 0.0, "max_s": -1.0,
 			"exit_v": -1.0, "airs": 0, "done": false, "wedged": false}
 		var prev_mode66: int = main.mode
@@ -8078,11 +8139,34 @@ func _run() -> void:
 				main.debug_pin_speed(entry_v)
 			else:
 				var fr_q66: Dictionary = main._frame_at(main.car_s)
-				var fold66: float = absf(rad_to_deg(asin(clampf((fr_q66["tan"] as Vector3).y, -1.0, 1.0))))
-				if fold66 < 75.0:
+				# Fix Pass 47: the steep-zone steering law
+				# is IN-PLANE. The old gate centred the
+				# wheel past 75 deg of fold - right for
+				# FP43's planar ring, whose centreline is
+				# a geodesic (no steering needed, none
+				# possible in yaw). The twisted hoop's
+				# centreline carries ~1 deg/m of in-plane
+				# (geodesic) curvature: the car must be
+				# steered through the arc, and the yaw
+				# bearing the autopilot reads is not a
+				# steering signal on an inverted wall
+				# (its projection swings and wraps). In
+				# the steep regime (the load law's own
+				# boundary, up.y < 0.5) the recorder now
+				# steers the quantities the driver sees:
+				# the in-plane slip of the forward against
+				# the tangent, and the lane. Everywhere
+				# else the yaw autopilot stands, unchanged
+				# (the bowl, at up.y 0.67, never enters
+				# this branch).
+				if (fr_q66["up"] as Vector3).y >= 0.5:
 					autopilot_steer(0.0)
 				else:
-					main.wheel_angle = 0.0
+					var d66: Vector3 = main.drive_fwd
+					var slip66: float = atan2(d66.dot(fr_q66["side"] as Vector3),
+						d66.dot(fr_q66["tan"] as Vector3))
+					var des66: float = -asin(clampf(main.car_lat * 0.08, -0.35, 0.35))
+					main.wheel_angle = clampf(-(slip66 - des66) * 1.6, -1.0, 1.0) * PI
 				if policy == "floor":
 					main.test_throttle = 1.0
 				elif policy == "pin":
@@ -8102,6 +8186,7 @@ func _run() -> void:
 				r["airs"] = int(r["airs"]) + 1
 				if not bool(r["sep"]) and main.car_s >= s0 - 1.0 and main.car_s <= s1 + 1.0:
 					r["sep"] = true
+					r["sep_s"] = main.car_s
 					var fr_s66: Dictionary = main._frame_at(main.car_s)
 					r["sep_bank"] = rad_to_deg(float(fr_s66["bank"]))
 			if main.mode == main.MODE_HANG:
@@ -8154,27 +8239,47 @@ func _run() -> void:
 	# exit = entry; at 16 it comes off at the crown
 	# approach; at 14 it hops over the top and falls at
 	# the exit ease).
-	var r_loop66: Dictionary = await drive66.call(elems66[0], 24.0, "floor", 3000)
-	print("stage66 loop: wedged=%s max_phi=%.1f max_s=%.1f airs=%d hung=%s exit=%.1f" % [
+	# Fix Pass 47 amended in place: the ring is the
+	# TWISTED HOOP (see the stage header). The measured
+	# band (FP47 probes, in-plane recorder): pins 18-26
+	# go around CLEAN - no separation, no air, max lat
+	# 2.08 - steered through the twist; at 17 the crown
+	# lets go (the static floor is sqrt(g*29) = 16.9);
+	# at 12 the car comes off on the crown approach.
+	# FP43's floored claim is RETIRED: a floored entry
+	# arrives at the descent too fast for the twist's
+	# in-plane demand and washes off it - the board
+	# says LIFT FOR THE DROP, and the stage asserts the
+	# pinned band instead.
+	var r_loop66: Dictionary = await drive66.call(elems66[0], 24.0, "pin", 4000)
+	print("stage66 loop: wedged=%s max_phi=%.1f max_s=%.1f airs=%d hung=%s exit=%.1f max_lat=%.2f" % [
 		str(bool(r_loop66["wedged"])), float(r_loop66["max_phi"]), float(r_loop66["max_s"]),
-		int(r_loop66["airs"]), str(bool(r_loop66["hung"])), float(r_loop66["exit_v"])])
-	check(not bool(r_loop66["wedged"]) and not bool(r_loop66["hung"])
-			and float(r_loop66["max_phi"]) > 270.0 and float(r_loop66["exit_v"]) > 0.0,
-		"stage66: E1 the loop - floored at 24 it goes all the way around (max phi %.0f deg, exit %.0f m/s)" % [
-			float(r_loop66["max_phi"]), float(r_loop66["exit_v"])])
+		int(r_loop66["airs"]), str(bool(r_loop66["hung"])), float(r_loop66["exit_v"]), float(r_loop66["max_lat"])])
+	check(not bool(r_loop66["wedged"]) and not bool(r_loop66["hung"]) and not bool(r_loop66["sep"])
+			and int(r_loop66["airs"]) == 0 and float(r_loop66["max_lat"]) < 3.5
+			and float(r_loop66["max_phi"]) > 270.0 and absf(float(r_loop66["exit_v"]) - 24.0) < 0.5,
+		"stage66: E1 the loop - held at 24 it goes all the way around CLEAN, steered through the twist (max phi %.0f deg, max lat %.1f m)" % [
+			float(r_loop66["max_phi"]), float(r_loop66["max_lat"])])
 	var r_l18_66: Dictionary = await drive66.call(elems66[0], 18.0, "pin", 4000)
 	print("stage66 loop 18: sep=%s airs=%d hung=%s exit=%.1f" % [
 		str(bool(r_l18_66["sep"])), int(r_l18_66["airs"]), str(bool(r_l18_66["hung"])), float(r_l18_66["exit_v"])])
 	check(not bool(r_l18_66["sep"]) and not bool(r_l18_66["hung"]) and int(r_l18_66["airs"]) == 0
 			and absf(float(r_l18_66["exit_v"]) - 18.0) < 0.5,
-		"stage66: E1 the loop - held at 18 it goes around CLEAN, no separation (FP41's defect band is retired)")
-	var r_slow66: Dictionary = await drive66.call(elems66[0], 10.0, "pin", 4000)
-	print("stage66 loop slow: sep=%s hung=%s wedged=%s max_phi=%.1f exit=%.1f" % [
-		str(bool(r_slow66["sep"])), str(bool(r_slow66["hung"])), str(bool(r_slow66["wedged"])),
+		"stage66: E1 the loop - held at 18 (the board's floor) it goes around CLEAN, no separation")
+	var r_l17_66: Dictionary = await drive66.call(elems66[0], 17.0, "pin", 4000)
+	print("stage66 loop 17: sep=%s sep_s=%.1f hung=%s wedged=%s" % [
+		str(bool(r_l17_66["sep"])), float(r_l17_66["sep_s"]), str(bool(r_l17_66["hung"])), str(bool(r_l17_66["wedged"]))])
+	check(bool(r_l17_66["sep"]) and bool(r_l17_66["hung"]) and not bool(r_l17_66["wedged"])
+			and float(r_l17_66["sep_s"]) > float(elems66[0][1]) + 0.4 * (float(elems66[0][2]) - float(elems66[0][1])),
+		"stage66: E1 the loop - held at 17 the crown lets go (sep at s %.0f) and the crane collects it" % float(r_l17_66["sep_s"]))
+	var r_slow66: Dictionary = await drive66.call(elems66[0], 12.0, "pin", 4000)
+	print("stage66 loop slow: sep=%s sep_s=%.1f hung=%s wedged=%s max_phi=%.1f exit=%.1f" % [
+		str(bool(r_slow66["sep"])), float(r_slow66["sep_s"]), str(bool(r_slow66["hung"])), str(bool(r_slow66["wedged"])),
 		float(r_slow66["max_phi"]), float(r_slow66["exit_v"])])
 	check(bool(r_slow66["sep"]) and bool(r_slow66["hung"]) and not bool(r_slow66["wedged"])
+			and float(r_slow66["sep_s"]) < (float(elems66[0][1]) + float(elems66[0][2])) * 0.5
 			and float(r_slow66["exit_v"]) < 0.0,
-		"stage66: E1 the loop - held at 10 the crown lets go and the crane collects it (no wedge at any speed)")
+		"stage66: E1 the loop - held at 12 it comes off on the crown approach (sep at s %.0f, no wedge at any speed)" % float(r_slow66["sep_s"]))
 	main.debug_set_hang_dangle()
 	main.pend_th_f = 0.0
 	main.pend_th_l = 0.0
@@ -8220,6 +8325,45 @@ func _run() -> void:
 	check(not bool(r_b32_66["sep"]) and not bool(r_b32_66["hung"])
 			and absf(float(r_b32_66["exit_v"]) - 32.0) < 0.5 and float(r_b32_66["max_lat"]) < 3.5,
 		"stage66: E2 the spiral bowl - held at 32 (the board's top edge) it sheds height, not the car (max lat %.1f m)" % float(r_b32_66["max_lat"]))
+	# Fix Pass 47 (Addition 2): the exit in driver terms -
+	# the lift-out cruise: pinned 23 to the ramp-out,
+	# then OFF the throttle and rolled out onto the
+	# runout. It must track the exit straight dead
+	# straight (max |lat| < 2 m from 20 m before the
+	# exit to 90 m past it, no air, no crane). Before
+	# the re-lay this drive ran across the whole apron
+	# and off its far edge.
+	main._set_track("funlab")
+	main.test_brake = 0.0
+	main.test_throttle = 0.0
+	main.test_boost = false
+	main.debug_warp_to_s(float(elems66[1][1]) - 60.0)
+	var crz_lat66: float = 0.0
+	var crz_airs66: int = 0
+	var crz_prev66: int = main.mode
+	var crz_g66: int = 0
+	var crz_end66: float = -1.0
+	while crz_g66 < 9000:
+		autopilot_steer(0.0)
+		if main.car_s < float(elems66[1][2]) - 40.0:
+			main.debug_pin_speed(23.0)
+			main.test_throttle = 0.0
+		else:
+			main.test_throttle = 0.0
+		await physics_frame
+		crz_g66 += 1
+		if main.mode == main.MODE_AIR and crz_prev66 == main.MODE_DRIVE:
+			crz_airs66 += 1
+		crz_prev66 = main.mode
+		if main.car_s >= float(elems66[1][2]) - 20.0:
+			crz_lat66 = maxf(crz_lat66, absf(main.car_lat))
+		if main.car_s >= float(elems66[1][2]) + 90.0 or main.mode == main.MODE_HANG or main.mode == main.MODE_DONE:
+			crz_end66 = main.car_s
+			break
+	main.test_throttle = 0.0
+	check(main.mode == main.MODE_DRIVE and crz_airs66 == 0 and crz_lat66 < 2.0
+			and crz_end66 >= float(elems66[1][2]) + 90.0,
+		"stage66: E2 the spiral bowl - the lift-out cruise rolls onto the runout dead straight (max lat %.2f m through the exit zone)" % crz_lat66)
 	# the finish: from E2's mouth the course runs the
 	# bowl and the runout apron home under power (pinned
 	# 22, mid-band), and the race completes on TRK2.
@@ -8784,15 +8928,19 @@ func _run() -> void:
 	var min_up69: float = 2.0
 	var g69: int = 0
 	while g69 < 4000:
-		# stage 66's fold guard: the PD law steers by a yaw
-		# that folds with the road, so past 75 deg of fold
-		# the wheel centres and the ring carries the car.
+		# stage 66's steering law (Fix Pass 47: in-plane
+		# in the steep regime - the twisted hoop must be
+		# steered through its arc, and the yaw bearing is
+		# not a steering signal on an inverted wall).
 		var fr69: Dictionary = main._frame_at(main.car_s)
-		var fold69: float = absf(rad_to_deg(asin(clampf((fr69["tan"] as Vector3).y, -1.0, 1.0))))
-		if fold69 < 75.0:
+		if (fr69["up"] as Vector3).y >= 0.5:
 			autopilot_steer(0.0)
 		else:
-			main.wheel_angle = 0.0
+			var d69: Vector3 = main.drive_fwd
+			var slip69: float = atan2(d69.dot(fr69["side"] as Vector3),
+				d69.dot(fr69["tan"] as Vector3))
+			var des69: float = -asin(clampf(main.car_lat * 0.08, -0.35, 0.35))
+			main.wheel_angle = clampf(-(slip69 - des69) * 1.6, -1.0, 1.0) * PI
 		main.debug_pin_speed(24.0)
 		await physics_frame
 		g69 += 1
