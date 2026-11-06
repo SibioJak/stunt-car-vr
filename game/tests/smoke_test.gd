@@ -7978,6 +7978,50 @@ func _run() -> void:
 	# ALL THE WAY. The bowl is untouched (its span slid
 	# -62 stations with the loop's shrink; every bowl
 	# assertion below is span-relative and unamended).
+	# Fix Pass 49 amended in place: SPATIAL SEPARATION
+	# (the owner's FP48 verdict: the loop "works, it
+	# ain't pretty" - its descent came down INTO the
+	# entrance road, "trimming it almost in half", and
+	# the bowl was "great until ending", its exit
+	# threading under its own first metres). THE LOOP:
+	# the drift is GATED - no sideways travel below
+	# th = 1.10 rad on either leg, the whole 6 m earned
+	# across the upper ring - so the descent comes down
+	# BESIDE the entrance road: measured on the built
+	# frames, the descending surface's overlap into the
+	# entry lane's span is 0.00 m below h 8 and 0.04
+	# below h 12 (FP48: 0.52 / 0.85), asserted below.
+	# The pins re-measure to FP48's shape exactly: 20 /
+	# 22 / 24 / 26 CLEAN (exit = entry, max lat 0.54 -
+	# the gated ring steers easier than FP48's 0.98),
+	# 13 separates in-span on the crown approach and
+	# finishes dirty, a floored entry goes around
+	# (exit 40.0). The board is unchanged - its claims
+	# are still the measured ones. THE BOWL: convicted
+	# by measurement - the spiral pays out 6.54 m a
+	# turn but the 48 deg bank drops 8.9 m across the
+	# ribbon's own width, so the turns interleave and
+	# the upper turn's underside cleared the exit
+	# corridor's surface by 0.41 m (its surface by
+	# 0.81 m - inside the car's height), with two of
+	# its centreline stilts standing in the lane. The
+	# fix is all in the seam zones: the bowl's first
+	# and last 50 m narrow to 4.0 half width (the
+	# facing edges retreat, the ribbons stop
+	# overlapping in plan), the ramp-out DIVES to
+	# -5.6 deg mid-unwind (the bowl now pays out
+	# 8.52 m; the drop bound below is re-derived), the
+	# ramp-out's radius walks in 26 -> 24, and the
+	# mesh's stilt rule gains a self-clearance clause.
+	# Measured after: least foreign underside over the
+	# exit corridor 3.48 m, no stilt in the corridor -
+	# both asserted below. Every bowl pin 12-34 holds
+	# (exit = entry; zone lat peaks 2.90 at 28, inside
+	# the narrowed 4.0 half width), the lift-out cruise
+	# tracks the runout at max lat 1.55, and the board
+	# is unchanged. Check arithmetic: 836 + 3 (the
+	# loop separation, the bowl clearance, the stilt
+	# audit) = 839.
 	main._set_track("funlab")
 	main.test_brake = 0.0
 	var fun66: Dictionary = main.track_data["funlab"]
@@ -8088,6 +8132,35 @@ func _run() -> void:
 			and hdg_cl66 < 1.0 and tilt_x66 < 2.0 and tilt_u66 < 2.0,
 		"stage66: the hoop's lanes sit side by side at the base (side %+.1f m, forward %+.1f m, heading delta %.2f deg) and the roll budget is closed at the exit foot (tilt %.2f deg, %.2f deg at exit+30)" % [
 			side_cl66, fwd_cl66, hdg_cl66, tilt_x66, tilt_u66])
+	# Fix Pass 49: THE SEPARATION, asserted on the built
+	# frames - the descending leg's surface stays clear
+	# of the entrance lane along the whole descent. In
+	# the entry frame, the lateral overlap of every
+	# descent station's (unwrapped pitch past 180 deg)
+	# surface interval with the entry lane's interval,
+	# at the heights where a driver reads road-space:
+	# FP48 shipped 0.52 m below h 8 and 0.85 below h 12
+	# (the descent trimming the entrance road); the
+	# gated drift measures ~zero.
+	var sep49_max8: float = 0.0
+	var sep49_max12: float = 0.0
+	for si49: int in range(int(e1_66[1]), int(e1_66[2]) + 1):
+		if float(phi66[si49]) <= 180.0:
+			continue
+		var frd49: Dictionary = main._frame_at(float(si49))
+		var reld49: Vector3 = Vector3(frd49["pos"]) - Vector3(fre1_66["pos"])
+		var latd49: float = reld49.dot(Vector3(fre1_66["side"]))
+		var hwd49: float = float(frd49["hw"])
+		var ehw49: float = float(fre1_66["hw"])
+		var ovd49: float = maxf(0.0, minf(latd49 + hwd49, ehw49)
+			- maxf(latd49 - hwd49, -ehw49))
+		if reld49.y < 8.0:
+			sep49_max8 = maxf(sep49_max8, ovd49)
+		if reld49.y < 12.0:
+			sep49_max12 = maxf(sep49_max12, ovd49)
+	check(sep49_max8 < 0.10 and sep49_max12 < 0.25,
+		"stage66: the loop's descent stays clear of the entrance road along the whole descent (surface overlap %.2f m below h 8, %.2f m below h 12)" % [
+			sep49_max8, sep49_max12])
 	var yaw66: float = 0.0
 	var prev_y66: float = 0.0
 	for yi66: int in range(int(elems66[1][1]), int(elems66[1][2]) + 1):
@@ -8099,7 +8172,9 @@ func _run() -> void:
 	var drop66: float = float(main._frame_at(float(elems66[1][1]))["pos"].y) \
 		- float(main._frame_at(float(elems66[1][2]))["pos"].y)
 	var midb66: Dictionary = main._frame_at((float(elems66[1][1]) + float(elems66[1][2])) * 0.5)
-	check(absf(rad_to_deg(yaw66) - 360.0) < 3.0 and drop66 > 4.0 and drop66 < 8.0,
+	# Fix Pass 49: the payout bound is re-derived - the
+	# exit dive pays out 8.52 m now (was 6.54).
+	check(absf(rad_to_deg(yaw66) - 360.0) < 3.0 and drop66 > 4.0 and drop66 < 9.5,
 		"stage66: the bowl turns %.0f deg in-span and pays out %.2f m of height (a descending full-turn spiral)" % [
 			rad_to_deg(yaw66), drop66])
 	# Fix Pass 47 (Addition 2): the exit's heading steps -
@@ -8120,6 +8195,74 @@ func _run() -> void:
 	var fre2_66: Dictionary = main._frame_at(float(elems66[1][2]) + 8.0)
 	check((fre2_66["up"] as Vector3).y > 0.98,
 		"stage66: the bowl's frame is flat again 8 m past its end (up.y %.2f)" % (fre2_66["up"] as Vector3).y)
+	# Fix Pass 49: THE BOWL'S SEPARATION, asserted on
+	# the built frames - over the exit corridor (the
+	# bowl's last 50 m and the runout's first 90 m), no
+	# foreign ribbon's underside comes within 2.5 m of
+	# the corridor's surface (FP48 measured 0.41 m: the
+	# upper turn's skirt at head height over the lane),
+	# and no stilt post stands in the bowl/exit
+	# corridor (the mesh rule's self-clearance clause,
+	# audited on the BUILT posts: a built post every
+	# 10 m whose plan position falls inside a corridor
+	# station's ribbon that lies at least a metre
+	# below the post's top).
+	var bc0_49: int = int(elems66[1][2]) - 50
+	var bc1_49: int = mini(int(elems66[1][2]) + 90, tan66.size() - 2)
+	var csamp49: Array = []
+	for ci49: int in range(bc0_49, bc1_49 + 1):
+		var frc49: Dictionary = main._frame_at(float(ci49))
+		for lo49: float in [-1.0, -0.5, 0.0, 0.5, 1.0]:
+			csamp49.append(Vector3(frc49["pos"]) + Vector3(frc49["side"]) * (lo49 * float(frc49["hw"])))
+	var bclr_49: float = 1e9
+	for fj49: int in tan66.size():
+		if fj49 >= bc0_49 - 20 and fj49 <= bc1_49 + 20:
+			continue
+		var frj49: Dictionary = main._frame_at(float(fj49))
+		for lo49b: float in [-1.0, -0.5, 0.0, 0.5, 1.0]:
+			var und49: Vector3 = Vector3(frj49["pos"]) + Vector3(frj49["side"]) * (lo49b * float(frj49["hw"])) - Vector3(frj49["up"]) * 0.45
+			for cp49: Vector3 in csamp49:
+				if Vector2(und49.x - cp49.x, und49.z - cp49.z).length() < 1.2:
+					bclr_49 = minf(bclr_49, und49.y - cp49.y)
+	check(bclr_49 > 2.5,
+		"stage66: the bowl's exit is separated - the least foreign underside over the exit corridor clears the road by %.2f m" % bclr_49)
+	var stilts_in49: int = 0
+	var pts66: Array = fun66["pts"]
+	# FINISHER CORRECTION (FP49): the audit as drafted re-tested
+	# the mesh clause's SUPPRESSION CONDITION on the station
+	# data, so it counted stilt 380 - whose post the clause
+	# suppresses precisely because the condition fires there
+	# (plan 4.16 m from corridor stn 559's centre, hw 4.00).
+	# A post that was never built stands nowhere; the check's
+	# sentence is about posts standing in the corridor, so a
+	# station counts only when a post was actually BUILT at
+	# it, read off the built Stilts mesh (verts within the
+	# post's own half width in plan, below its top).
+	var stilts_mesh49: ArrayMesh = null
+	var stilts_node49: Node = froot66.get_node_or_null("Stilts")
+	if stilts_node49 != null and stilts_node49 is MeshInstance3D:
+		stilts_mesh49 = (stilts_node49 as MeshInstance3D).mesh as ArrayMesh
+	var stilts_verts49: PackedVector3Array = PackedVector3Array()
+	if stilts_mesh49 != null:
+		stilts_verts49 = stilts_mesh49.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	for sj49: int in range(0, pts66.size() - 1, 10):
+		var sp49: Vector3 = pts66[sj49]
+		var built49: bool = false
+		for v49: Vector3 in stilts_verts49:
+			if v49.y < sp49.y - 0.5 and Vector2(v49.x - sp49.x, v49.z - sp49.z).length() < 0.4:
+				built49 = true
+				break
+		if not built49:
+			continue
+		for ci49b: int in range(int(elems66[1][1]) - 5, bc1_49 + 1):
+			if absi(ci49b - sj49) <= 15:
+				continue
+			var frs49: Dictionary = main._frame_at(float(ci49b))
+			if float(frs49["pos"].y) < sp49.y - 1.0 and Vector2(sp49.x - float(frs49["pos"].x), sp49.z - float(frs49["pos"].z)).length() < float(frs49["hw"]) + 0.28:
+				stilts_in49 += 1
+				break
+	check(stilts_in49 == 0,
+		"stage66: no stilt post stands in the bowl/exit corridor (%d found)" % stilts_in49)
 	# Entry states, sampled 5 m before each span: BOTH
 	# elements are now entered from the flat, unbanked -
 	# the Hot Wheels form (entry on a straight). (Fix
@@ -8318,6 +8461,17 @@ func _run() -> void:
 	# past vertical (phi 96) - stored energy cannot
 	# reach a 32.9 m crown. The board says POWER ALL
 	# THE WAY; the stage asserts the pinned band.
+	# Fix Pass 49 amended in place: the ring's drift is
+	# gated (see the stage header) and the band
+	# re-measures to the same shape - 20/22/24/26 CLEAN
+	# (exit = entry, max lat 0.54 at 26, half of FP48's
+	# 0.98: the planar lower legs leave the recorder
+	# nothing to fight on the climb), 13 separates on
+	# the crown approach and finishes dirty (7 airs,
+	# exit 13.0), 18/19 separate and hang, a floored
+	# entry goes around (exit 40.0, max lat 1.69). The
+	# board's claims stand verbatim; the three pin
+	# assertions below are unamended.
 	var r_loop66: Dictionary = await drive66.call(elems66[0], 24.0, "pin", 4000)
 	print("stage66 loop: wedged=%s max_phi=%.1f max_s=%.1f airs=%d hung=%s exit=%.1f max_lat=%.2f" % [
 		str(bool(r_loop66["wedged"])), float(r_loop66["max_phi"]), float(r_loop66["max_s"]),
@@ -8379,6 +8533,15 @@ func _run() -> void:
 	# (max lat 7.97, off the road) - the piece must be
 	# steered, and the board says so ("STEER IT"), the
 	# wall-ride's honesty carried over.
+	# Fix Pass 49 amended in place: the seam zones are
+	# separated (see the stage header) and the band
+	# re-measures whole - every pin 12-34 completes
+	# (exit = entry), the narrowed zones never see more
+	# than 2.90 m of lat (at 28 - the 4.0 half width
+	# holds with a metre to spare), and the lift-out
+	# cruise below tracks the new exit at max lat 1.55.
+	# The board's claims stand verbatim; the three pin
+	# assertions below are unamended.
 	var r_bowl66: Dictionary = await drive66.call(elems66[1], 20.0, "pin", 7000)
 	print("stage66 bowl: sep=%s airs=%d max_lat=%.1f max_bank=%.1f hung=%s exit_v=%.1f" % [
 		str(bool(r_bowl66["sep"])), int(r_bowl66["airs"]), float(r_bowl66["max_lat"]), float(r_bowl66["max_bank"]),

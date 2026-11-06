@@ -1728,7 +1728,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP48 · 2026-11-05"
+const BUILD_STAMP: String = "FP49 · 2026-11-06"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -3031,10 +3031,91 @@ func _loop_driftq47(th: float) -> float:
 	var s: float = sin(th)
 	return w * (0.25 + 0.75 * s * s) * (1.0 + 0.5 * sin(th * 0.5))
 
+func _loop_driftq49(th: float) -> float:
+	# Fix Pass 49: THE DRIFT, GATED. FP48's shape (above)
+	# lets the drift run from the entry foot, weighted
+	# late - so the descending leg spends its whole fall
+	# still travelling sideways, its surface measured
+	# (on the built frames) 0.52 m into the entrance
+	# lane's span below h 8, 0.85 below h 12, 1.61 below
+	# h 20: the loop comes down INTO the entrance road,
+	# trimming it, and at the same heights on the way up
+	# the far leg eats the driven road's width the same
+	# way - the owner's verdict ("spatial separation").
+	# The law: the descent stays clear of the entrance
+	# road along the WHOLE descent, and neither leg cuts
+	# the leg being driven. The gate: NO drift below
+	# th = 1.10 rad on either leg (the lower legs stand
+	# planar, each in its own lane's plane, like the toy
+	# ring's feet); the whole 6 m of drift is earned
+	# across the upper ring, where the legs are the
+	# ring's far sides, not each other's neighbours -
+	# the rate ramps over 0.60 rad at both ends of the
+	# open zone, flat between, symmetric about the crown
+	# so the descent mirrors the climb. Measured on the
+	# pass's prototype (an exact replica of the build
+	# integration, validated against FP48's shipped
+	# frames to the centimetre): descent surface overlap
+	# over the entry lane 0.00 m below h 8, 0.04 below
+	# h 12, 0.68 below h 20 (FP48: 0.52 / 0.85 / 1.61 -
+	# what remains above h 12 is the ring's own body
+	# over its own base, the toy's read too); peak drift
+	# rate 0.097 m per station, FP48's own peak; the
+	# ring's transported holonomy eases slightly (the
+	# counter-roll in _finalize_track absorbs what
+	# remains, as before).
+	if th <= 1.10 or th >= TAU - 1.10:
+		return 0.0
+	var g: float = 1.0
+	if th < 1.70:
+		var e1: float = clampf((th - 1.10) / 0.60, 0.0, 1.0)
+		g = e1 * e1 * e1 * (e1 * (e1 * 6.0 - 15.0) + 10.0)
+	elif th > TAU - 1.70:
+		var e2: float = clampf((TAU - 1.10 - th) / 0.60, 0.0, 1.0)
+		g = e2 * e2 * e2 * (e2 * (e2 * 6.0 - 15.0) + 10.0)
+	return g
+
 func _hoop_pt(fr: Dictionary, lat: float, upoff: float) -> Vector3:
 	return Vector3(fr["pos"]) + Vector3(fr["side"]) * lat \
 		+ Vector3(fr["up"]) * upoff
 
+
+func _bowl_hw49(s: float, s0: float, s1: float) -> float:
+	# Fix Pass 49: E2's width plan (half width at station
+	# s). The bowl's seam - its end passing under its
+	# beginning, ~185 stations apart - interleaves
+	# because the ribbon is 12 m wide on a 26-32 m
+	# radius at 48 deg of bank: the upper turn's inner
+	# edge hangs over the lower road's outer half. The
+	# seam zones narrow to 4.0 (8 m of road, the loop
+	# funnel's idiom): the bowl's first 50 m and its
+	# last 50 m, flared over 10 m at both ends of each
+	# zone. The facing edges retreat ~2 m apiece, the
+	# ribbons stop overlapping in plan at the seam, and
+	# the turns pass with clear air between their
+	# edges. Mid-bowl - the holds, the judged core -
+	# keeps the full 6.0.
+	if s >= s0 - 6.0 and s <= s0 + 50.0:
+		if s < s0 + 4.0:
+			var ua: float = clampf((s - (s0 - 6.0)) / 10.0, 0.0, 1.0)
+			var wa: float = ua * ua * ua * (ua * (ua * 6.0 - 15.0) + 10.0)
+			return lerpf(HALF_WIDTH, 4.0, wa)
+		if s > s0 + 40.0:
+			var ub: float = clampf((s - (s0 + 40.0)) / 10.0, 0.0, 1.0)
+			var wb: float = ub * ub * ub * (ub * (ub * 6.0 - 15.0) + 10.0)
+			return lerpf(4.0, HALF_WIDTH, wb)
+		return 4.0
+	if s >= s1 - 50.0 and s <= s1 + 12.0:
+		if s < s1 - 40.0:
+			var uc: float = clampf((s - (s1 - 50.0)) / 10.0, 0.0, 1.0)
+			var wc: float = uc * uc * uc * (uc * (uc * 6.0 - 15.0) + 10.0)
+			return lerpf(HALF_WIDTH, 4.0, wc)
+		if s > s1 + 2.0:
+			var ud: float = clampf((s - (s1 + 2.0)) / 10.0, 0.0, 1.0)
+			var wd: float = ud * ud * ud * (ud * (ud * 6.0 - 15.0) + 10.0)
+			return lerpf(4.0, HALF_WIDTH, wd)
+		return 4.0
+	return HALF_WIDTH
 
 func _loop_hw48(s: float, s0: float, s1: float) -> float:
 	# Fix Pass 48: E1's width plan (half width at station s,
@@ -3223,10 +3304,14 @@ func _build_funlab() -> Dictionary:
 	# by construction: crown +32.9 m, base closure side
 	# +6.0 / forward ~0.0, exit heading the entry heading.
 	# The crown's static floor is sqrt(g * 18) = 13.3 m/s.
+	# Fix Pass 49: the drift's rate shape is GATED (see
+	# _loop_driftq49) - nothing moves sideways below
+	# th = 1.10 rad on either leg, so the descent comes
+	# down BESIDE the entrance road instead of into it.
 	# Positions are integrated here in the entry frame,
 	# NOT through _gen_step: the helix's lateral drift
 	# (one narrowed surface width by the exit foot, rate
-	# shape in _loop_driftq47) is a centreline motion the
+	# shape in _loop_driftq49) is a centreline motion the
 	# generator's yaw/pitch state cannot speak. The band
 	# that renders the hoop stands in _build_loop_structure.
 	var n1_48: int = 110
@@ -3250,7 +3335,7 @@ func _build_funlab() -> Dictionary:
 	var qsum48: float = 0.0
 	for j3_48: int in n1_48:
 		var thm48: float = th1_48[j3_48] - 0.5 * TAU * w1_48[j3_48] / sum1_48
-		var qj48: float = _loop_driftq47(thm48)
+		var qj48: float = _loop_driftq49(thm48)
 		q1_48.append(qj48)
 		qsum48 += qj48
 	var dscale48: float = 6.0 / qsum48
@@ -3330,6 +3415,43 @@ func _build_funlab() -> Dictionary:
 	# New budget: ramp-in 0.500 + R 32 hold 2.500 +
 	# transition 0.837 + R 26 hold 1.822 (47.4 m, solved)
 	# + ramp-out 0.625 = TAU over ~223 m.
+	# Fix Pass 49: THE EXIT, SEPARATED (the owner's
+	# verdict: "great until ending" - the bowl's last
+	# metres run under its own first metres with the
+	# upper turn's orange skirt at head height).
+	# Convicted by measurement on the built frames: the
+	# spiral pays out 6.54 m a turn, but the 48 deg
+	# bank drops 8.9 m across the ribbon's own width -
+	# the turns INTERLEAVE like a screw thread, and at
+	# the seam (the end passing under the beginning)
+	# the upper turn's underside cleared the lower road
+	# by 0.41 m, its surface by 0.81 m - inside the
+	# car's own height. The core (ramp-in, holds, the
+	# 48 deg bank, the neutral speeds) is untouched;
+	# the separation is bought in the seam zones,
+	# three ways at once: (1) THE SEAM ZONES NARROW -
+	# the bowl's first and last 50 m run at 4.0 half
+	# width (see _bowl_hw49), so the facing edges
+	# retreat ~2 m apiece and the ribbons stop
+	# overlapping in plan where they cross; (2) THE
+	# EXIT DIVES - the ramp-out's pitch walks down to
+	# -5.6 deg mid-unwind before returning to 0 at the
+	# exit station, paying out ~2.0 m of extra drop
+	# exactly where the seam pairing lives (the bowl
+	# now pays out 8.52 m in all); (3) THE RADIUS
+	# WALKS IN 26 -> 24 across the unwind, pulling the
+	# exit line down and away from the upper turn.
+	# Measured after: the least foreign underside
+	# clearance over the whole exit corridor is
+	# 3.48 m (FP48: 0.41 m) - real space, the car
+	# passing under the bowl's first hold with metres
+	# to spare. The yaw budget still totals exactly
+	# TAU: the R 26 hold below is solved against the
+	# ramp-out's actual rate sum, as FP47's was. The
+	# generic stilt rule gains a self-clearance clause
+	# in the same pass (see _build_track_meshes): the
+	# upper turn's centreline posts no longer spear
+	# the exit lane below (two posts stood in it).
 	var om32_46: float = 1.0 / 32.0
 	var om26_46: float = 1.0 / 26.0
 	var beta2_46: float = deg_to_rad(48.0)
@@ -3337,9 +3459,25 @@ func _build_funlab() -> Dictionary:
 	var prate2_46: float = deg_to_rad(2.0) / 32.0
 	var brate2o_47: float = beta2_46 / 40.0
 	var prate2o_47: float = deg_to_rad(2.0) / 40.0
+	# Fix Pass 49: the ramp-out's chunks - yaw share
+	# factors over walking radii, and the dive's pitch
+	# targets at each chunk's end (from the hold's
+	# -2 deg): down to -4.0, held, and back to 0.0 at
+	# the exit station, each chunk's phi rate sized to
+	# land on its target inside the chunk.
+	var ro_f49: Array = [0.875, 0.625, 0.375, 0.125, 0.03]
+	var ro_r49: Array = [25.5, 25.0, 24.5, 24.0, 24.0]
+	var ro_p49: Array = [deg_to_rad(-4.2), deg_to_rad(-5.6),
+		deg_to_rad(-5.6), deg_to_rad(-3.0), 0.0]
+	var ro49: Array = []
+	var ro_sum49: float = 0.0
+	for rc49: int in 5:
+		var rr49: float = float(ro_f49[rc49]) / float(ro_r49[rc49])
+		ro49.append(rr49)
+		ro_sum49 += 8.0 * rr49
 	var h2_47: float = (TAU - (0.5 + 80.0 * om32_46
 		+ 24.0 * (om32_46 + om26_46) * 0.5
-		+ 8.0 * om26_46 * (0.875 + 0.625 + 0.375 + 0.125 + 0.03))) / om26_46
+		+ ro_sum49)) / om26_46
 	var e2_s0: float = float(b_pts.size() - 1)
 	_walk(8, om32_46 * 0.125, deg_to_rad(-2.0), beta2_46, false, prate2_46, brate2_46)
 	_walk(8, om32_46 * 0.375, deg_to_rad(-2.0), beta2_46, false, prate2_46, brate2_46)
@@ -3348,11 +3486,16 @@ func _build_funlab() -> Dictionary:
 	_walk(80, om32_46, deg_to_rad(-2.0), beta2_46, false)
 	_walk(24, (om32_46 + om26_46) * 0.5, deg_to_rad(-2.0), beta2_46, false)
 	_walkf(h2_47, om26_46, deg_to_rad(-2.0), beta2_46, false)
-	_walk(8, om26_46 * 0.875, 0.0, 0.0, false, prate2o_47, brate2o_47)
-	_walk(8, om26_46 * 0.625, 0.0, 0.0, false, prate2o_47, brate2o_47)
-	_walk(8, om26_46 * 0.375, 0.0, 0.0, false, prate2o_47, brate2o_47)
-	_walk(8, om26_46 * 0.125, 0.0, 0.0, false, prate2o_47, brate2o_47)
-	_walk(8, om26_46 * 0.03, 0.0, 0.0, false, prate2o_47, brate2o_47)
+	# Fix Pass 49: the ramp-out walks (radius walking
+	# in, pitch diving and returning - see the note
+	# above); each chunk's phi rate is sized to reach
+	# its target inside its 8 m.
+	var ro_prev49: float = deg_to_rad(-2.0)
+	for rc49b: int in 5:
+		var tgt49: float = float(ro_p49[rc49b])
+		var pr49: float = maxf(absf(tgt49 - ro_prev49) / 8.0, 0.0001)
+		_walk(8, float(ro49[rc49b]), tgt49, 0.0, false, pr49, brate2o_47)
+		ro_prev49 = tgt49
 	_gen_yaw -= TAU
 	_gen_bank = 0.0
 	elements.append(["E2 THE SPIRAL BOWL", e2_s0, float(b_pts.size() - 1), 22.0, "STEER IT - HOLDS 14-32 - NEUTRAL NEAR 18"])
@@ -3371,12 +3514,21 @@ func _build_funlab() -> Dictionary:
 	var e1w1_48: float = float(elements[0][2])
 	for wi48: int in b_wid.size():
 		b_wid[wi48] = _loop_hw48(float(wi48), e1w0_48, e1w1_48)
+	# Fix Pass 49: E2's width plan over the same array
+	# (the zones do not intersect E1's neighbourhood).
+	var e2w0_49: float = float(elements[1][1])
+	var e2w1_49: float = float(elements[1][2])
+	for wi49: int in b_wid.size():
+		var bw49: float = _bowl_hw49(float(wi49), e2w0_49, e2w1_49)
+		if bw49 < HALF_WIDTH:
+			b_wid[wi49] = bw49
 	var feats: Dictionary = {
 		"gap_s0": -1.0, "gap_s1": -1.0,
 		"gap2_s0": -1.0, "gap2_s1": -1.0,
 		"ext_s0": -1.0, "sweeper_s0": -1.0, "sweeper_s1": -1.0,
 		"stairs_s0": -1.0, "stairs_s1": -1.0,
 		"hoop_span": [e1_s0, float(elements[0][2])],
+		"self_clear": true,
 		"elements": elements}
 	var d: Dictionary = _finalize_track(false, feats)
 	d["root"] = root
@@ -4160,8 +4312,34 @@ func _build_track_meshes(d: Dictionary) -> void:
 		# the loop span (plus a margin) the band stands on
 		# its own footing pad; a centreline post there
 		# would spear the hole the driver must see through.
+		# Fix Pass 49: the SELF-CLEARANCE clause (funlab
+		# only, features.self_clear): a stilt is also
+		# suppressed when its post would pierce ANOTHER
+		# part of the same course on its way down - a
+		# station far along the ribbon whose centreline
+		# passes within its own half width (+ the post's
+		# half) of the stilt's plan position, at least a
+		# metre below the stilt's top. Convicted on the
+		# funlab: the spiral bowl's upper-turn posts stood
+		# in the exit lane below (the seam again - the
+		# same spatial-separation disease as the ribbon's
+		# own interleave, in furniture). Same-height
+		# neighbours (the loop's side-by-side lanes) are
+		# saved by the metre-below clause; a post under a
+		# road that passes OVERHEAD is never touched,
+		# since the post only descends.
 		var hoop47: Array = d["features"].get("hoop_span", [])
-		if i % 10 == 0 and not (hoop47.size() == 2
+		var stilt_ok49: bool = true
+		if i % 10 == 0 and bool(d["features"].get("self_clear", false)):
+			for j49: int in t_pts.size():
+				if absi(j49 - i) <= 15:
+					continue
+				var pj49: Vector3 = t_pts[j49]
+				if pj49.y < p0.y - 1.0 and Vector2(pj49.x - p0.x,
+						pj49.z - p0.z).length() < float(t_wid[j49]) + 0.28:
+					stilt_ok49 = false
+					break
+		if i % 10 == 0 and stilt_ok49 and not (hoop47.size() == 2
 				and float(i) > float(hoop47[0]) - 4.0
 				and float(i) < float(hoop47[1]) + 4.0):
 			var top: Vector3 = p0

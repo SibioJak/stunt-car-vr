@@ -7309,3 +7309,98 @@ at the exit foot — level now, by construction and
 by measurement — and the clean base from the
 cockpit on the run-in. Still unverified until he
 drives it.
+
+## Fix Pass 49 — SPATIAL SEPARATION (the descent beside the entrance road, the bowl’s exit clear of its own rim)
+comes down beside the entrance road; the bowl's exit clears the
+bowl's own first metres. Owner's verdict on FP48 (headset, still,
+36 s video): the loop "works" - "it ain't pretty... still pushing
+in too far" (decoded by the owner: the descent comes down "into the
+entrance road, trimming it almost in half"; driving it "cuts the
+width of road in half during loop"), and the bowl (his "corkscrew")
+is "great until ending. Builders are having issue with spatial
+separation." His reference: a toy standing ring - entry and exit
+lanes passing whole, side by side, at the base, the ring's
+structure never across a lane. Rider, verbatim: "don't make it
+worse you bastards!" - every FP48 win below is protected and
+re-measured after the move.
+ITEM 1 - THE LOOP: the descent trims the entrance road. CONVICTED
+by measurement on the built frames (the descending surface's
+lateral overlap into the entrance lane's span): 0.52 m below h 8,
+0.85 below h 12, 1.61 below h 20 - FP48's drift shape held the
+descent 1.2-2.4 m inside its full offset through the whole fall, so
+the ring's body hung over the lane it should stand beside. FIX: the
+drift is GATED (_loop_driftq49) - zero sideways travel below
+th = 1.10 rad on either leg (the lower ~8.5 m of each leg planar,
+each in its own lane's plane), the whole 6 m of drift earned across
+the upper ring, the rate ramping over 0.60 rad at both ends of the
+open zone (peak rate unchanged, 0.097 m/station; Bishop holonomy
+eases -20.6 -> -19.2 deg). MEASURED AFTER: overlap 0.00 m below
+h 8, 0.04 below h 12 (0.68 below h 20 is the ring's own body over
+its own base). The closure is untouched (side +6.00 m, forward
+-0.01 m), the crown measures 32.92 m, roll at both feet 0 deg.
+THE DRIVES (stage-66 recorder, pinned, through the exit): 13
+separates on the crown approach (s 160), 7 airs, pinballs back on
+and FINISHES dirty at entry speed - no crane, no wedge; 15
+separates late on the descent and finishes; 16/17 clean; 18/19
+separate and hang (the marginal zone, same character as FP48);
+20/22/24/26 CLEAN, out at entry speed, max lat 0.48-0.54 (FP48:
+0.98 - the gated ring steers easier); a FLOORED entry goes around,
+exit 40.0, max lat 1.69 (FP48: 39.6, 3.46). The board stands
+verbatim - CLEAN 20-26, POWER ALL THE WAY is still the measured
+truth.
+ITEM 2 - THE SPIRAL BOWL: the exit threads under its own rim.
+CONVICTED by measurement: the spiral pays out 6.54 m a turn while
+the 48 deg bank drops 8.9 m across the ribbon's own width, so
+consecutive turns overlap in plan like a screw thread, and the
+first metres' UNDERSIDE cleared the exit corridor's surface by
+0.41 m (its surface by 0.81 m - inside the car's height) where the
+exit passes under them; the bowl's centreline stilts at stations
+370/380 stood in the exit lane / on its edge. FIX (the bowl's core
+- ramp-in, holds, 48 deg bank, neutral ~18 - untouched): (a) the
+bowl's first and last 50 m narrow to 4.0 half width (_bowl_hw49),
+so the facing ribbons no longer overlap in plan at either seam;
+(b) the ramp-out DIVES (chunk-end pitch targets to -5.6 deg
+mid-unwind, back to flat at the exit station) and its radius walks
+in 26 -> 24, so the exit leaves lower and turns away - the bowl
+pays out 8.52 m now (stage 66's drop bound re-derived and flagged
+in place, < 9.5); (c) the mesh's stilt rule gains a SELF-CLEARANCE
+clause (funlab-only flag): a post is suppressed when a far
+station's road runs beneath its top - the 370/380 posts are gone
+from the built mesh. MEASURED AFTER: least foreign underside over
+the exit corridor 3.48 m (was 0.41); least foreign surface inside
+the corridor slab 3.99 m; no stilt in the corridor. THE DRIVES:
+every pin 12-34 completes (out at entry speed, max bank 48); the
+narrowed zones never see more than 2.90 m of lat (at 28 - the 4.0
+half width holds with a metre to spare); the lift-out cruise tracks
+the new exit and runout airborne-free at max lat 1.55 (bound 2.0);
+the finish drive completes. The board stands verbatim - HOLDS
+14-32, NEUTRAL NEAR 18 is still the measured truth.
+Re-derived numbers (flagged in place): the bowl's payout 6.54 ->
+8.52 m; the funlab is 823 stations (was 824 - the bowl's hold
+shortens as its ramp-out turns tighter). Everything else the suite
+asserts about TRK2 is span-relative and unamended. Check
+arithmetic: 836 + 3 new stage-66 checks (the loop separation, the
+bowl clearance, the stilt audit) = 839.
+Gates: GDScript preflight (engine import + boot) clean; SMOKE
+ALL 839; API GUARD ALL 71. Render proof: CHECK PHASE
+172 of 173 (the sole FAIL the standing wheel-hub reach
+artifact, every baseline since FP31) AND CAPTURE
+REGENERATION COMPLETED this pass - the archived
+tests/*.png are FP49 frames, the stamp view included.
+FINISHER NOTE on the stilt audit: the stage-66 audit
+as drafted re-tested the mesh clause’s suppression
+condition on the station data and so counted stilt
+380 - a post the clause suppresses precisely because
+that condition fires (plan 4.16 m from the corridor
+centre, ribbon hw 4.00). The shipped audit reads the
+BUILT posts off the Stilts mesh; on the built mesh no
+post stands in the corridor, and the check passes on
+that evidence. The geometry was never at fault; the
+audit’s bookkeeping was. Proof frames (driver's eye / external, GL): the
+loop approach with the entrance road whole and the descent beside
+it; the ring from outside standing on its pad, lanes side by side
+at the base; the bowl seam from the driver's eye - the upper turn
+overhead with clear air under it, its posts beside the lane; the
+exit running out onto a plain apron. Whether the separation READS
+clean from the seat is the owner's verdict, still owed - the
+numbers and the frames say the roads no longer share space.
