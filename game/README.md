@@ -7183,3 +7183,129 @@ bends up the band's inside with the exit lane
 coming down beside it), the band from the seat,
 and the bowl's exit flow. Still unverified until
 he drives it.
+
+## Fix Pass 48 — THE HOOP, RIGHT-SIZED (the roll closes inside the element, the base built clean)
+
+THE OWNER'S VERDICT ON FP47, from the seat, stills
+and a 31 s drive video: "we're getting there, but
+not there" — "weird construction at the base where
+in/out go side by side," and "the loops exit has
+too much tilt, I don't think full loop is possible
+like that." Both driven attempts ended airborne
+off the descending side. The form was right; the
+scale, the exit roll and the base were wrong.
+
+ITEM 1 — THE RING BACK IN ITS CLASS. The curvature
+profile is re-cut (clothoid feet R 13, crown R 18,
+110 stations): crown +32.90 m over the entry
+against FP47's +49.77. The surface is NARROWED
+through the element — a per-station half-width
+array now runs beside the spine (6.0 everywhere a
+builder does not narrow): a smootherstep funnel on
+the entry straight brings 12 m down to 6 m at the
+entry foot, 6 m holds around the ring, a mirrored
+flare restores 12 m past the exit foot. Mesh,
+stripes, cheeks and every drive-side edge read the
+same per-frame width. Ring Ø ≈ 5.5× the narrowed
+surface — the toy proportion, reached the brief's
+way (narrow surface + modest ring), not by ring
+size alone. The drift is one narrowed width: base
+closure side +6.00 m / forward −0.01 m / height
+0.00, exit heading identical to entry; the exit
+lane [3, 9] and the entry lane [−3, 3] share an
+edge line and nothing overlaps.
+
+ITEM 2 — THE ROLL BUDGET CLOSES INSIDE THE
+ELEMENT. FP47 carried the frame's ~27° of twist
+past the exit and re-levelled it over the next
+90 m (measured on FP47's shipped arrays: 35.3° of
+frame tilt at the exit foot, 21.5° at exit+30).
+FP48 counter-rolls the carried frame by the
+ring's own measured holonomy, distributed across
+the span with a smootherstep, and past the exit
+foot the carry IS the plain level construction.
+Measured on the shipped arrays: tilt 0.06° at the
+exit foot, 0.00° at exit+1, +10, +30 and +90. Mesh
+and drive frame are the same frame, so what the
+driver sees is what the car drives.
+
+ITEM 3 — THE BASE BUILT CLEAN. The cheeks ride
+each frame's own half width around the narrowed
+ring; the lattice gussets stand on the OUTER sides
+of the feet only (entry foot −side, exit foot
++side) — FP47 planted them on both sides, and the
+exit foot's inner panel hung into the entry lane:
+the post in the roadway in the owner's photo. The
+footing pad is sized to the narrowed base (17 × 13,
+legs just outside the lanes) and stays below the
+road. Nothing stands between the lanes; nothing
+overlaps; nothing gaps.
+
+THE DRIVES (the stage-66 recorder, unchanged —
+its steep-zone law is in-plane, and a pre-pass A/B
+showed why it must be: the yaw-only autopilot's
+bearing is undefined on a vertical wall and it
+separates at phi ≈ 135–141° at BOTH 18 and 24 on
+FP47's ring; the road-frame law is the ordinary
+staged driver, not an element special). Pins run
+through the exit and 30 m beyond: 15 / 16 / 17 /
+20 / 22 / 24 / 26 CLEAN in the verified sweep —
+no separation, no air, exit speed = entry speed,
+max lat 0.98, still centred at exit+30 (lat ≤
+0.37, no air). The robust band is 20–26 (clean in
+every sweep); the 13–19 zone is marginal and the
+stage asserts only its robust edges: at 13 the
+surface lets go on the climb (it pinballs back on
+and finishes, dirty — no crane claim), 18 hung in
+one sweep and went clean in another. A floored
+entry goes around (exit 39.6, the whole narrowed
+road used on the descent) — FP47's wash-off does
+not survive the smaller ring; a coast from 18
+falls off just past vertical (phi 96): stored
+energy cannot reach a 32.9 m crown. The board
+reads the measured truth: STEER THE TWIST -
+CLEAN 20-26 - POWER ALL THE WAY (FP47's LIFT FOR
+THE DROP retired with its ring).
+
+RE-DERIVED NUMBERS (all flagged in place): the
+elements table (span 172 → 110 stations; E2's span
+and jump-in slid −62 with it, its assertions
+span-relative and unamended), the crown bound
+(> 45 → 28–38), the base closure (side 10.5–13.5
+→ 5.0–7.0), the tilt assertion (level by exit+90
+→ level AT the exit foot and at exit+30), the pin
+set (18-clean / 17-crown / 12-approach → 20-clean
+/ 13-separates; 24 stands), the board text. Check
+arithmetic: 837 − 1 (two below-band pins become
+one) = 836. Track 01 / ribbon / Feature Lab census
+unmoved (their width arrays read 6.00 at every
+station, their carried-frame arrays stay empty).
+
+Gates: preflight clean (import + boot), SMOKE ALL
+836, API GUARD ALL 71. The stage-66 extraction
+check's one logged failure (a suite run landing
+the car at s 266) was a staging defect — the check
+had inherited a hang FP48's new below-band pin no
+longer produces; the shipped staging collects
+through the production crane explicitly, lands at
+s 93, and re-verified deterministic (probe 3/3,
+suite green twice). Render proof: the check phase
+completes byte-identical in three runs (the one
+FAIL is the standing wheel-hub reach artifact,
+riding every baseline since FP31); the capture-
+regeneration phase did not finish inside two
+45-minute timeboxes on a contended sandbox (the
+run stalls inside the first capture's frame wait,
+llvmpipe at load ~10) — this pass's rendered
+frames are the fp48-scratch/caps set (approach
+60/40/25/12, the mouth, the base from three sides),
+shot from this tree; the archived tests/*.png
+remain FP47's captures.
+
+Stamp: FP48 · 2026-11-05. What the seat still
+owes: the right-sized hoop from the driver's eye
+(the hole at 33 m over a 6 m ribbon), the descent
+at the exit foot — level now, by construction and
+by measurement — and the clean base from the
+cockpit on the run-in. Still unverified until he
+drives it.

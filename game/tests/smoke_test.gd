@@ -7941,6 +7941,43 @@ func _run() -> void:
 	# 18.2 deg heading snap in 3 m at the exit is gone,
 	# per-step deltas <= 0.07 deg), drop 6.54 m, and a
 	# lift-out cruise tracks the runout dead straight.
+	# Fix Pass 48 amended in place: THE HOOP, RIGHT-SIZED
+	# (the owner's FP47 video verdict: a skyscraper whose
+	# exit tilt was re-levelled over the following 90 m,
+	# furniture standing in the base lanes). The ring is
+	# back in the 16-18 m class (feet R 13, crown R 18,
+	# crown 32.9 m over the entry) and the surface is
+	# NARROWED to 6 m wide through the element (3.0 half,
+	# flared back to 12 m at the feet) - ring diameter
+	# ~5.5x the surface width, the toy proportion. The
+	# drift is one narrowed width: the exit lane lands
+	# +6.0 m beside the entry lane (forward -0.0 m). The
+	# roll budget now closes INSIDE the element: the
+	# carried frame is counter-rolled by the ring's own
+	# holonomy across the span, so the frame stands at
+	# 0.06 deg at the exit foot and 0.00 deg at exit+30
+	# (FP47: 35 deg at the foot, level only by +90) -
+	# asserted below at the foot and at +30. The base is
+	# built clean: the narrowed lanes share an edge line,
+	# the lattice gussets stand on the OUTER sides of the
+	# feet only (FP47's exit-foot inner gusset hung into
+	# the entry lane), the pad is sized to the base. The
+	# recorder's law is unchanged (FP47's in-plane steep
+	# law - the yaw bearing is not a steering signal on a
+	# vertical wall, whatever ring it is). The measured
+	# band moved with the ring: pins 20-26 CLEAN in every
+	# run (max lat 0.98 at 26), 15-17 clean in the
+	# verified sweep, the 13-19 zone marginal (13 leaves
+	# the surface on the climb, 18 hung once) - the stage
+	# asserts the robust edges, not the marginal middle.
+	# A floored entry now goes around (exit 39.6, the
+	# whole narrowed road used on the descent) and a
+	# coast from 18 falls off just past vertical - it
+	# cannot reach a 32.9 m crown on stored energy. The
+	# board reads the measured truth: CLEAN 20-26, POWER
+	# ALL THE WAY. The bowl is untouched (its span slid
+	# -62 stations with the loop's shrink; every bowl
+	# assertion below is span-relative and unamended).
 	main._set_track("funlab")
 	main.test_brake = 0.0
 	var fun66: Dictionary = main.track_data["funlab"]
@@ -7993,12 +8030,14 @@ func _run() -> void:
 		"stage66: the loop stands as a hoop - band, lattice, pad and threshold on the funlab root")
 	# The built shape, read off the shipped arrays: the
 	# loop's unwrapped pitch (from the tangents) passes
-	# 180 deg at mid-span and the crown stands ~49.8 m
-	# over the entry; the helix's base closure lands the
-	# exit lane one surface width beside the entry lane
-	# (side +12.0 m, forward +0.6 m, headings identical)
-	# and the transported frame untwists along the
-	# run-out (level again by exit+90). The bowl turns
+	# 180 deg at mid-span and the crown stands ~32.9 m
+	# over the entry (Fix Pass 48: the 16-18 m ring
+	# class; FP47's skyscraper stood ~49.8 m); the
+	# helix's base closure lands the exit lane one
+	# NARROWED surface width beside the entry lane
+	# (side +6.0 m, forward -0.0 m, headings identical)
+	# and the transported frame's roll closes inside
+	# the span (level at the exit foot itself). The bowl turns
 	# exactly a full circle inside its span (360.0 deg,
 	# FP47's re-laid budget), pays out 6.54 m of height,
 	# rides at its 48 deg design bank mid-span
@@ -8026,12 +8065,15 @@ func _run() -> void:
 	for ci66: int in range(int(e1_66[1]), int(e1_66[2]) + 1):
 		crown66 = maxf(crown66, (fun66["pts"][ci66] as Vector3).y)
 	var entry_y66: float = float(main._frame_at(float(e1_66[1]))["pos"].y)
-	check(crown66 - entry_y66 > 45.0,
-		"stage66: the loop's crown stands %.1f m over its entry" % (crown66 - entry_y66))
-	# Fix Pass 47: the helix's base closure and the
-	# untwist, read off the frames: exit lane beside the
-	# entry lane, exit heading the entry heading, and the
-	# frame level again 90 m past the exit foot.
+	check(crown66 - entry_y66 > 28.0 and crown66 - entry_y66 < 38.0,
+		"stage66: the loop's crown stands %.1f m over its entry (the 16-18 m ring class)" % (crown66 - entry_y66))
+	# Fix Pass 48: the helix's base closure and the
+	# closed roll budget, read off the frames: exit lane
+	# one narrowed width beside the entry lane, exit
+	# heading the entry heading, and the frame LEVEL AT
+	# THE EXIT FOOT and still level 30 m past it (FP47
+	# read 35 deg at the foot and asserted level only
+	# by exit+90; the re-level runout is abolished).
 	var fre1_66: Dictionary = main._frame_at(float(e1_66[1]))
 	var frx1_66: Dictionary = main._frame_at(float(e1_66[2]))
 	var dcl66: Vector3 = Vector3(frx1_66["pos"]) - Vector3(fre1_66["pos"])
@@ -8039,12 +8081,13 @@ func _run() -> void:
 	var fwd_cl66: float = dcl66.dot(Vector3(fre1_66["tan"]))
 	var hdg_cl66: float = absf(rad_to_deg(wrapf(
 		main._frame_yaw(frx1_66["tan"]) - main._frame_yaw(fre1_66["tan"]), -PI, PI)))
-	var fru66: Dictionary = main._frame_at(float(e1_66[2]) + 90.0)
+	var tilt_x66: float = rad_to_deg(acos(clampf((frx1_66["up"] as Vector3).y, -1.0, 1.0)))
+	var fru66: Dictionary = main._frame_at(float(e1_66[2]) + 30.0)
 	var tilt_u66: float = rad_to_deg(acos(clampf((fru66["up"] as Vector3).y, -1.0, 1.0)))
-	check(side_cl66 > 10.5 and side_cl66 < 13.5 and absf(fwd_cl66) < 2.5
-			and hdg_cl66 < 1.0 and tilt_u66 < 2.0,
-		"stage66: the hoop's lanes sit side by side at the base (side %+.1f m, forward %+.1f m, heading delta %.2f deg) and the frame is level by exit+90 (tilt %.1f deg)" % [
-			side_cl66, fwd_cl66, hdg_cl66, tilt_u66])
+	check(side_cl66 > 5.0 and side_cl66 < 7.0 and absf(fwd_cl66) < 2.5
+			and hdg_cl66 < 1.0 and tilt_x66 < 2.0 and tilt_u66 < 2.0,
+		"stage66: the hoop's lanes sit side by side at the base (side %+.1f m, forward %+.1f m, heading delta %.2f deg) and the roll budget is closed at the exit foot (tilt %.2f deg, %.2f deg at exit+30)" % [
+			side_cl66, fwd_cl66, hdg_cl66, tilt_x66, tilt_u66])
 	var yaw66: float = 0.0
 	var prev_y66: float = 0.0
 	for yi66: int in range(int(elems66[1][1]), int(elems66[1][2]) + 1):
@@ -8251,6 +8294,30 @@ func _run() -> void:
 	# in-plane demand and washes off it - the board
 	# says LIFT FOR THE DROP, and the stage asserts the
 	# pinned band instead.
+	# Fix Pass 48 amended in place: the ring is the
+	# right-sized hoop (see the stage header) and the
+	# band is re-measured on it (FP48 probes, same
+	# recorder): pins 20-26 CLEAN in every run - no
+	# separation, no air, exit = entry, max lat 0.98,
+	# and still centred 30 m past the exit (lat <=
+	# 0.37, no air - the flat run-out asserted in the
+	# drives themselves now, not just the frames);
+	# 15-17 clean in the verified sweep; the 13-19
+	# zone underneath is MARGINAL (13 leaves the
+	# surface on the climb and pinballs back on, 18
+	# hung in one sweep) - so FP47's three pins are
+	# re-based: 24 stands, the low edge is asserted at
+	# 20, and the below-band witness is 13 separating
+	# in-span (no crane claim - it finishes, dirty).
+	# The crown's static floor is sqrt(g*18) = 13.3
+	# now. FP47's LIFT FOR THE DROP is RETIRED with
+	# its ring: a floored entry goes around on this
+	# one (exit 39.6, the whole narrowed road used on
+	# the descent, max lat 3.46 across the flare
+	# window), and a coast from 18 falls off just
+	# past vertical (phi 96) - stored energy cannot
+	# reach a 32.9 m crown. The board says POWER ALL
+	# THE WAY; the stage asserts the pinned band.
 	var r_loop66: Dictionary = await drive66.call(elems66[0], 24.0, "pin", 4000)
 	print("stage66 loop: wedged=%s max_phi=%.1f max_s=%.1f airs=%d hung=%s exit=%.1f max_lat=%.2f" % [
 		str(bool(r_loop66["wedged"])), float(r_loop66["max_phi"]), float(r_loop66["max_s"]),
@@ -8260,26 +8327,34 @@ func _run() -> void:
 			and float(r_loop66["max_phi"]) > 270.0 and absf(float(r_loop66["exit_v"]) - 24.0) < 0.5,
 		"stage66: E1 the loop - held at 24 it goes all the way around CLEAN, steered through the twist (max phi %.0f deg, max lat %.1f m)" % [
 			float(r_loop66["max_phi"]), float(r_loop66["max_lat"])])
-	var r_l18_66: Dictionary = await drive66.call(elems66[0], 18.0, "pin", 4000)
-	print("stage66 loop 18: sep=%s airs=%d hung=%s exit=%.1f" % [
-		str(bool(r_l18_66["sep"])), int(r_l18_66["airs"]), str(bool(r_l18_66["hung"])), float(r_l18_66["exit_v"])])
-	check(not bool(r_l18_66["sep"]) and not bool(r_l18_66["hung"]) and int(r_l18_66["airs"]) == 0
-			and absf(float(r_l18_66["exit_v"]) - 18.0) < 0.5,
-		"stage66: E1 the loop - held at 18 (the board's floor) it goes around CLEAN, no separation")
-	var r_l17_66: Dictionary = await drive66.call(elems66[0], 17.0, "pin", 4000)
-	print("stage66 loop 17: sep=%s sep_s=%.1f hung=%s wedged=%s" % [
-		str(bool(r_l17_66["sep"])), float(r_l17_66["sep_s"]), str(bool(r_l17_66["hung"])), str(bool(r_l17_66["wedged"]))])
-	check(bool(r_l17_66["sep"]) and bool(r_l17_66["hung"]) and not bool(r_l17_66["wedged"])
-			and float(r_l17_66["sep_s"]) > float(elems66[0][1]) + 0.4 * (float(elems66[0][2]) - float(elems66[0][1])),
-		"stage66: E1 the loop - held at 17 the crown lets go (sep at s %.0f) and the crane collects it" % float(r_l17_66["sep_s"]))
-	var r_slow66: Dictionary = await drive66.call(elems66[0], 12.0, "pin", 4000)
-	print("stage66 loop slow: sep=%s sep_s=%.1f hung=%s wedged=%s max_phi=%.1f exit=%.1f" % [
-		str(bool(r_slow66["sep"])), float(r_slow66["sep_s"]), str(bool(r_slow66["hung"])), str(bool(r_slow66["wedged"])),
-		float(r_slow66["max_phi"]), float(r_slow66["exit_v"])])
-	check(bool(r_slow66["sep"]) and bool(r_slow66["hung"]) and not bool(r_slow66["wedged"])
-			and float(r_slow66["sep_s"]) < (float(elems66[0][1]) + float(elems66[0][2])) * 0.5
-			and float(r_slow66["exit_v"]) < 0.0,
-		"stage66: E1 the loop - held at 12 it comes off on the crown approach (sep at s %.0f, no wedge at any speed)" % float(r_slow66["sep_s"]))
+	var r_l20_66: Dictionary = await drive66.call(elems66[0], 20.0, "pin", 4000)
+	print("stage66 loop 20: sep=%s airs=%d hung=%s exit=%.1f" % [
+		str(bool(r_l20_66["sep"])), int(r_l20_66["airs"]), str(bool(r_l20_66["hung"])), float(r_l20_66["exit_v"])])
+	check(not bool(r_l20_66["sep"]) and not bool(r_l20_66["hung"]) and int(r_l20_66["airs"]) == 0
+			and absf(float(r_l20_66["exit_v"]) - 20.0) < 0.5,
+		"stage66: E1 the loop - held at 20 (the board's floor) it goes around CLEAN, no separation")
+	var r_l13_66: Dictionary = await drive66.call(elems66[0], 13.0, "pin", 4000)
+	print("stage66 loop 13: sep=%s sep_s=%.1f hung=%s wedged=%s airs=%d exit=%.1f" % [
+		str(bool(r_l13_66["sep"])), float(r_l13_66["sep_s"]), str(bool(r_l13_66["hung"])), str(bool(r_l13_66["wedged"])),
+		int(r_l13_66["airs"]), float(r_l13_66["exit_v"])])
+	check(bool(r_l13_66["sep"]) and not bool(r_l13_66["wedged"])
+			and float(r_l13_66["sep_s"]) > float(elems66[0][1])
+			and float(r_l13_66["sep_s"]) < float(elems66[0][2]),
+		"stage66: E1 the loop - held at 13 (under the board's band) the surface lets go in-span (sep at s %.0f, no wedge)" % float(r_l13_66["sep_s"]))
+	# Fix Pass 48: the extraction's setup is explicit
+	# now. FP47 inherited its hang from the 12-pin
+	# (the crane had collected the car at the crown);
+	# FP48's below-band pin finishes dirty but driving,
+	# so the collection is staged through the production
+	# crane from inside the span instead - the recovery
+	# charges from the crown station and the drop search
+	# answers for it, the same _find_drop_s a real crown
+	# fall is charged from (measured drop target s 91.4,
+	# release lands s 93 - the flat before the mouth).
+	main.debug_warp_to_s(float(elems66[0][1]) + 55.0)
+	await frames(2)
+	main._call_crane()
+	var ehang66: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 400)
 	main.debug_set_hang_dangle()
 	main.pend_th_f = 0.0
 	main.pend_th_l = 0.0
@@ -8288,7 +8363,7 @@ func _run() -> void:
 	await frames(3)
 	main._do_release()
 	var wrel66: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 400)
-	check(wrel66 and main.car_s < float(elems66[0][1]),
+	check(ehang66 and wrel66 and main.car_s < float(elems66[0][1]),
 		"stage66: E1 the loop - the extraction drops the car back on the flat (s %.0f)" % main.car_s)
 	# ---- E2: THE SPIRAL BOWL - Fix Pass 46 (Item 2),
 	# new. The corkscrew / barrel roll / wall-ride blocks

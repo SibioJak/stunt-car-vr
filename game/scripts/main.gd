@@ -1047,6 +1047,15 @@ var t_kvf: Array[float] = []
 # (TRK2's loop): empty everywhere else, where _frame_at's
 # level construction stands untouched.
 var t_up0: Array[Vector3] = [] # Fix Pass 41: road-FRAME curvature per sample (-(dT/ds).up, crest +)
+# Fix Pass 48: the per-station HALF WIDTH of the driving
+# surface. HALF_WIDTH (6.0) everywhere except where a
+# builder narrows a piece (TRK2's loop: 3.0 through the
+# ring, flared on the straights at its feet). _frame_at
+# returns it as "hw"; the mesh, the straddle and the
+# fall/landing windows read it from the frame, so the
+# surface the driver sees and the surface the physics
+# holds are the same width by construction.
+var t_wid: Array[float] = []
 var track_len: float = 0.0
 # Fix Pass 10 (Item 3): two tracks, one live set of arrays.
 # track_data holds each track's Dictionary (arrays, length,
@@ -1719,7 +1728,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP47 · 2026-11-04"
+const BUILD_STAMP: String = "FP48 · 2026-11-05"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -2050,6 +2059,7 @@ var b_tan: Array[Vector3] = []
 var b_bank: Array[float] = []
 var b_curv: Array[float] = []
 var b_gap: Array[bool] = []
+var b_wid: Array[float] = [] # Fix Pass 48: per-station half width (see t_wid)
 
 
 func _gen_append(is_gap: bool, curv: float) -> void:
@@ -2060,6 +2070,7 @@ func _gen_append(is_gap: bool, curv: float) -> void:
 	b_bank.append(_gen_bank)
 	b_curv.append(curv)
 	b_gap.append(is_gap)
+	b_wid.append(HALF_WIDTH)
 
 
 func _gen_step(step_len: float, yaw_rate: float, phi_target: float, bank_target: float, is_gap: bool, phi_rate: float, bank_rate: float) -> void:
@@ -2101,6 +2112,7 @@ func _build_ribbon() -> Dictionary:
 	b_bank = []
 	b_curv = []
 	b_gap = []
+	b_wid = []
 	_gen_pos = Vector3(0.0, 30.0, 0.0)
 	_gen_yaw = 0.0
 	_gen_phi = 0.0
@@ -2303,6 +2315,7 @@ func _build_circuit() -> Dictionary:
 	b_bank = []
 	b_curv = []
 	b_gap = []
+	b_wid = []
 	_cir_start = Vector3(0.0, 60.0, 0.0)
 	_gen_pos = _cir_start
 	_gen_yaw = 0.0
@@ -2663,7 +2676,8 @@ func _build_circuit() -> Dictionary:
 	feats["sweeper_s0"] = -1.0
 	feats["sweeper_s1"] = -1.0
 	var snap: Array = [_gen_pos, _gen_yaw, _gen_phi, _gen_bank,
-		b_pts.size(), b_tan.size(), b_bank.size(), b_curv.size(), b_gap.size()]
+		b_pts.size(), b_tan.size(), b_bank.size(), b_curv.size(), b_gap.size(),
+		b_wid.size()]
 	var sol: Array = _solve_circuit_tail(snap)
 	feats["tail"] = [sol[0], sol[1], sol[2]]
 	feats["closure_err_m"] = sol[3]
@@ -2725,6 +2739,7 @@ func _build_lab() -> Dictionary:
 	b_bank = []
 	b_curv = []
 	b_gap = []
+	b_wid = []
 	_gen_pos = Vector3(800.0, 30.0, 600.0)
 	_gen_yaw = 0.0
 	_gen_phi = 0.0
@@ -3020,6 +3035,30 @@ func _hoop_pt(fr: Dictionary, lat: float, upoff: float) -> Vector3:
 	return Vector3(fr["pos"]) + Vector3(fr["side"]) * lat \
 		+ Vector3(fr["up"]) * upoff
 
+
+func _loop_hw48(s: float, s0: float, s1: float) -> float:
+	# Fix Pass 48: E1's width plan (half width at station s,
+	# the funlab's stations being 1 m steps, so index == s).
+	# Full 6.0 on the course; a smootherstep funnel on the
+	# entry straight brings it to 3.0 one metre before the
+	# entry foot; 3.0 holds through the ring and one metre
+	# past the exit foot; a mirrored flare on the run-out
+	# restores 6.0. The feet themselves are therefore
+	# narrowed lanes: entry [-3, +3], exit [+3, +9] about
+	# the entry centreline - side by side, sharing an edge
+	# line, nothing overlapping (the FP47 base's offence).
+	if s <= s0 - 14.0 or s >= s1 + 15.0:
+		return HALF_WIDTH
+	if s >= s0 - 1.0 and s <= s1 + 1.0:
+		return 3.0
+	if s < s0 - 1.0:
+		var u_in: float = clampf((s - (s0 - 14.0)) / 13.0, 0.0, 1.0)
+		var w_in: float = u_in * u_in * u_in * (u_in * (u_in * 6.0 - 15.0) + 10.0)
+		return lerpf(HALF_WIDTH, 3.0, w_in)
+	var u_out: float = clampf((s - (s1 + 1.0)) / 14.0, 0.0, 1.0)
+	var w_out: float = u_out * u_out * u_out * (u_out * (u_out * 6.0 - 15.0) + 10.0)
+	return lerpf(3.0, HALF_WIDTH, w_out)
+
 func _build_funlab() -> Dictionary:
 	# Fix Pass 38: TRK2 - THE FUNLAB. The owner's order
 	# (2026-11-02): "and I still need a loop, barrel roll,
@@ -3090,6 +3129,7 @@ func _build_funlab() -> Dictionary:
 	b_bank = []
 	b_curv = []
 	b_gap = []
+	b_wid = []
 	_gen_pos = Vector3(-1600.0, 30.0, -1400.0)
 	_gen_yaw = 0.0
 	_gen_phi = 0.0
@@ -3143,82 +3183,102 @@ func _build_funlab() -> Dictionary:
 	# comes down BESIDE the ascending leg, entry and exit
 	# lanes side by side at the base, never stacked, never
 	# crossing ("its gotta bend/twist").
-	# The geometry, solved offline before it was coded:
-	# N = 172 stations of 1.0 m; curvature profile
-	# (_loop_kappa47) with clothoid feet - a join ramp eases
-	# the bend 0 -> 1/20 across the first tenth of the ring,
-	# an ease carries it to the crown's 1/29, mirrored out;
+	# Fix Pass 48: THE LOOP, RIGHT-SIZED. FP47 built the
+	# right form at the wrong scale and left three
+	# convictions on the owner's video (both driven
+	# attempts end airborne off the descending side):
+	# (1) THE RING WAS A SKYSCRAPER - the open-hole
+	# proportion was bought with height (crown +49.8 m on
+	# the full 12 m road), so the descent was a ~50 m fall
+	# onto a surface that was also rolling. The proportion
+	# now comes from the other side of the ratio, the toy
+	# side: the ring shrinks back to the 16-18 m class AND
+	# the driving surface narrows to ~6 m through the
+	# element (3.0 half width, flared on the straights at
+	# the feet - see _loop_hw48), so the ~33 m ring reads
+	# ~5.5 surface widths across, at little more than half
+	# FP47's height and half its fall. (2) THE EXIT ROLL
+	# WAS APOLOGISED AWAY - FP47's frame sat 35 deg rolled
+	# at the exit foot and re-levelled over the next 90 m;
+	# the roll now closes INSIDE the element, in
+	# _finalize_track (the counter-roll), and the 30 m
+	# after the exit are flat by construction. (3) THE
+	# BASE WAS A CONSTRUCTION SITE - a gusset stood in the
+	# entry lane and the exit slab overlapped its edge;
+	# the structure is rebuilt clean in
+	# _build_loop_structure (outer-side gussets only, the
+	# pad below the lanes), and with the drift now one
+	# NARROWED width (6.0 m) and the feet narrowed too, the
+	# two lanes share an edge line at the base and nothing
+	# overlaps.
+	# The geometry, solved offline before it was coded
+	# (the pass's prototype reproduces FP47's shipped
+	# numbers to the digit at FP47's constants): N = 110
+	# stations of 1.0 m; curvature profile (_loop_kappa47)
+	# with clothoid feet - a join ramp eases the bend
+	# 0 -> 1/13 across the first 8% of the ring, an ease
+	# carries it to the crown's 1/18 by 28%, mirrored out;
 	# per-step turns are the profile weights normalised to
-	# sum TAU exactly (FP43's device), so the ring closes by
-	# construction. Ring height ~50 m against the FULL 12 m
-	# road (ratio ~4.2, the model's own proportions - the
-	# surface is NOT narrowed: narrowing moves the crown's
-	# physics and the piece's identity; quadrupling the RING
-	# is the honest lever). The crown's static floor is
-	# sqrt(g * 29) = 16.9 m/s, inside the <= ~20 guardrail.
-	# Positions are integrated here in the entry frame, NOT
-	# through _gen_step: the helix's lateral drift (a full
-	# surface width by the exit foot, rate shape in
-	# _loop_driftq47) is a centreline motion the generator's
-	# yaw/pitch state cannot speak. The drift's feet are
-	# rate-zero, so the entry and exit tangents stay exactly
-	# parallel to the straights they join; the base closure
-	# (exit vs entry) solves to side +12.0, forward ~+0.6 -
-	# the base zone of the brief, as side-by-side lanes.
-	# The transported frame pays the helix's holonomy
-	# (2*pi*sin(beta) ~ 27 deg of roll at the exit);
-	# _finalize_track's untwist (FP47) rights it along the
-	# run-out. The band that renders the hoop stands in
-	# _build_loop_structure.
-	var n1_47: int = 172
-	var kf47: float = 1.0 / 20.0
-	var kc47: float = 1.0 / 29.0
-	var ja47: float = 0.10
-	var jb47: float = 0.35
-	var w1_47: Array[float] = []
-	var sum1_47: float = 0.0
-	for j1_47: int in range(1, n1_47 + 1):
-		var wj1_47: float = _loop_kappa47((float(j1_47) - 0.5)
-			/ float(n1_47), kf47, kc47, ja47, jb47)
-		w1_47.append(wj1_47)
-		sum1_47 += wj1_47
-	var th1_47: Array[float] = []
-	var acc1_47: float = 0.0
-	for j2_47: int in n1_47:
-		acc1_47 += TAU * w1_47[j2_47] / sum1_47
-		th1_47.append(acc1_47)
-	var q1_47: Array[float] = []
-	var qsum47: float = 0.0
-	for j3_47: int in n1_47:
-		var thm47: float = th1_47[j3_47] - 0.5 * TAU * w1_47[j3_47] / sum1_47
-		var qj47: float = _loop_driftq47(thm47)
-		q1_47.append(qj47)
-		qsum47 += qj47
-	var dscale47: float = 12.0 / qsum47
-	var o47: Vector3 = _gen_pos
-	var f47: Vector3 = Vector3(-sin(_gen_yaw), 0.0, -cos(_gen_yaw))
-	var s47: Vector3 = f47.cross(Vector3.UP).normalized()
-	var y47: float = 0.0
-	var fw47: float = 0.0
-	var x47: float = 0.0
-	var prev47: Vector3 = o47
-	var thp47: float = 0.0
-	for j4_47: int in n1_47:
-		var thm47b: float = 0.5 * (thp47 + th1_47[j4_47])
-		y47 += sin(thm47b)
-		fw47 += cos(thm47b)
-		x47 += dscale47 * q1_47[j4_47]
-		var pos47: Vector3 = o47 + f47 * fw47 + Vector3.UP * y47 + s47 * x47
-		b_pts.append(pos47)
-		b_tan.append((pos47 - prev47).normalized())
+	# sum TAU exactly (FP43's device), so the ring closes
+	# by construction: crown +32.9 m, base closure side
+	# +6.0 / forward ~0.0, exit heading the entry heading.
+	# The crown's static floor is sqrt(g * 18) = 13.3 m/s.
+	# Positions are integrated here in the entry frame,
+	# NOT through _gen_step: the helix's lateral drift
+	# (one narrowed surface width by the exit foot, rate
+	# shape in _loop_driftq47) is a centreline motion the
+	# generator's yaw/pitch state cannot speak. The band
+	# that renders the hoop stands in _build_loop_structure.
+	var n1_48: int = 110
+	var kf48: float = 1.0 / 13.0
+	var kc48: float = 1.0 / 18.0
+	var ja48: float = 0.08
+	var jb48: float = 0.28
+	var w1_48: Array[float] = []
+	var sum1_48: float = 0.0
+	for j1_48: int in range(1, n1_48 + 1):
+		var wj1_48: float = _loop_kappa47((float(j1_48) - 0.5)
+			/ float(n1_48), kf48, kc48, ja48, jb48)
+		w1_48.append(wj1_48)
+		sum1_48 += wj1_48
+	var th1_48: Array[float] = []
+	var acc1_48: float = 0.0
+	for j2_48: int in n1_48:
+		acc1_48 += TAU * w1_48[j2_48] / sum1_48
+		th1_48.append(acc1_48)
+	var q1_48: Array[float] = []
+	var qsum48: float = 0.0
+	for j3_48: int in n1_48:
+		var thm48: float = th1_48[j3_48] - 0.5 * TAU * w1_48[j3_48] / sum1_48
+		var qj48: float = _loop_driftq47(thm48)
+		q1_48.append(qj48)
+		qsum48 += qj48
+	var dscale48: float = 6.0 / qsum48
+	var o48: Vector3 = _gen_pos
+	var f48: Vector3 = Vector3(-sin(_gen_yaw), 0.0, -cos(_gen_yaw))
+	var s48: Vector3 = f48.cross(Vector3.UP).normalized()
+	var y48: float = 0.0
+	var fw48: float = 0.0
+	var x48: float = 0.0
+	var prev48: Vector3 = o48
+	var thp48: float = 0.0
+	for j4_48: int in n1_48:
+		var thm48b: float = 0.5 * (thp48 + th1_48[j4_48])
+		y48 += sin(thm48b)
+		fw48 += cos(thm48b)
+		x48 += dscale48 * q1_48[j4_48]
+		var pos48: Vector3 = o48 + f48 * fw48 + Vector3.UP * y48 + s48 * x48
+		b_pts.append(pos48)
+		b_tan.append((pos48 - prev48).normalized())
 		b_bank.append(0.0)
 		b_curv.append(0.0)
 		b_gap.append(false)
-		prev47 = pos47
-		thp47 = th1_47[j4_47]
-	_gen_pos = prev47
+		b_wid.append(HALF_WIDTH)
+		prev48 = pos48
+		thp48 = th1_48[j4_48]
+	_gen_pos = prev48
 	_gen_phi = 0.0
-	elements.append(["E1 THE LOOP", e1_s0, float(b_pts.size() - 1), 24.0, "STEER THE TWIST - CLEAN 18-26 - LIFT FOR THE DROP"])
+	elements.append(["E1 THE LOOP", e1_s0, float(b_pts.size() - 1), 24.0, "STEER THE TWIST - CLEAN 20-26 - POWER ALL THE WAY"])
 	# Run-out: 120 m of flat - a failed loop needs room to
 	# land, be craned, and be re-taken.
 	_walk(120, 0.0, 0.0, 0.0, false)
@@ -3301,6 +3361,16 @@ func _build_funlab() -> Dictionary:
 	# loop's datum and the course simply ends lower - an
 	# open test course owes no climb home).
 	_walk(260, 0.0, 0.0, 0.0, false)
+	# Fix Pass 48: E1's width plan, written over the whole
+	# course's width array now that every station exists
+	# (the array was appended at full width throughout;
+	# _loop_hw48 is 6.0 outside the loop's neighbourhood,
+	# so only the funnel, the ring and the exit flare
+	# actually change).
+	var e1w0_48: float = float(elements[0][1])
+	var e1w1_48: float = float(elements[0][2])
+	for wi48: int in b_wid.size():
+		b_wid[wi48] = _loop_hw48(float(wi48), e1w0_48, e1w1_48)
 	var feats: Dictionary = {
 		"gap_s0": -1.0, "gap_s1": -1.0,
 		"gap2_s0": -1.0, "gap2_s1": -1.0,
@@ -3406,6 +3476,15 @@ func _build_loop_structure(root: Node3D, s0f: float, s1f: float) -> void:
 	#     supports, tying the band's feet to the pad;
 	#   - the chequer threshold across the last flat metre
 	#     (kept from FP46 - it was never the problem).
+	# Fix Pass 48: the base is built CLEAN (the owner's
+	# FP47 photo: "weird construction at the base where
+	# in/out go side by side"). The narrowed feet lanes
+	# share an edge line and nothing overlaps; the gussets
+	# stand on the OUTER sides of the feet only (FP47's
+	# exit-foot inner gusset hung into the entry lane -
+	# the post in the roadway); the pad is sized to the
+	# narrowed base and stays below the lanes, its legs
+	# just outside them.
 	# Cheeks and rim follow the HELIX (the frames carry the
 	# twist), so the band twists with the road it carries.
 	# The generic stilts are suppressed across the span
@@ -3417,8 +3496,9 @@ func _build_loop_structure(root: Node3D, s0f: float, s1f: float) -> void:
 	var pos := PackedVector3Array()
 	var nrm := PackedVector3Array()
 	var col := PackedColorArray()
-	var lat_in: float = HALF_WIDTH + 0.05
-	var lat_out: float = HALF_WIDTH + 0.55
+	# Fix Pass 48: the cheeks hug the surface AS BUILT -
+	# their offsets ride each frame's own half width, so
+	# the band follows the narrowed ring and its flares.
 	var lip: float = 0.70
 	var depth: float = -2.40
 	for i47: int in range(int(s0f), int(s1f)):
@@ -3426,67 +3506,81 @@ func _build_loop_structure(root: Node3D, s0f: float, s1f: float) -> void:
 		var fb: Dictionary = _frame_at(float(i47 + 1))
 		var ua: Vector3 = fa["up"]
 		var ub: Vector3 = fb["up"]
+		var lia: float = float(fa["hw"]) + 0.05
+		var loa: float = float(fa["hw"]) + 0.55
+		var lib: float = float(fb["hw"]) + 0.05
+		var lob: float = float(fb["hw"]) + 0.55
 		for sgn: float in [-1.0, 1.0]:
-			var li: float = lat_in * sgn
-			var lo: float = lat_out * sgn
+			var li_a: float = lia * sgn
+			var lo_a: float = loa * sgn
+			var li_b: float = lib * sgn
+			var lo_b: float = lob * sgn
 			var n_side: Vector3 = (Vector3(fa["side"]) * sgn
 				+ Vector3(fb["side"]) * sgn).normalized()
 			# the section's four faces, both windings
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, li, lip), _hoop_pt(fb, li, lip),
-				_hoop_pt(fb, lo, lip), _hoop_pt(fa, lo, lip),
+				_hoop_pt(fa, li_a, lip), _hoop_pt(fb, li_b, lip),
+				_hoop_pt(fb, lo_b, lip), _hoop_pt(fa, lo_a, lip),
 				(ua + ub).normalized(), shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, lo, lip), _hoop_pt(fb, lo, lip),
-				_hoop_pt(fb, li, lip), _hoop_pt(fa, li, lip),
+				_hoop_pt(fa, lo_a, lip), _hoop_pt(fb, lo_b, lip),
+				_hoop_pt(fb, li_b, lip), _hoop_pt(fa, li_a, lip),
 				(ua + ub).normalized(), shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, lo, lip), _hoop_pt(fb, lo, lip),
-				_hoop_pt(fb, lo, depth), _hoop_pt(fa, lo, depth),
+				_hoop_pt(fa, lo_a, lip), _hoop_pt(fb, lo_b, lip),
+				_hoop_pt(fb, lo_b, depth), _hoop_pt(fa, lo_a, depth),
 				n_side, shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, lo, depth), _hoop_pt(fb, lo, depth),
-				_hoop_pt(fb, lo, lip), _hoop_pt(fa, lo, lip),
+				_hoop_pt(fa, lo_a, depth), _hoop_pt(fb, lo_b, depth),
+				_hoop_pt(fb, lo_b, lip), _hoop_pt(fa, lo_a, lip),
 				n_side, shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, lo, depth), _hoop_pt(fb, lo, depth),
-				_hoop_pt(fb, li, depth), _hoop_pt(fa, li, depth),
+				_hoop_pt(fa, lo_a, depth), _hoop_pt(fb, lo_b, depth),
+				_hoop_pt(fb, li_b, depth), _hoop_pt(fa, li_a, depth),
 				-(ua + ub).normalized(), shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, li, depth), _hoop_pt(fb, li, depth),
-				_hoop_pt(fb, lo, depth), _hoop_pt(fa, lo, depth),
+				_hoop_pt(fa, li_a, depth), _hoop_pt(fb, li_b, depth),
+				_hoop_pt(fb, lo_b, depth), _hoop_pt(fa, lo_a, depth),
 				-(ua + ub).normalized(), shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, li, depth), _hoop_pt(fb, li, depth),
-				_hoop_pt(fb, li, lip), _hoop_pt(fa, li, lip),
+				_hoop_pt(fa, li_a, depth), _hoop_pt(fb, li_b, depth),
+				_hoop_pt(fb, li_b, lip), _hoop_pt(fa, li_a, lip),
 				-n_side, shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, li, lip), _hoop_pt(fb, li, lip),
-				_hoop_pt(fb, li, depth), _hoop_pt(fa, li, depth),
+				_hoop_pt(fa, li_a, lip), _hoop_pt(fb, li_b, lip),
+				_hoop_pt(fb, li_b, depth), _hoop_pt(fa, li_a, depth),
 				-n_side, shell_c)
 		# the outer rim: the band's back skin, straight
 		# across the section between the cheeks' bottoms
 		_add_quad_m(pos, nrm, col,
-			_hoop_pt(fa, -lat_out, depth), _hoop_pt(fb, -lat_out, depth),
-			_hoop_pt(fb, lat_out, depth), _hoop_pt(fa, lat_out, depth),
+			_hoop_pt(fa, -loa, depth), _hoop_pt(fb, -lob, depth),
+			_hoop_pt(fb, lob, depth), _hoop_pt(fa, loa, depth),
 			-(ua + ub).normalized(), rim_c)
 		_add_quad_m(pos, nrm, col,
-			_hoop_pt(fa, lat_out, depth), _hoop_pt(fb, lat_out, depth),
-			_hoop_pt(fb, -lat_out, depth), _hoop_pt(fa, -lat_out, depth),
+			_hoop_pt(fa, loa, depth), _hoop_pt(fb, lob, depth),
+			_hoop_pt(fb, -lob, depth), _hoop_pt(fa, -loa, depth),
 			-(ua + ub).normalized(), rim_c)
 	_add_mesh(pos, nrm, col, "LoopHoop", false, root)
-	# Lattice gussets at both feet, both sides.
+	# Lattice gussets at both feet - Fix Pass 48: OUTER
+	# sides only. FP47 planted them on both sides of both
+	# feet, and the exit foot's inner panel hung into the
+	# ENTRY lane: the post standing in the roadway in the
+	# owner's base photo. The entry foot's outer side is
+	# -side (the exit lane lives at +side); the exit
+	# foot's outer side is +side. The inner cheeks carry
+	# no gussets - nothing stands between the lanes.
 	var lpos := PackedVector3Array()
 	var lnrm := PackedVector3Array()
 	var lcol := PackedColorArray()
-	for sf47: float in [s0f + 2.0, s1f - 2.0]:
+	for gf47: Array in [[s0f + 2.0, -1.0], [s1f - 2.0, 1.0]]:
+		var sf47: float = float(gf47[0])
 		var fr47: Dictionary = _frame_at(sf47)
 		var pc47: Vector3 = fr47["pos"]
 		var tn47: Vector3 = fr47["tan"]
 		var up47: Vector3 = fr47["up"]
 		var sd47: Vector3 = fr47["side"]
-		for sgn2: float in [-1.0, 1.0]:
-			var cc47: Vector3 = pc47 + sd47 * (sgn2 * (HALF_WIDTH + 0.30))
+		for sgn2: float in [float(gf47[1])]:
+			var cc47: Vector3 = pc47 + sd47 * (sgn2 * (float(fr47["hw"]) + 0.30))
 			var nn47: Vector3 = sd47 * sgn2
 			var c00: Vector3 = cc47 - tn47 * 2.4 + up47 * 0.6
 			var c01: Vector3 = cc47 + tn47 * 2.4 + up47 * 0.6
@@ -3519,12 +3613,12 @@ func _build_loop_structure(root: Node3D, s0f: float, s1f: float) -> void:
 	var shell_mat := StandardMaterial3D.new()
 	shell_mat.albedo_color = shell_c
 	shell_mat.roughness = 0.9
-	_box(pad, Vector3(27.0, 1.0, 19.0), Vector3.ZERO, shell_mat)
+	_box(pad, Vector3(17.0, 1.0, 13.0), Vector3.ZERO, shell_mat)
 	var steel_mat := StandardMaterial3D.new()
 	steel_mat.albedo_color = steel_c
 	steel_mat.roughness = 0.85
-	for lx47: float in [-12.0, 12.0]:
-		for lz47: float in [-8.0, 8.0]:
+	for lx47: float in [-6.5, 6.5]:
+		for lz47: float in [-4.5, 4.5]:
 			_box(pad, Vector3(0.55, 59.0, 0.55),
 				Vector3(lx47, -29.5, lz47), steel_mat)
 	# The chequer threshold on the last flat metre (FP46's,
@@ -3580,6 +3674,7 @@ func _gen_circuit_tail(snap: Array, lr: float, phi_h: float, r_e: float) -> Vect
 	b_bank.resize(int(snap[6]))
 	b_curv.resize(int(snap[7]))
 	b_gap.resize(int(snap[8]))
+	b_wid.resize(int(snap[9]))
 	# return straight: pitch ramps from the snapshot's phi to
 	# phi_h over 45 m, holds for the rest of lr, ramps to 0
 	var phi_s: float = _gen_phi
@@ -3800,6 +3895,61 @@ func _finalize_track(closed: bool, features: Dictionary) -> Dictionary:
 		upfix[ui41] = carry41
 	if not folds41:
 		upfix.clear()
+	# Fix Pass 48: THE ROLL CLOSES INSIDE THE HOOP. FP47's
+	# twisted ring left the transported up rolled ~35 deg
+	# at the exit foot, and the untwist above bled it off
+	# along the following 90 m of run-out - the owner,
+	# driving it: "the loops exit has too much tilt, I
+	# don't think full loop is possible like that" (the
+	# shipped arrays read 35.3 deg at the exit foot, still
+	# 21.5 deg at exit+30). An element is not finished if
+	# the road after it has to straighten it up. So where
+	# a hoop span is declared, the carried up is COUNTER-
+	# ROLLED inside the span: the exit foot's own roll
+	# (the signed angle from the level up to the carried
+	# up about the exit tangent) is measured off the walk
+	# above and unwound across the span on a smootherstep
+	# (zero rate at both feet, so neither join steps), and
+	# every station past the span is written as the plain
+	# level construction - the state the walk's release
+	# would have reached, reached AT the exit foot
+	# instead of 90 m later. kvf below reads the corrected
+	# array, and _frame_at reads the same array, so the
+	# mesh and the drive frame agree: the car exits level
+	# because the road is level. Only TRK2 declares a
+	# hoop span; every census track skips this whole block
+	# (their upfix is empty besides).
+	var hoop48: Array = features.get("hoop_span", [])
+	if hoop48.size() == 2 and upfix.size() == n:
+		var h0_48: int = clampi(int(round(float(hoop48[0]))), 0, n - 1)
+		var h1_48: int = clampi(int(round(float(hoop48[1]))), 0, n - 1)
+		if h1_48 > h0_48:
+			var tex48: Vector3 = b_tan[h1_48]
+			var sdx48: Vector3 = tex48.cross(Vector3.UP)
+			if sdx48.length() < 0.1:
+				sdx48 = Vector3.RIGHT
+			else:
+				sdx48 = sdx48.normalized()
+			var lvx48: Vector3 = sdx48.cross(tex48).normalized()
+			var cux48: Vector3 = upfix[h1_48]
+			var rho48: float = atan2(lvx48.cross(cux48).dot(tex48),
+				clampf(lvx48.dot(cux48), -1.0, 1.0))
+			if absf(rho48) > 0.0001:
+				for si48: int in range(h0_48, h1_48 + 1):
+					var uu48: float = float(si48 - h0_48) / float(h1_48 - h0_48)
+					var w48: float = uu48 * uu48 * uu48 * (uu48 * (uu48 * 6.0 - 15.0) + 10.0)
+					var up48: Vector3 = upfix[si48].rotated(b_tan[si48], -rho48 * w48)
+					up48 = up48 - b_tan[si48] * up48.dot(b_tan[si48])
+					if up48.length() > 0.05:
+						upfix[si48] = up48.normalized()
+				for sj48: int in range(h1_48 + 1, n):
+					var tt48: Vector3 = b_tan[sj48]
+					var sd48: Vector3 = tt48.cross(Vector3.UP)
+					if sd48.length() < 0.1:
+						sd48 = Vector3.RIGHT
+					else:
+						sd48 = sd48.normalized()
+					upfix[sj48] = sd48.cross(tt48).normalized()
 	# Fix Pass 41 (Item 1): the ROAD-FRAME curvature, kvf =
 	# -(dT/ds).up with the frame built exactly as _frame_at
 	# builds it - the rate the tangent turns toward the
@@ -3840,7 +3990,7 @@ func _finalize_track(closed: bool, features: Dictionary) -> Dictionary:
 		kvf[fi41] = -((b_tan[fp41] - b_tan[fm41]) / span41).dot(up_b41)
 	return {
 		"pts": b_pts, "tan": b_tan, "bank": b_bank, "curv": b_curv,
-		"gap": b_gap, "kv": kv, "kvf": kvf, "up0": upfix,
+		"gap": b_gap, "kv": kv, "kvf": kvf, "up0": upfix, "wid": b_wid,
 		"len": float(n) if closed else float(n - 1),
 		"closed": closed, "features": features}
 
@@ -3857,6 +4007,7 @@ func _activate_track(d: Dictionary) -> void:
 	t_kv = d["kv"]
 	t_kvf = d["kvf"]
 	t_up0 = d["up0"]
+	t_wid = d["wid"]
 	active_elements = d["features"].get("elements", [])
 	track_len = float(d["len"])
 	track_closed = bool(d["closed"])
@@ -3920,7 +4071,9 @@ func _build_track_meshes(d: Dictionary) -> void:
 	var stilt_pos := PackedVector3Array()
 	var stilt_nrm := PackedVector3Array()
 	var stilt_col := PackedColorArray()
-	var hw: float = HALF_WIDTH
+	# Fix Pass 48: the ribbon's width is per-station now -
+	# each segment takes its two frames' "hw" (HALF_WIDTH
+	# everywhere a builder did not narrow the surface).
 	# Fix Pass 18 (micro): the main field is ASPHALT GREY
 	# (was near-black 0.07/0.07/0.09, which read brown
 	# against the tan desert - the owner: "more road
@@ -3969,10 +4122,12 @@ func _build_track_meshes(d: Dictionary) -> void:
 		var s1: Vector3 = frame1["side"]
 		var u0: Vector3 = frame0["up"]
 		var u1: Vector3 = frame1["up"]
-		var l0: Vector3 = p0 - s0 * hw
-		var r0: Vector3 = p0 + s0 * hw
-		var l1: Vector3 = p1 - s1 * hw
-		var r1: Vector3 = p1 + s1 * hw
+		var h0: float = float(frame0["hw"])
+		var h1: float = float(frame1["hw"])
+		var l0: Vector3 = p0 - s0 * h0
+		var r0: Vector3 = p0 + s0 * h0
+		var l1: Vector3 = p1 - s1 * h1
+		var r1: Vector3 = p1 + s1 * h1
 		var bl0: Vector3 = l0 - u0 * RIBBON_DEPTH
 		var br0: Vector3 = r0 - u0 * RIBBON_DEPTH
 		var bl1: Vector3 = l1 - u1 * RIBBON_DEPTH
@@ -4161,6 +4316,12 @@ func _add_line_stripe(pp: PackedVector3Array, nn: PackedVector3Array, cc: Packed
 	var f1: Dictionary = _frame_at(s_line + 0.5)
 	var f2: Dictionary = _frame_at(s_line + 1.0)
 	var frames: Array = [f0, f1, f2]
+	# Fix Pass 48: the chequer spans the surface as built -
+	# twelve cells across whatever width the road has here
+	# (the loop's threshold stands on the narrowed funnel;
+	# on full-width road the cells are the historic 1.0 m).
+	var hwl: float = float(f0["hw"])
+	var cellw: float = 2.0 * hwl / 12.0
 	var cw: Color = Color(0.92, 0.92, 0.92)
 	var cb: Color = Color(0.04, 0.04, 0.05)
 	for row: int in range(2):
@@ -4174,8 +4335,8 @@ func _add_line_stripe(pp: PackedVector3Array, nn: PackedVector3Array, cc: Packed
 		var ub: Vector3 = fb["up"]
 		var nrm: Vector3 = (ua + ub).normalized()
 		for cell: int in range(12):
-			var lat0: float = -HALF_WIDTH + float(cell) * 1.0
-			var lat1: float = lat0 + 1.0
+			var lat0: float = -hwl + float(cell) * cellw
+			var lat1: float = lat0 + cellw
 			var col: Color = cw if (row + cell) % 2 == 0 else cb
 			_add_quad_m(pp, nn, cc,
 				pa + sa * lat0 + ua * 0.02, pa + sa * lat1 + ua * 0.02,
@@ -4199,8 +4360,8 @@ func _add_section_stripe(pp: PackedVector3Array, nn: PackedVector3Array, cc: Pac
 	var ua: Vector3 = fa["up"]
 	var ub: Vector3 = fb["up"]
 	_add_quad_m(pp, nn, cc,
-		pa - sa * HALF_WIDTH + ua * 0.02, pa + sa * HALF_WIDTH + ua * 0.02,
-		pb + sb * HALF_WIDTH + ub * 0.02, pb - sb * HALF_WIDTH + ub * 0.02,
+		pa - sa * float(fa["hw"]) + ua * 0.02, pa + sa * float(fa["hw"]) + ua * 0.02,
+		pb + sb * float(fb["hw"]) + ub * 0.02, pb - sb * float(fb["hw"]) + ub * 0.02,
 		(ua + ub).normalized(), Color(0.52, 0.52, 0.56))
 
 
@@ -4265,12 +4426,20 @@ func _frame_at(s: float) -> Dictionary:
 			side = tanv.cross(upv).normalized()
 	var side_b: Vector3 = (side * cos(bank) + upv * sin(bank)).normalized()
 	var up_b: Vector3 = side_b.cross(tanv).normalized()
+	# Fix Pass 48: the surface's half width at this station
+	# (see t_wid). Guarded so a malformed array can never
+	# narrow a road by accident: anything but a full-length
+	# array reads as the standard width.
+	var hwv: float = HALF_WIDTH
+	if t_wid.size() == t_pts.size():
+		hwv = lerpf(t_wid[i0], t_wid[i1], fr)
 	return {
 		"pos": pos, "tan": tanv, "side": side_b, "up": up_b,
 		"bank": bank, "curv": lerpf(t_curv[i0], t_curv[i1], fr),
 		"gap": t_gap[i0] or t_gap[i1],
 		"kv": lerpf(t_kv[i0], t_kv[i1], fr),
 		"kvf": lerpf(t_kvf[i0], t_kvf[i1], fr),
+		"hw": hwv,
 	}
 
 
@@ -7791,7 +7960,7 @@ func _update_drive(delta: float) -> void:
 	# has run off the shoulder (Item 2 scope addition). Inside
 	# that line the straddle state in _update_suspension holds
 	# the car up - wobbling, but held.
-	if absf(car_lat) > HALF_WIDTH + EDGE_FALL_OVERSHOOT:
+	if absf(car_lat) > float(fr_now["hw"]) + EDGE_FALL_OVERSHOOT:
 		_enter_air(false, 0.0)
 		return
 	if track_closed:
@@ -7914,7 +8083,7 @@ func _update_air(delta: float) -> void:
 	# ratcheting into the ribbon after big landings, the
 	# owner's "landing and going warping through road".
 	var slope_vy: float = _slope_vy_at(fr, Vector2(air_vel.x, air_vel.z))
-	if not bool(fr["gap"]) and h <= CLEARANCE + 0.05 and h > -2.2 and absf(lat) <= HALF_WIDTH + EDGE_FALL_OVERSHOOT and air_vel.y - slope_vy < 0.5:
+	if not bool(fr["gap"]) and h <= CLEARANCE + 0.05 and h > -2.2 and absf(lat) <= float(fr["hw"]) + EDGE_FALL_OVERSHOOT and air_vel.y - slope_vy < 0.5:
 		_land(fr, lat, h)
 		return
 	# Fix Pass 40 (Item 1): SWEPT CONTACT - the structural
@@ -7933,7 +8102,7 @@ func _update_air(delta: float) -> void:
 	# "rescued" forced falls placed 20 m under the road.
 	if not bool(fr["gap"]) and air_prev_h > CLEARANCE + 0.05 and h <= -2.2 \
 			and air_prev_h - h <= 1.2 \
-			and absf(lat) <= HALF_WIDTH + EDGE_FALL_OVERSHOOT and air_vel.y - slope_vy < 0.0:
+			and absf(lat) <= float(fr["hw"]) + EDGE_FALL_OVERSHOOT and air_vel.y - slope_vy < 0.0:
 		var frac40: float = clampf((air_prev_h - (CLEARANCE + 0.02)) / maxf(air_prev_h - h, 0.001), 0.0, 1.0)
 		var cross_pos: Vector3 = air_prev_pos.lerp(pos, frac40)
 		car.global_position = cross_pos
@@ -7981,7 +8150,7 @@ func _update_air(delta: float) -> void:
 		below_band_t += delta
 	else:
 		below_band_t = 0.0
-	if absf(lat) > HALF_WIDTH + 2.5 and pos.y < air_exit_y - 1.0:
+	if absf(lat) > float(fr["hw"]) + 2.5 and pos.y < air_exit_y - 1.0:
 		lost_lat_t += delta
 	else:
 		lost_lat_t = 0.0
@@ -8808,7 +8977,7 @@ func _update_suspension(delta: float) -> void:
 			var wlat: float = float(pr[1])
 			var wfr: Dictionary = _frame_at(sup_s[wi])
 			var rise: float = (Vector3(wfr["pos"]) - pos_c).dot(up_c)
-			var over: float = absf(wlat) - HALF_WIDTH
+			var over: float = absf(wlat) - float(wfr["hw"])
 			sup_over[wi] = over # Fix Pass 15 (Item 1): the edge family's raw fact
 			if over > EDGE_CUTOFF:
 				sup_ok[wi] = false
