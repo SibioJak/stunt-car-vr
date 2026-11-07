@@ -1728,7 +1728,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP49 · 2026-11-06"
+const BUILD_STAMP: String = "FP50 · 2026-11-07"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -3095,19 +3095,39 @@ func _bowl_hw49(s: float, s0: float, s1: float) -> float:
 	# the turns pass with clear air between their
 	# edges. Mid-bowl - the holds, the judged core -
 	# keeps the full 6.0.
-	if s >= s0 - 6.0 and s <= s0 + 50.0:
+	# Fix Pass 50: THE FLARES, LENGTHENED (the owner's
+	# in-bowl still: the rim's line kinks where FP49's
+	# exit work touched the stations). Convicted by
+	# measurement on the built frames: a banked edge's
+	# height carries sin(bank) x hw, so each 10 m flare
+	# bends BOTH edges - rim second differences to
+	# +/-0.085 sustained over s 381-390 (flare-out) and
+	# s 514-523 (flare-in), the wall growing ~3 m of
+	# height across 10 m of travel and pinching it back
+	# at the other end; the holds read ~0.002. The
+	# narrowing itself is FP49's fenced win and stays -
+	# what changes is only how fast the width moves:
+	# the flare-out runs 30 m (s0+40 -> s0+70) and the
+	# exit flare-in starts at s1-90 and runs 40 m to
+	# reach 4.0 at s1-50, so the seam zone's widths -
+	# and the exit clearance they bought - are exactly
+	# FP49's where the turns cross. Edge second
+	# differences fall ~an order (0.085 -> ~0.006).
+	# The mouth flares (bank ~0, sin ~0: width cannot
+	# move an edge height there) are untouched.
+	if s >= s0 - 6.0 and s <= s0 + 70.0:
 		if s < s0 + 4.0:
 			var ua: float = clampf((s - (s0 - 6.0)) / 10.0, 0.0, 1.0)
 			var wa: float = ua * ua * ua * (ua * (ua * 6.0 - 15.0) + 10.0)
 			return lerpf(HALF_WIDTH, 4.0, wa)
 		if s > s0 + 40.0:
-			var ub: float = clampf((s - (s0 + 40.0)) / 10.0, 0.0, 1.0)
+			var ub: float = clampf((s - (s0 + 40.0)) / 30.0, 0.0, 1.0)
 			var wb: float = ub * ub * ub * (ub * (ub * 6.0 - 15.0) + 10.0)
 			return lerpf(4.0, HALF_WIDTH, wb)
 		return 4.0
-	if s >= s1 - 50.0 and s <= s1 + 12.0:
-		if s < s1 - 40.0:
-			var uc: float = clampf((s - (s1 - 50.0)) / 10.0, 0.0, 1.0)
+	if s >= s1 - 90.0 and s <= s1 + 12.0:
+		if s < s1 - 50.0:
+			var uc: float = clampf((s - (s1 - 90.0)) / 40.0, 0.0, 1.0)
 			var wc: float = uc * uc * uc * (uc * (uc * 6.0 - 15.0) + 10.0)
 			return lerpf(HALF_WIDTH, 4.0, wc)
 		if s > s1 + 2.0:
@@ -3651,8 +3671,113 @@ func _build_loop_structure(root: Node3D, s0f: float, s1f: float) -> void:
 	# Fix Pass 48: the cheeks hug the surface AS BUILT -
 	# their offsets ride each frame's own half width, so
 	# the band follows the narrowed ring and its flares.
-	var lip: float = 0.70
-	var depth: float = -2.40
+	# Fix Pass 50: THE SECTION, GATED AT THE BASE. FP49's
+	# law read the driving SURFACES, and they read clean -
+	# but the band is not the surface. Measured on the
+	# BUILT mesh (this pass's corridor probe): each inner
+	# cheek stands over the NEIGHBOUR lane's edge strip
+	# at the feet - its body occupies the 0.55 m inside
+	# the other lane's span with the lip at +0.70: the
+	# wall between the lanes in the owner's threshold
+	# stills - and the section's 2.40 m depth rakes
+	# across both lanes where the arcs cross them (the
+	# ascending band over the exit lane, samples to
+	# 0.06 m over the road at s 226-236; the descending
+	# band over the entry approach, to 0.16 m at
+	# s 94-105): 100 sampled intrusions, every one
+	# LoopHoop; lattice, pad, boards, stilts and
+	# threshold all clean. The law, widened: NOTHING in
+	# the road space at the base, of any kind. So the
+	# section is SOLVED per station and per side against
+	# the base corridor (the road's own span, from just
+	# over the surface to 3.0 m over it, funnel head to
+	# flare tail, read off the built frames): the
+	# tallest lip and deepest section whose sampled
+	# corners and face points stay out of the corridor,
+	# then min-filtered and smoothed (never back above
+	# the filtered value) so the silhouette stays one
+	# curve. Where a leg hangs over the other lane the
+	# section collapses away and the road's own box
+	# crosses alone - the road itself kisses the shared
+	# edge at the base, which is the toy's read too.
+	# The drive geometry - frames, widths, the gated
+	# drift, the closure - is FP49's, fenced.
+	var zone50: Array = []
+	var zs50: float = s0f - 18.0
+	while zs50 <= s1f + 18.0:
+		zone50.append(_frame_at(zs50))
+		zs50 += 0.5
+	var gate50: Callable = func(pt: Vector3) -> bool:
+		for zf50: Dictionary in zone50:
+			var zp50: Vector3 = zf50["pos"]
+			var gx50: float = pt.x - zp50.x
+			var gz50: float = pt.z - zp50.z
+			if gx50 * gx50 + gz50 * gz50 > 64.0:
+				continue
+			var d50: Vector3 = pt - zp50
+			if absf(d50.dot(Vector3(zf50["tan"]))) > 1.0:
+				continue
+			var h50: float = d50.dot(Vector3(zf50["up"]))
+			if h50 <= 0.05 or h50 >= 3.0:
+				continue
+			if absf(d50.dot(Vector3(zf50["side"]))) < float(zf50["hw"]) - 0.02:
+				return true
+		return false
+	# the solved section per station: [lip(-), dep(-),
+	# lip(+), dep(+)], dep a positive magnitude
+	var sec50: Array = []
+	for si50: int in range(int(s0f), int(s1f) + 1):
+		sec50.append([0.70, 2.40, 0.70, 2.40])
+	for si51: int in sec50.size():
+		var fr51: Dictionary = _frame_at(s0f + float(si51))
+		var hw51: float = float(fr51["hw"])
+		for sgn51: float in [-1.0, 1.0]:
+			var idx51: int = 0 if sgn51 < 0.0 else 2
+			var li51: float = sgn51 * (hw51 + 0.05)
+			var lo51: float = sgn51 * (hw51 + 0.55)
+			var sol_lip51: float = 0.0
+			var sol_dep51: float = 0.0
+			var dep51: float = 2.40
+			while dep51 >= 0.0:
+				var lip51: float = 0.70
+				var found51: bool = false
+				while lip51 >= 0.0:
+					var bad51: bool = false
+					for off51: Array in [[li51, lip51], [lo51, lip51],
+							[li51, -dep51], [lo51, -dep51],
+							[li51, (lip51 - dep51) * 0.5],
+							[lo51, (lip51 - dep51) * 0.5],
+							[(li51 + lo51) * 0.5, lip51],
+							[(li51 + lo51) * 0.5, -dep51],
+							[(li51 + lo51) * 0.5, (lip51 - dep51) * 0.5]]:
+						var pt51: Vector3 = _hoop_pt(fr51,
+							float(off51[0]), float(off51[1]))
+						if bool(gate50.call(pt51)):
+							bad51 = true
+							break
+					if not bad51:
+						sol_lip51 = lip51
+						sol_dep51 = dep51
+						found51 = true
+						break
+					lip51 -= 0.10
+				if found51:
+					break
+				dep51 -= 0.15
+			sec50[si51][idx51] = sol_lip51
+			sec50[si51][idx51 + 1] = sol_dep51
+	for col51: int in [0, 1, 2, 3]:
+		var mf51: Array = []
+		for mi51: int in sec50.size():
+			var mv51: float = float(sec50[mi51][col51])
+			for oi51: int in range(maxi(0, mi51 - 3), mini(sec50.size(), mi51 + 4)):
+				mv51 = minf(mv51, float(sec50[oi51][col51]))
+			mf51.append(mv51)
+		for ni51: int in sec50.size():
+			var pv51: float = float(mf51[maxi(0, ni51 - 1)])
+			var nv51: float = float(mf51[mini(sec50.size() - 1, ni51 + 1)])
+			var sm51: float = 0.25 * pv51 + 0.5 * float(mf51[ni51]) + 0.25 * nv51
+			sec50[ni51][col51] = minf(sm51, float(mf51[ni51]))
 	for i47: int in range(int(s0f), int(s1f)):
 		var fa: Dictionary = _frame_at(float(i47))
 		var fb: Dictionary = _frame_at(float(i47 + 1))
@@ -3662,56 +3787,71 @@ func _build_loop_structure(root: Node3D, s0f: float, s1f: float) -> void:
 		var loa: float = float(fa["hw"]) + 0.55
 		var lib: float = float(fb["hw"]) + 0.05
 		var lob: float = float(fb["hw"]) + 0.55
+		var sa50: Array = sec50[i47 - int(s0f)]
+		var sb50: Array = sec50[i47 + 1 - int(s0f)]
 		for sgn: float in [-1.0, 1.0]:
 			var li_a: float = lia * sgn
 			var lo_a: float = loa * sgn
 			var li_b: float = lib * sgn
 			var lo_b: float = lob * sgn
+			var ci50: int = 0 if sgn < 0.0 else 2
+			var lipa: float = float(sa50[ci50])
+			var depa: float = -float(sa50[ci50 + 1])
+			var lipb: float = float(sb50[ci50])
+			var depb: float = -float(sb50[ci50 + 1])
+			if lipa < 0.02 and lipb < 0.02 and depa > -0.05 and depb > -0.05:
+				continue
 			var n_side: Vector3 = (Vector3(fa["side"]) * sgn
 				+ Vector3(fb["side"]) * sgn).normalized()
 			# the section's four faces, both windings
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, li_a, lip), _hoop_pt(fb, li_b, lip),
-				_hoop_pt(fb, lo_b, lip), _hoop_pt(fa, lo_a, lip),
+				_hoop_pt(fa, li_a, lipa), _hoop_pt(fb, li_b, lipb),
+				_hoop_pt(fb, lo_b, lipb), _hoop_pt(fa, lo_a, lipa),
 				(ua + ub).normalized(), shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, lo_a, lip), _hoop_pt(fb, lo_b, lip),
-				_hoop_pt(fb, li_b, lip), _hoop_pt(fa, li_a, lip),
+				_hoop_pt(fa, lo_a, lipa), _hoop_pt(fb, lo_b, lipb),
+				_hoop_pt(fb, li_b, lipb), _hoop_pt(fa, li_a, lipa),
 				(ua + ub).normalized(), shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, lo_a, lip), _hoop_pt(fb, lo_b, lip),
-				_hoop_pt(fb, lo_b, depth), _hoop_pt(fa, lo_a, depth),
+				_hoop_pt(fa, lo_a, lipa), _hoop_pt(fb, lo_b, lipb),
+				_hoop_pt(fb, lo_b, depb), _hoop_pt(fa, lo_a, depa),
 				n_side, shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, lo_a, depth), _hoop_pt(fb, lo_b, depth),
-				_hoop_pt(fb, lo_b, lip), _hoop_pt(fa, lo_a, lip),
+				_hoop_pt(fa, lo_a, depa), _hoop_pt(fb, lo_b, depb),
+				_hoop_pt(fb, lo_b, lipb), _hoop_pt(fa, lo_a, lipa),
 				n_side, shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, lo_a, depth), _hoop_pt(fb, lo_b, depth),
-				_hoop_pt(fb, li_b, depth), _hoop_pt(fa, li_a, depth),
+				_hoop_pt(fa, lo_a, depa), _hoop_pt(fb, lo_b, depb),
+				_hoop_pt(fb, li_b, depb), _hoop_pt(fa, li_a, depa),
 				-(ua + ub).normalized(), shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, li_a, depth), _hoop_pt(fb, li_b, depth),
-				_hoop_pt(fb, lo_b, depth), _hoop_pt(fa, lo_a, depth),
+				_hoop_pt(fa, li_a, depa), _hoop_pt(fb, li_b, depb),
+				_hoop_pt(fb, lo_b, depb), _hoop_pt(fa, lo_a, depa),
 				-(ua + ub).normalized(), shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, li_a, depth), _hoop_pt(fb, li_b, depth),
-				_hoop_pt(fb, li_b, lip), _hoop_pt(fa, li_a, lip),
+				_hoop_pt(fa, li_a, depa), _hoop_pt(fb, li_b, depb),
+				_hoop_pt(fb, li_b, lipb), _hoop_pt(fa, li_a, lipa),
 				-n_side, shell_c)
 			_add_quad_m(pos, nrm, col,
-				_hoop_pt(fa, li_a, lip), _hoop_pt(fb, li_b, lip),
-				_hoop_pt(fb, li_b, depth), _hoop_pt(fa, li_a, depth),
+				_hoop_pt(fa, li_a, lipa), _hoop_pt(fb, li_b, lipb),
+				_hoop_pt(fb, li_b, depb), _hoop_pt(fa, li_a, depa),
 				-n_side, shell_c)
 		# the outer rim: the band's back skin, straight
-		# across the section between the cheeks' bottoms
-		_add_quad_m(pos, nrm, col,
-			_hoop_pt(fa, -loa, depth), _hoop_pt(fb, -lob, depth),
-			_hoop_pt(fb, lob, depth), _hoop_pt(fa, loa, depth),
-			-(ua + ub).normalized(), rim_c)
-		_add_quad_m(pos, nrm, col,
-			_hoop_pt(fa, loa, depth), _hoop_pt(fb, lob, depth),
-			_hoop_pt(fb, -lob, depth), _hoop_pt(fa, -loa, depth),
-			-(ua + ub).normalized(), rim_c)
+		# across the section between the cheeks' bottoms -
+		# Fix Pass 50: it rides the SHALLOWER of the two
+		# sides' solved depths at each station, so the
+		# skin never hangs below the gate either side met.
+		var rima: float = -minf(float(sa50[1]), float(sa50[3]))
+		var rimb: float = -minf(float(sb50[1]), float(sb50[3]))
+		if rima < -0.05 or rimb < -0.05:
+			_add_quad_m(pos, nrm, col,
+				_hoop_pt(fa, -loa, rima), _hoop_pt(fb, -lob, rimb),
+				_hoop_pt(fb, lob, rimb), _hoop_pt(fa, loa, rima),
+				-(ua + ub).normalized(), rim_c)
+			_add_quad_m(pos, nrm, col,
+				_hoop_pt(fa, loa, rima), _hoop_pt(fb, lob, rimb),
+				_hoop_pt(fb, -lob, rimb), _hoop_pt(fa, -loa, rima),
+				-(ua + ub).normalized(), rim_c)
 	_add_mesh(pos, nrm, col, "LoopHoop", false, root)
 	# Lattice gussets at both feet - Fix Pass 48: OUTER
 	# sides only. FP47 planted them on both sides of both

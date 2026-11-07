@@ -8613,6 +8613,140 @@ func _run() -> void:
 		"stage66: TRK2's finish - the run from E2 crosses the bowl and the runout apron, and the race completes")
 	main.test_throttle = 0.0
 	main.test_boost = false
+	# Fix Pass 50: THE BASE, READ OFF THE BUILT MESH.
+	# FP49's loop law read the driving surfaces and they
+	# read clean - but the owner's threshold still
+	# showed structure standing in the road. This pass's
+	# probe convicted it on the built mesh: the hoop
+	# band's inner cheeks stand over the neighbour
+	# lane's edge strip at the feet (each cheek body
+	# inside the other lane's span, lip at +0.70), and
+	# the section's 2.40 m depth rakes across both lanes
+	# where the arcs cross them - 100 sampled
+	# intrusions, every one the band; lattice, pad,
+	# boards, stilts, threshold clean. The band's
+	# section is now SOLVED per station against the
+	# corridor at build time; this audit re-reads the
+	# BUILT meshes exactly as the probe did (triangle
+	# corners, edge midpoints, centroids; AABB corners,
+	# face centres, edge midpoints for the box-built
+	# furniture) against the base corridor - the road's
+	# own span, 0.05-3.0 m over its surface, funnel head
+	# to flare tail - and requires ZERO intrusions. The
+	# road's own meshes define the corridor and are not
+	# suspects (FP49's surface law above already holds
+	# them). Audits read built geometry, not the
+	# builder's conditions (the FP49 stilt lesson).
+	var e1s0_50_66: float = float(elems66[0][1])
+	var e1s1_50_66: float = float(elems66[0][2])
+	var e2s0_50_66: float = float(elems66[1][1])
+	var e2s1_50_66: float = float(elems66[1][2])
+	var zone50_66: Array = []
+	var zs50_66: float = e1s0_50_66 - 18.0
+	while zs50_66 <= e1s1_50_66 + 18.0:
+		zone50_66.append(main._frame_at(zs50_66))
+		zs50_66 += 0.5
+	var smp50_66: Array = []
+	for mn50_66: String in ["LoopHoop", "LoopLattice", "LoopThreshold", "Stilts"]:
+		var mi50_66: MeshInstance3D = froot66.get_node_or_null(mn50_66) as MeshInstance3D
+		if mi50_66 == null or mi50_66.mesh == null:
+			continue
+		var va50_66: PackedVector3Array = (mi50_66.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+		var gt50_66: Transform3D = mi50_66.global_transform
+		var ti50_66: int = 0
+		while ti50_66 + 2 < va50_66.size():
+			var a50_66: Vector3 = gt50_66 * va50_66[ti50_66]
+			var b50_66: Vector3 = gt50_66 * va50_66[ti50_66 + 1]
+			var c50_66: Vector3 = gt50_66 * va50_66[ti50_66 + 2]
+			for p50_66: Vector3 in [a50_66, b50_66, c50_66,
+					(a50_66 + b50_66) * 0.5, (b50_66 + c50_66) * 0.5,
+					(c50_66 + a50_66) * 0.5, (a50_66 + b50_66 + c50_66) / 3.0]:
+				smp50_66.append([mn50_66, p50_66])
+			ti50_66 += 3
+	for bn50_66: String in ["LoopPad", "ElementBoard1", "ElementBoard2"]:
+		var stack50_66: Array = [froot66.get_node_or_null(bn50_66)]
+		while not stack50_66.is_empty():
+			var cur50_66: Node = stack50_66.pop_back()
+			if cur50_66 == null:
+				continue
+			for ch50_66: Node in cur50_66.get_children():
+				stack50_66.append(ch50_66)
+			if cur50_66 is MeshInstance3D:
+				var cmi50_66: MeshInstance3D = cur50_66 as MeshInstance3D
+				var ab50_66: AABB = cmi50_66.get_aabb()
+				var cgt50_66: Transform3D = cmi50_66.global_transform
+				for ci50_66: int in 8:
+					smp50_66.append([bn50_66, cgt50_66 * ab50_66.get_endpoint(ci50_66)])
+				smp50_66.append([bn50_66, cgt50_66 * ab50_66.get_center()])
+				for ei50_66: int in 12:
+					var ea50_66: Vector3 = ab50_66.get_endpoint(int([0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3][ei50_66]))
+					var eb50_66: Vector3 = ab50_66.get_endpoint(int([1, 2, 3, 0, 5, 6, 7, 4, 4, 5, 6, 7][ei50_66]))
+					smp50_66.append([bn50_66, cgt50_66 * ((ea50_66 + eb50_66) * 0.5)])
+	var intr50_66: int = 0
+	var first50_66: String = ""
+	for sp50_66: Array in smp50_66:
+		var pt50_66: Vector3 = sp50_66[1]
+		var balong50_66: float = 1e9
+		var bfr50_66: Dictionary = {}
+		var bd50_66: Vector3 = Vector3.ZERO
+		for zf50_66: Dictionary in zone50_66:
+			var dd50_66: Vector3 = pt50_66 - Vector3(zf50_66["pos"])
+			var al50_66: float = dd50_66.dot(Vector3(zf50_66["tan"]))
+			if absf(al50_66) < balong50_66:
+				balong50_66 = absf(al50_66)
+				bfr50_66 = zf50_66
+				bd50_66 = dd50_66
+		if bfr50_66.is_empty() or balong50_66 > 1.0:
+			continue
+		var lat50_66: float = bd50_66.dot(Vector3(bfr50_66["side"]))
+		var hh50_66: float = bd50_66.dot(Vector3(bfr50_66["up"]))
+		if hh50_66 > 0.05 and hh50_66 < 3.0 and absf(lat50_66) < float(bfr50_66["hw"]) - 0.02:
+			intr50_66 += 1
+			if first50_66 == "":
+				first50_66 = "%s lat %+.2f h %.2f" % [str(sp50_66[0]), lat50_66, hh50_66]
+	check(intr50_66 == 0,
+		"stage66: FP50 - nothing built stands in the loop's road space at the base (built-mesh corridor audit: %d intrusions%s)" % [
+			intr50_66, ("; first: " + first50_66) if first50_66 != "" else ""])
+	# Fix Pass 50: THE BOWL'S LINE. The owner's in-bowl
+	# still showed the rim deformed - convicted on the
+	# built frames: a banked edge's height carries
+	# sin(bank) x hw, so FP49's two 10 m width flares
+	# bent both edges (second differences to 0.085 over
+	# s 381-390 and s 514-523; the holds read ~0.000).
+	# The flares now run 30 m (out) and 40 m (in); the
+	# narrow seam widths - and the exit clearance they
+	# bought - are untouched where the turns cross.
+	# This check holds the reshaped spans to the line:
+	# edge-height second differences (rim and low edge,
+	# 1 m stations) no worse than 0.02 across either
+	# flare (measured 0.0095 / 0.0053; the convicted
+	# kinks read 0.083 / 0.085). The mouths' bank-ramp
+	# steps and the core's shoulder transients are
+	# FP46's approved geometry and are not in these
+	# spans.
+	var brows50_66: Array = []
+	for s50_66: int in range(int(e2s0_50_66) - 12, int(e2s1_50_66) + 13):
+		var fr50_66: Dictionary = main._frame_at(float(s50_66))
+		var pp50_66: Vector3 = fr50_66["pos"]
+		var sd50_66: Vector3 = fr50_66["side"]
+		var hw50_66: float = float(fr50_66["hw"])
+		var yl50_66: float = (pp50_66 - sd50_66 * hw50_66).y
+		var yr50_66: float = (pp50_66 + sd50_66 * hw50_66).y
+		brows50_66.append([float(s50_66), maxf(yl50_66, yr50_66), minf(yl50_66, yr50_66)])
+	var fmax50_66: float = 0.0
+	for ri50_66: int in range(1, brows50_66.size() - 1):
+		var ss50_66: float = float(brows50_66[ri50_66][0])
+		var in_out50_66: bool = ss50_66 >= e2s0_50_66 + 40.0 and ss50_66 <= e2s0_50_66 + 70.0
+		var in_in50_66: bool = ss50_66 >= e2s1_50_66 - 90.0 and ss50_66 <= e2s1_50_66 - 50.0
+		if not in_out50_66 and not in_in50_66:
+			continue
+		for cc50_66: int in [1, 2]:
+			var d2_50_66: float = absf(float(brows50_66[ri50_66 + 1][cc50_66])
+				- 2.0 * float(brows50_66[ri50_66][cc50_66])
+				+ float(brows50_66[ri50_66 - 1][cc50_66]))
+			fmax50_66 = maxf(fmax50_66, d2_50_66)
+	check(fmax50_66 <= 0.02,
+		"stage66: FP50 - the bowl's rim and low edge run one clean arc through the reshaped flares (max edge second difference %.4f over the flare spans; the FP49 kinks read 0.083-0.085)" % fmax50_66)
 
 	# ---------- stage 67: Fix Pass 39 - THE FAIR HILLS ----
 	# The FP39 audit as permanent checks, on Track 01.

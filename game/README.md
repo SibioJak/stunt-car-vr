@@ -7404,3 +7404,101 @@ overhead with clear air under it, its posts beside the lane; the
 exit running out onto a plain apron. Whether the separation READS
 clean from the seat is the owner's verdict, still owed - the
 numbers and the frames say the roads no longer share space.
+
+## Fix Pass 50 — THE BASE, WHOLE (nothing built stands in the road; the bowl's line made one arc)
+the bowl's exit stands accepted and the loop's
+structure leaves the road. Owner's verdicts on FP49 (headset,
+four stills): the bowl's exit - "Corkscrew exit is fine now" (the
+FP49 clearance fix FIELD-PASSED; the exit saga, open since FP46,
+is closed). The loop: "it gets closer and closer, just not there
+yet. still intruding into road" - his threshold still shows
+structure standing at the base, in the road. The bowl, from
+inside: "a little deformed (pic)" - a kink in the rim's line.
+ITEM 1 - THE LOOP: structure in the road space at the base.
+FP49's law read the driving SURFACES and they read clean - but
+the band is not the surface. CONVICTED by measurement on the
+BUILT mesh (corridor audit: the road's own span, 0.05-3.0 m over
+its surface, funnel head to flare tail; triangle corners, edge
+midpoints and centroids, AABB samples for the box-built
+furniture): 100 sampled intrusions, every one the hoop BAND;
+lattice, pad, boards, stilts and threshold all clean.
+Attributed: the band's inner cheeks stand over the NEIGHBOUR
+lane's edge strip at the feet - each inner cheek body occupies
+the 0.55 m inside the other lane's span with its lip at +0.70, a
+~1 m double wall straddling the shared edge at the base (the
+post/wedge in the owner's threshold stills since FP47; FP48's
+"nothing stands between the lanes" was true of the gussets -
+the cheeks were never audited) - and the section's 2.40 m depth
+rakes across both lanes where the arcs cross them: the
+ascending band down to 0.06 m over the exit lane (s 226-236),
+the descending band to 0.16 m over the entry approach
+(s 94-105). FIX: the band's section is SOLVED per station and
+per side at build time against the same corridor - the tallest
+lip and the deepest section whose sampled corners and face
+points stay out of the road space - then min-filtered and
+smoothed (never back above the filtered value) so the
+silhouette stays one curve; where a leg hangs over the other
+lane the section collapses away and the road's own box crosses
+alone; the rim skin rides the shallower side's solved depth.
+The drive geometry - frames, the gated drift, closure +6.00,
+crown 32.9 m, the 6 m surface, roll 0 at the feet - is FP49's,
+fenced and untouched. MEASURED AFTER: corridor intrusions ZERO
+on every structure mesh (the band sheds its collapsed sections:
+11,880 -> 10,080 vertices); the lowest band point passing over
+any lane is 5.12 m up (was 3.05). The road's own surfaces still
+kiss the shared edge at the base exactly as FP49 left them
+(surface overlap 0.00 m below h 8, 0.04 below h 12) - the road
+is the corridor's definition, not a suspect. THE DRIVES
+(stage-66 recorder, FP49's assertions unamended): 20 and 24
+CLEAN (max lat 0.52), 13 separates on the crown approach and
+finishes; the board stands verbatim.
+ITEM 2 - THE SPIRAL BOWL: the rim's line kinks. CONVICTED on
+the built frames: a banked edge's height carries sin(bank) x
+hw, so FP49's two 10 m width flares bent BOTH edges - height
+second differences to 0.083 over s 381-390 (the flare-out) and
+0.085 over s 514-523 (the flare-in), the wall growing ~3 m of
+height across 10 m of travel and pinching it back at the other
+end; the holds read 0.000. FIX (the width plan only,
+_bowl_hw49): the flare-out runs 30 m (s0+40 -> s0+70) and the
+exit flare-in starts at s1-90 and runs 40 m, reaching 4.0 at
+s1-50 - so the seam zones hold exactly FP49's widths where the
+turns cross and the field-passed exit clearance is not traded;
+the mouth flares (bank ~0 there, where width cannot move an
+edge height) are untouched, and the centreline, bank, pitch
+and yaw are FP46's/FP49's, untouched. MEASURED AFTER:
+flare-span edge second differences 0.0095 (out) and 0.0053
+(in) - an order under the convicted kinks; the holds still
+0.000. The standing core transients (the bank-ramp shoulder at
+s 372, -0.071, identical before and after; the mouth steps)
+are FP46's approved geometry, were never the flares, and are
+left alone. The watched risk - the lengthened flare-out
+widening the upper turn over the exit corridor - resolved the
+other way: the least foreign underside over the exit corridor
+IMPROVED 3.48 -> 3.70 m. THE DRIVES: pins 14/20/32 all hold
+(max lat 1.2-2.6), the payout still 8.52 m, bank 48 deg, the
+lift-out cruise max lat 1.55, the finish completes. The board
+stands verbatim.
+Re-derived numbers: none moved - the bowl pays out 8.52 m, the
+funlab is 823 stations, the loop's pins and surfaces are
+FP49's; the boost census is unchanged (circuit 187.0/lap,
+ribbon 96.3/lap - repricing reported only, per the standing
+economy ruling). Check arithmetic: 839 + 2 new stage-66 checks
+(the built-mesh corridor audit; the bowl rim continuity over
+the flare spans) = 841.
+Gates: GDScript preflight (engine import + boot) clean; SMOKE
+ALL 841; API GUARD ALL 71. Render proof: CHECK PHASE 178 of
+179 (the sole FAIL the standing wheel-hub reach artifact,
+every baseline since FP31) AND CAPTURE REGENERATION COMPLETED
+- the archived tests/*.png are FP50 frames, the stamp view
+included; two new portraits (capture 32): the loop's threshold
+from the entry lane and the bowl's rim from inside the wall.
+Disclosure: the first smoke launch died on a parse error in
+the new stage-66 block (it named span variables the shipped
+stage does not declare); fixed test-side before the run that
+passed - no game code involved. Proof frames (driver's eye,
+GL): the threshold portrait - the mouth ahead, the lanes side
+by side at the base, no post or wedge standing between them;
+the rim portrait - the wall's line running ahead through the
+reshaped flare in one sweep. Whether the base READS clean and
+the line READS smooth from the seat is the owner's verdict,
+still owed.

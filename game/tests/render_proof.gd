@@ -1452,6 +1452,35 @@ func _run() -> void:
 	await snap(main.fallback_cam, "lab_drumbeat_view.png")
 	main._set_track("circuit")
 
+	# Capture 32 (Fix Pass 50): THE FUNLAB'S TWO VERDICTS -
+	# the loop's threshold from the entry lane (the owner's
+	# FP47-FP49 still angle: the mouth dead ahead, the two
+	# lanes side by side at the base, and - the FP50 law -
+	# nothing standing in the road space: no post or wedge
+	# between the lanes, no cheek mass crowding the feet)
+	# and the bowl's rim from inside the wall (the owner's
+	# in-bowl still angle: the rim's line running ahead
+	# through the reshaped flare-out, one clean arc, no
+	# kink). Portraits only, like capture 27: structure
+	# evidence under llvmpipe - whether the base reads
+	# clean and the line reads smooth from the seat is
+	# the device's to judge.
+	var felems32: Array = main.track_data["funlab"]["features"]["elements"]
+	main._set_track("funlab")
+	main.debug_warp_to_s(float(felems32[0][1]) - 3.0)
+	for i32: int in 30:
+		await physics_frame
+	check(main.mode == main.MODE_DRIVE and main.active_track == "funlab",
+		"capture 32: on the loop's threshold, entry lane, mouth ahead (mode=%d)" % main.mode)
+	await snap(main.fallback_cam, "lab_loop_threshold_view.png")
+	main.debug_warp_to_s(float(felems32[1][1]) + 28.0)
+	for j32: int in 15:
+		await physics_frame
+	check(main.mode == main.MODE_DRIVE and main.active_track == "funlab",
+		"capture 32: on the bowl's wall looking along the rim through the flare (mode=%d)" % main.mode)
+	await snap(main.fallback_cam, "lab_bowl_rim_view.png")
+	main._set_track("circuit")
+
 	# Captures 28-30 (Fix Pass 30, Item 2): the CENTRE
 	# GAUGE's portraits - the Drop Start dangle (where FP30
 	# Item 1 makes the wheel live for dialling the landing
