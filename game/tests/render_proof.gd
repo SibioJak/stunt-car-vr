@@ -1555,6 +1555,44 @@ func _run() -> void:
 	check(not rect31.intersects(drect31),
 		"capture 31: the stamp clears the DIAG board's text rect")
 
+	# Capture 33 (Fix Pass 51): DRIVER'S-EYE MID-FLIGHT, TRIM
+	# BOTH WAYS - the same staged flight above the ribbon
+	# (6 m up, 20 m/s), captured from the eye anchor at the
+	# same air time with full brake trim and with full
+	# throttle trim. The two attitudes must READ differently
+	# from the seat: brake drives the nose down (the horizon
+	# drops in frame), throttle holds it up. Structural
+	# only under llvmpipe - the feel is the seat's.
+	# AMENDED (finisher, FLAGGED): staged at 6 m (the 3 m
+	# flight is 0.70 s measured and lands before the
+	# capture's 63rd frame) and the asserted signs follow
+	# the trim's corrected direction - nose-up positive:
+	# throttle's share is positive, brake's negative. The
+	# drafted capture asserted the inverted pair and passed
+	# its bound by 0.001 rad.
+	main._set_track("ribbon")
+	var trim51: Array = []
+	for t51: int in 2:
+		main.debug_stage_flight51(50.0, 6.0, 20.0, 0.0, 0.0, 0.0)
+		main.test_throttle = 1.0 if t51 == 1 else 0.0
+		main.test_brake = 0.0 if t51 == 1 else 1.0
+		for w51: int in 63: # ~0.7 s of flight: past the arm floor, mid-flight
+			await physics_frame
+		trim51.append(main.air_trim_off)
+		await snap(main.fallback_cam, "fp51_trim_brake_view.png" if t51 == 0 else "fp51_trim_throttle_view.png")
+		main.test_throttle = 0.0
+		main.test_brake = 0.0
+		var g51: int = 0
+		while main.mode != main.MODE_DRIVE and g51 < 700:
+			await physics_frame
+			g51 += 1
+			if main.mode == main.MODE_HANG:
+				main.debug_set_hang_dangle()
+				main._do_release()
+	check(trim51.size() == 2 and float(trim51[0]) < -0.03 and float(trim51[1]) > 0.03,
+		"capture 33: mid-flight the trim reads both ways from the seat (brake %+.3f rad nose-down, throttle %+.3f rad nose-up)" % [
+			float(trim51[0]), float(trim51[1])])
+
 	print("---")
 	if failures == 0:
 		print("RENDER PROOF: ALL %d CHECKS PASSED" % checks)

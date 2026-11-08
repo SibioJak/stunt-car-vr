@@ -188,6 +188,54 @@ func _run() -> void:
 			tiles2.append(await _grab())
 	_save_strip(tiles2, "crest_edge_strip.png")
 
+	# ---- FP51 strip: the end-over-end, staged ----
+	# FLAGGED REPOINT (FP51 report): the strip was specced
+	# on the lab's crest 3, but the crest separates from a
+	# constant grade - its measured separation rate is
+	# ~0.1 rad/s, below the violence line, and its flight
+	# is the film's (see stage 73's header). The rotation
+	# proof therefore stages the model's violent flight
+	# directly (debug_stage_flight51: 24 m/s, conserved
+	# rate -1.5 rad/s nose-DOWN - finisher: conservation
+	# rules on nose-down separations, the tumble
+	# direction; the drafted +1.5 staged a backward
+	# rotation the production gate does not conserve),
+	# tiled every 3rd physics frame from the
+	# car-anchored camera, dense enough to trace the
+	# nose's path frame to frame, through to the roof
+	# arrival and the crane stand-in's collection.
+	main._set_track("ribbon")
+	await physics_frame
+	await physics_frame
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await physics_frame
+	await physics_frame
+	await physics_frame
+	main._do_release()
+	for w51: int in 240:
+		await physics_frame
+		if main.mode == main.MODE_DRIVE:
+			break
+	main.test_throttle = 0.0
+	main.test_brake = 0.0
+	main.wheel_angle = 0.0
+	main.debug_stage_flight51(100.0, 6.0, 24.0, 0.0, -1.5, 0.0)
+	var tiles51: Array = []
+	var step51: int = 0
+	for f51: int in 600:
+		await physics_frame
+		step51 += 1
+		if main.mode == main.MODE_AIR:
+			if step51 % 3 == 0:
+				_place_cam(1.0)
+				tiles51.append(await _grab())
+		elif tiles51.size() > 0:
+			break
+	check(tiles51.size() >= 12,
+		"FP51 strip: the staged violent flight was captured dense (%d tiles)" % tiles51.size())
+	_save_strip(tiles51, "fp51_crest_strip.png")
+
 	print("---")
 	if failures == 0:
 		print("FRAME STRIPS: ALL %d CHECKS PASSED" % checks)

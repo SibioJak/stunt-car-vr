@@ -7502,3 +7502,123 @@ the rim portrait - the wall's line running ahead through the
 reshaped flare in one sweep. Whether the base READS clean and
 the line READS smooth from the seat is the owner's verdict,
 still owed.
+
+## Fix Pass 51 — THE FLIGHT, HONEST (pitch momentum conserved on violent separations; trim on the long air; the roof gets a ruling)
+the flight model was FP14's film: the nose builds
+nose-down at one fitted rate whatever the separation, and the
+owner's crest report named the lie ("should've gone end over
+end" - the car crests and floats level when its launch should
+carry it over). ITEM 1 - CONSERVED PITCH MOMENTUM: the road's
+pitch rate is measured through the approach (per-wheel /
+drive-fwd, low-passed) and a flight separating nose-DOWN at or
+above 0.25 rad/s CONSERVES it - the attitude integrates the
+rate it left with, replacing the film build, and the car can
+go over. Below the line nothing changes: the film law stands.
+THE THRESHOLD'S EVIDENCE (measured, finisher-corrected): the
+lab's crests separate from constant grades at 0.05-0.10 rad/s
+and stage at 0.000 - there is no crest bracket; Chris's crest
+was a real-road event this roster's lab cannot restage. Violent
+country is sharp edges: the ribbon staircase at +0.31/+0.49
+rad/s at census pace, +1.01/+1.34 at full-lap pace (nose-down
+in the corrected sign). THE GATE IS DIRECTIONAL: conservation
+rules on nose-down separations only - the roster's one
+in-band nose-up separation is the chasm's launch lip
+(+0.33 rad/s at 33 m/s), a launch whose return the film build
+already is; stages 35/41 convicted the magnitude-only gate
+(the chasm flight and its rebound changed character). FINISHER'S
+CONVICTIONS on the drafted model: the conserved rate's sign
+was inverted at _enter_air (a rising lip conserved nose-down;
+a staged +0.5 rad/s reads +11.8 deg of nose-UP travel in
+0.5 s, which fixed the convention); the drafted code ADDED
+conservation beside the film build where the brief's
+conditional reads as replacement (double-counted rotation);
+the trim ran inverted against its own stated direction
+(probes read the flown pitch: full throttle travels the nose
+up, full brake down - the drafted proofs asserted the share's
+sign, never the pitch). ITEM 2 - TRIM: past 0.35 s of air the
+triggers trim the pitch at 0.50 rad/s^2 of attitude
+acceleration - throttle nose-up, brake nose-down - bounded by
+the flight itself; measured authority: +-0.076 rad of share
+and +-4.3 deg of pitch travel about hands-off by 0.89 s into
+a staged flight. ITEM 3 - THE ROOF: an arrival is ruled ROOF
+when its pose is inverted against the road (100 deg), or when
+it arrives still rotating past 1.2 rad/s COMMITTED - past
+45 deg of misalignment (finisher: the drafted rate arm alone
+ruled the staircase's own traffic ROOF - a flight separating
+at +1.34 rad/s arriving at 16 deg of tilt - and made stages
+8/19's laps unfinishable; the commitment gate is the fix).
+A ROOF arrival books no payout, grades nothing, and is
+collected by the CRANE STAND-IN - the existing recovery with
+its attach lengthened by 6.0 s (631 frames measured against
+the ordinary 90) - the visible placeholder for the settled
+WRECK -> LONG REPAIR, which arrives with the carnage build.
+The grade table gains its honest bottom: DAMAGED - a HARD
+arrival that is crossed-up or misaligned past 30 deg - paying
+at CROSSED-UP's 0.2 row (a name change, not a retune; the
+retention curve's row is shared, so FP42's landing costs are
+unmoved). The DIAG names every ruling: LAST reads ROOF AT S ..
+- TILT .. RATE .. - CRANE STAND-IN, LONG HOLD, and DAMAGED
+prints in the grade slot. ORDINARY FLIGHTS UNMOVED: the staged
+lab-flight probes are byte-identical before/after (grades and
+payouts), and stage 58's crest law keeps the film's shape
+below the line. CENSUS (repricing reported only, per the standing economy
+ruling): ribbon staged lap FP50 111.2 -> FP51 112.3 gross
+(one arrival regraded CROSSED-UP -> DAMAGED at the same 0.2
+row; the staircase's violent separations now conserve). The
+stage-54 audit reads circuit 168.0 units/lap (FP50 187.0) and
+ribbon 91.5 (FP50 96.3): both audits are phase-sensitive
+driven draws whose flights now include the driver's own trim
+(the audit holds throttle through the air, and the trim is
+real), so the drops are the model's new behaviour priced by
+a jittery driver, not a retune - no economy number changed.
+Stage 58's audit lap: 30.40 s of payable air, 259 units.
+Re-derived numbers: the threshold 0.25 rad/s (evidence
+above); trim authority +-0.076 rad of share at 0.89 s
+(+-0.109 over the full staged window); roof attach 631
+frames against the ordinary 90. Check arithmetic: 847 (the
+builder's FP51 suite) + 10 = 857 - the ten are the FP51
+checks the diagnostic run could not reach green and the
+finisher's amendments re-derived in place (stages 58/68/73);
+the API guard stands at 71.
+Gates: GDScript preflight (engine import + boot) clean;
+SMOKE 856 of 857; API GUARD ALL 71. Render proof: CHECK
+PHASE 182 of 184 AND CAPTURE REGENERATION COMPLETED - the
+archived tests/*.png are FP51 frames; the two standing
+misses are the wheel-hub reach artifact (every baseline
+since FP31) and a one-of-63 sightline graze on the DIAG
+board that flips between runs. Three new portraits
+(capture 33 + the FP51 strip): the trim from the driver's
+eye both ways, and the staged end-over-end tiled through
+to the crane stand-in's collection. Frame strips: ALL 5.
+Disclosure: FP51's builder was killed at the owner's order
+mid-pass ("Reviewing failures" after six smoke runs) and this
+pass was finished from its tree by a finisher. The drafted
+model carried the inverted conservation sign, the inverted
+trim, the additive (not replacement) conservation, a roof
+rate arm that convicted ordinary staircase traffic, and a
+stage-73 bracket built on an unmeasured crest story; the
+test-side defects (recorder field off-by-one in stages
+58/73, a stale-rate leak in stage 29's fixture, a zero-length
+episode drawn as stage 73's rotation proof, a roof pose case
+staged past the model's own rotation cap so its arrival
+never existed, retention fixtures asserting the pre-DAMAGED
+grade names) are each flagged in place. The finisher also
+shrank the panel type one step (0.000785 -> 0.000745 - the
+FP12/FP29/FP41 remedy) after FP51's longer panel line
+wrapped and pushed the text 0.05 m off its board, and the
+builder's panel line itself stated the trim's direction
+backwards until the code was corrected to match it. The one
+smoke miss is stage 67's J5 lateral velocity at a climb's
+foot: 0.51 against the 0.5 bound - a continuous driven lap
+at the design pace, a metric no FP51 system feeds (the
+flight model engages only in the air; the reading is ground
+state before the jump), reading -0.13/-0.18 on the two runs
+either side of it and flipping with stage 58's audit death,
+which the same run reversed. It is reported as a phase draw,
+not chased: no FP51 surface moves to meet it, and the bound
+is unamended.
+What the seat still owes: whether a violent crest launch now
+FEELS like going over; whether the trim's authority and
+direction feel right on a long flight; whether the roof
+stand-in's longer hold reads as the placeholder it is. The
+flight's feel is not claimed by any number above.

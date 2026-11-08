@@ -666,6 +666,88 @@ const REBOUND_CHAIN_RESET_S: float = 0.5
 # capped so a very long flight cannot arrive inverted.
 const AIR_NOSE_DOWN_ACCEL: float = 0.349 # rad/s^2 of attitude build (~20 deg/s^2)
 const AIR_NOSE_DOWN_MAX: float = 0.489 # rad (~28 deg) cap on the build # grounded seconds that re-arm the return
+# Fix Pass 51: THE FLIGHT MODEL - honest pitch in the air.
+# The confession FP14's law stands on, in its own comment
+# below: the quadratic nose-down build DRIVES the attitude
+# toward a landable one regardless of how the car left -
+# the game rights the car. The owner's body caught it
+# (2026-10-30: "a part on the hills where I felt like I
+# should've gone end over end") and his Amiga film
+# (2026-11-03) shows the honest behaviour: the car leaves
+# nose-up and ROTATES through the flight. FP51 conserves
+# the pitch rate the car separates with (measured in
+# _update_suspension from the road's own pitch story over
+# the last AIR_RATE_TAU of contact) and integrates it in
+# the air - CONDITIONALLY. Below AIR_VIOLENCE_RAD_S of
+# launch rate the flight is ordinary: the FP14 film law
+# above stands untouched, to the digit. At or above it
+# conservation rules and the car can go over.
+# THE THRESHOLD AND ITS EVIDENCE (as finally measured,
+# finisher-corrected): the brief presumed the lab's
+# piece-3 crests (8 / 14 / 20 deg of lip) were the tumble
+# country - they are not. Each crest is a ramp onto a
+# pitched plateau: the face rotates the car at up to
+# ~0.9 rad/s MID-CLIMB, but the car separates from the
+# constant grade past the lip, where nothing is rotating,
+# so the rate AT SEPARATION reads ~0.05-0.10 rad/s at all
+# three crests (stage 73's trace). The separations this
+# model genuinely makes violent are SHARP EDGES, where
+# separation and curvature coincide: the ribbon
+# staircase's steps (+0.31 / +0.49 in stage 73's bracket
+# drive; +1.01 / +1.34 at the full reference lap's pace)
+# and the gap lip. The line sits at 0.25 rad/s
+# (~14 deg/s): above every ordinary separation the
+# census measured (drumbeat hops, gap flights, crest
+# flights all <= ~0.10) and below the mildest sharp-edge
+# separation (0.31) - the mildest flight the evidence
+# calls violent rotates, everything the film tuned keeps
+# the film's behaviour. THE GATE IS DIRECTIONAL
+# (finisher, on the same census): every violent
+# separation above is nose-DOWN - the tumble direction.
+# The roster's one separation in the band the other way
+# is the chasm's launch lip (+0.33 rad/s nose-UP at
+# 33 m/s, stage 41's driven measure): a launch, whose
+# return the film build already is. Conservation
+# therefore rules only at/below -0.25 rad/s (nose-down);
+# nose-up separations keep the film law at any measured
+# rate on this roster. The number is asserted against
+# the staged rates in smoke stage 73, so a future model
+# change that moves the bracket moves the argument too.
+const AIR_VIOLENCE_RAD_S: float = 0.25 # launch |pitch rate| (rad/s) at/above which conservation rules
+const AIR_RATE_TAU: float = 0.10 # s of road contact the separation rate is measured over
+const AIR_ROT_KEEP: float = 1.5 # rad/s (~86 deg): the airborne attitude basis stops integrating here - a cap, not a wall (see _fp51_att)
+# Item 2 - LONG-AIR AGENCY. Past AIR_TRIM_ARM_S of flight
+# the triggers become pitch trim (the model's own channel:
+# on the ground they move the car longitudinally; in the
+# air there is nothing to push against but the attitude).
+# DIRECTION (implemented, staged in stage 73): THROTTLE
+# pitches the nose UP (+), BRAKE pitches it DOWN (-), each
+# at up to AIR_TRIM_RATE of attitude acceleration - you
+# hold the nose up against the fall, or drive it down to
+# meet the landing early. The authority is BOUNDED on
+# purpose: a full-deflection hold across a 1.5 s flight
+# moves ~40 deg; it cannot cancel a violent launch's
+# conserved rate outright (0.30 rad/s still arrives
+# rotating) - it saves a marginal arrival or spoils a
+# good one, which is the brief's law.
+const AIR_TRIM_ARM_S: float = 0.35 # s of flight before the triggers arm as trim
+const AIR_TRIM_RATE: float = 0.5 # rad/s^2 of trim authority at full deflection
+# Item 3 - THE ROOF OUTCOME. An inverted arrival (or one
+# still rotating past the gradeable window at contact) is
+# not a landing: _land rules it ROOF, books NO payout, and
+# the crane stand-in collects it - the pre-carnage shape
+# of WRECK -> LONG REPAIR (owner's ruling 2026-11-07):
+# the same off-stage collection as any recovery, but the
+# attach waits ROOF_HOLD_EXTRA_S longer at the pickup
+# (the recovery's extra time on the chains is the
+# penalty; the full wreck spectacle - carnage, welding -
+# is the carnage build's, not this pass's). The ruling is
+# named on the DIAG (LAST line) and in the grab log, like
+# every ruling this game surfaces.
+const ROOF_MISALIGN_DEG: float = 100.0 # up-vs-road angle past which an arrival is inverted, not misaligned
+const ROOF_RATE_RAD_S: float = 1.2 # |attitude rate| at contact past which a COMMITTED arrival is still going over
+const ROOF_COMMIT_DEG: float = 45.0 # tilt past which the rate arm of the roof ruling applies (see _land)
+const ROOF_HOLD_EXTRA_S: float = 6.0 # s of extra attach wait at the pickup on a roof recovery (charged in _begin_recovery)
 # The return stroke itself (measured, see _susp_integrate):
 # with the stock rate the gated throw reached only 1.33 m/s
 # of its 3.66 cap on the staged gap landing - the impact's
@@ -985,7 +1067,7 @@ const BOOST_START_STOCK: float = 60.0 # the stake at race start: 2.0 s (the old 
 const BOOST_DRAIN_PER_S: float = 30.0 # unchanged since Test 1
 const BOOST_AIR_RATE: float = 10.0 # units paid per second of payable air, at CLEAN
 const BOOST_PAY_MIN_AIR_S: float = 0.15 # s: flights shorter than this pay nothing (texture hops)
-const BOOST_GRADE_MULT: Dictionary = {"CLEAN": 1.0, "SCRUBBED": 0.5, "CROSSED-UP": 0.2}
+const BOOST_GRADE_MULT: Dictionary = {"CLEAN": 1.0, "SCRUBBED": 0.5, "CROSSED-UP": 0.2, "DAMAGED": 0.2} # Fix Pass 51 (Item 3): DAMAGED books at CROSSED-UP's row - the economy is not retuned this pass; the NAME is the change
 const PAY_FLASH_S: float = 0.35 # s the meter fill flashes after a payout lands
 # Fix Pass 24 (Item 3): the air audit's sector width - the
 # geography the audit maps a track's payable air onto.
@@ -1207,6 +1289,21 @@ var lost_lat_t: float = 0.0 # FP12 item 5: dwell out past the ribbon, below the 
 var air_exit_y: float = 0.0 # FP12 item 5: road height where this flight left the ground
 var air_s_est: float = 0.0
 var air_from_gap: bool = false
+# Fix Pass 51 (Items 1-3): the flight model's state - the
+# pitch rate the car separates with (road-measured), the
+# integrated attitude offset an honest flight accumulates,
+# the conserved rate itself, the trim state, and the roof
+# outcome's record (see the constants block at AIR_VIOLENCE).
+var road_pitch_rate: float = 0.0 # the road's pitch story, measured in DRIVE (deg/s of lip rotation; + = nose rising)
+var road_pitch_prev: float = 0.0 # last drive frame's in-plane road pitch (deg)
+var road_pitch_have: bool = false
+var air_pitch_off: float = 0.0 # rad of integrated attitude offset (conservation + trim), clamped at AIR_ROT_KEEP
+var air_pitch_rate: float = 0.0 # rad/s: the conserved rate this flight carries (violent flights; else 0)
+var air_trim_off: float = 0.0 # rad of the trim's own share of air_pitch_off (reported separately)
+var air_violent: bool = false # this flight separated at/above the violence threshold
+var _trim_v51: float = 0.0 # Fix Pass 51 (Item 2): the trim's accumulated attitude velocity (rad/s) - bounded authority lives here
+var roof_recovery: bool = false # the current hang is a ROOF stand-in recovery (longer hold)
+var last_roof: String = "-" # the last ROOF ruling, for the DIAG ("" until the first)
 # Fix Pass 10 (Item 1): the s at which the car LEFT the road,
 # recorded at air entry. The drone's drop may never be ahead of
 # this - where the car ended up after flying/tumbling is not
@@ -1728,7 +1825,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP50 · 2026-11-07"
+const BUILD_STAMP: String = "FP51 · 2026-11-07"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -4954,6 +5051,40 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 	air_from_release = false # FP14 (Item 1): a road-born flight; _do_release marks its own
 	air_prev_pos = car.global_position # Fix Pass 40 (Item 1): the swept-contact history starts at the entry point
 	air_prev_h = 1e9
+	# Fix Pass 51 (Item 1): the separation story. The flight
+	# inherits the road's measured pitch rate (deg/s, nose
+	# rising +) in the attitude convention the basis
+	# rotation reads (rad, nose-UP + - the sense
+	# asin(fwd.y) measures): a car leaving a rising lip
+	# carries its nose-up rate in as a POSITIVE rate.
+	# FINISHER'S CORRECTION (the drafted code negated the
+	# rate, so a rising lip conserved nose-DOWN and a
+	# falling edge conserved nose-UP - the chasm flight's
+	# slope-match failure at stage 41 and the rebound's
+	# death at stage 35 are its fingerprints; a staged
+	# +0.5 rad/s reads +11.8 deg of nose-up travel in
+	# 0.5 s, which is the convention's proof). The gate
+	# is DIRECTIONAL: conservation rules on nose-DOWN
+	# separations at/above the line - the tumble
+	# direction, where every piece of founding evidence
+	# lives (the owner's crests, the staircase's edges).
+	# A nose-UP separation is a launch off a face (the
+	# chasm lip measures +0.33 rad/s at 33 m/s), and the
+	# film law's build is exactly the return from a
+	# launch attitude - those flights keep it. On a
+	# violent flight the conserved rate REPLACES the
+	# film build in _update_air (the brief's conditional:
+	# below the line the film stands, at/above it
+	# conservation rules - the drafted code ADDED them,
+	# double-counting the rotation on the flights this
+	# pass exists to change).
+	air_pitch_off = 0.0
+	air_trim_off = 0.0
+	_trim_v51 = 0.0
+	air_pitch_rate = deg_to_rad(road_pitch_rate)
+	air_violent = air_pitch_rate <= -AIR_VIOLENCE_RAD_S
+	if not air_violent:
+		air_pitch_rate = 0.0
 	grounded_t = 0.0
 	was_airborne = true
 	mode = MODE_AIR
@@ -5480,7 +5611,7 @@ func _build_cockpit() -> void:
 	panel_label = Label3D.new()
 	panel_label.position = Vector3(-0.368, 0.555, 0.02)
 	panel_label.font_size = 30
-	panel_label.pixel_size = 0.000785 # FP12: the controls list grew (shifter/panels lines); ~9% smaller type keeps it on its board. FP29: the list grew again (steering-mode line, stick + X named); the FP29 render proof measured the text at 1.46 m tall against the 1.24 m board, so the type shrinks again by the measured ratio - same FP12 remedy, new number. FP41: the list grew again (the ELEM jump-in lines, VR + desktop); the FP41 render proof measured the text at 1.31 m tall against the 1.24 m board, so the type shrinks again by the measured ratio - same remedy, new number.
+	panel_label.pixel_size = 0.000745 # FP12: the controls list grew (shifter/panels lines); ~9% smaller type keeps it on its board. FP29: the list grew again (steering-mode line, stick + X named); the FP29 render proof measured the text at 1.46 m tall against the 1.24 m board, so the type shrinks again by the measured ratio - same FP12 remedy, new number. FP41: the list grew again (the ELEM jump-in lines, VR + desktop); the FP41 render proof measured the text at 1.31 m tall against the 1.24 m board, so the type shrinks again by the measured ratio - same remedy, new number. FP51 (finisher): the trim annotation lengthened the throttle line and it wrapped - the FP51 render proof measured the text at 1.29 m tall against the 1.24 m board - same remedy, new number.
 	panel_label.width = 640.0
 	panel_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel_label.modulate = Color(0.92, 0.95, 1.0)
@@ -5603,7 +5734,7 @@ func _panel_text() -> String:
 		lines.append("STATE %s  TD %s" % [_state_name(), last_touchdown])
 	lines.append("-- VR CONTROLS --")
 	lines.append("Steering: GRIP wheel + turn hand (one or both), or R thumbstick")
-	lines.append("Throttle R trigger / Brake L trigger")
+	lines.append("Throttle R trigger / Brake L trigger (in the air: pitch trim - throttle nose up, brake nose down)")
 	lines.append("Boost: R A button (while driving) - the dash-top FLASK's liquid is the tank; air pays it back")
 	lines.append("Release: DROP BUTTON (upper dash face) or L X button - on chains it drops you, any time")
 	lines.append("Steer mode WHEEL/STICK: HOLD R A button while hanging")
@@ -5690,6 +5821,14 @@ func _build_diag_block() -> String:
 		lines.append("LAST PAY +%.1f AIR %.2fs %s" % [last_pay_units, last_pay_air_s, last_pay_grade])
 	else:
 		lines.append("LAST PAY -")
+	# Fix Pass 51 (Items 1+3): the flight model's rulings on
+	# the board like every other: the LAST line names the
+	# most recent honest-bottom outcome (a ROOF ruling, or a
+	# DAMAGED grade), "-" until the first one happens.
+	var last51: String = last_roof
+	if last51 == "-" and contact_grade == "DAMAGED":
+		last51 = "DAMAGED (HARD ARRIVAL)"
+	lines.append("LAST %s" % last51)
 	# Fix Pass 13 (Item 4): the hang input log - the last six
 	# face-button edges during MODE_HANG, oldest first, each
 	# "racetime:TAG" (RA/RB/LX/LY).
@@ -7527,11 +7666,25 @@ func _begin_recovery(_catch_pos: Vector3, from_s: float) -> void:
 	edge_roll = 0.0
 	hang_phase = "attach"
 	anchor_t = 0.0
+	# Fix Pass 51 (Item 3): a ROOF recovery's collection is
+	# the stand-in's penalty - the car waits at the pickup
+	# while the crew reaches it (the attach runs long, see
+	# _update_hang). Charged HERE, at the collection, not
+	# at the station: an early release off a roof hang
+	# skips the dangle, never the wait (the Full Moron
+	# clause keeps the button live in every phase).
+	if roof_recovery:
+		anchor_t = -ROOF_HOLD_EXTRA_S
 	drop_target_s = _find_drop_s(from_s)
 	_setup_hang_at()
 
 
 func _setup_hang_at() -> void:
+	# Fix Pass 51 (Item 3): the hang is now PLACED - the roof
+	# surcharge was charged in _begin_recovery (anchor_t)
+	# before this call, and a hang stationed any other way
+	# (the funlab jump-in) is never a roof recovery.
+	roof_recovery = false
 	# Fix Pass 41 (Item 4): the hang setup at drop_target_s,
 	# extracted from _begin_recovery so the funlab jump-in
 	# stations the crane by the same code the recovery uses -
@@ -7806,6 +7959,14 @@ func _do_release() -> void:
 		last_release_s, last_release_hdg_deg, last_release_sec_deg, last_release_err_deg])
 	yaw_rate = 0.0
 	vel3 = air_vel
+	# Fix Pass 51: a release is transport, not a launch - the
+	# flight model's state starts empty (the FP13 drop
+	# contract: no rotation, no trim story, honest fall).
+	air_pitch_off = 0.0
+	air_trim_off = 0.0
+	_trim_v51 = 0.0
+	air_pitch_rate = 0.0
+	air_violent = false
 	mode = MODE_AIR
 	contact_label.text = ""
 	contact_readout_t = 0.0
@@ -8358,9 +8519,49 @@ func _update_air(delta: float) -> void:
 	# contract, and a 0.44 s fall would only pick up ~2 deg
 	# of build against the pendulum's own tilt story.
 	if not air_from_release:
-		var off7: float = clampf(-0.5 * AIR_NOSE_DOWN_ACCEL * air_time * air_time, -AIR_NOSE_DOWN_MAX, 0.0)
-		if off7 != 0.0:
-			car.global_transform = Transform3D(air_basis0.rotated(air_basis0.x.normalized(), off7), pos)
+		# Fix Pass 51 finisher: on a VIOLENT flight the
+		# film build does not run - conservation REPLACES
+		# it (the brief's conditional). The drafted code
+		# added the two and double-counted the rotation.
+		var off7: float = 0.0
+		if not air_violent:
+			off7 = clampf(-0.5 * AIR_NOSE_DOWN_ACCEL * air_time * air_time, -AIR_NOSE_DOWN_MAX, 0.0)
+		# Fix Pass 51 (Items 1+2): the honest share of the
+		# attitude. A CONSERVED flight integrates the rate
+		# it separated with; a TRIMMED flight (past the arm
+		# floor) integrates the driver's triggers as pitch
+		# acceleration: THROTTLE nose-UP, BRAKE nose-DOWN
+		# (nose-up is positive in this convention).
+		# FINISHER'S CORRECTION: the drafted trim ran the
+		# other way - (brake - throttle) - against the
+		# direction stated in the constants, the panel
+		# text and the stage labels; the staged proofs
+		# asserted the SHARE's sign, never the pitch, so
+		# the inversion survived them. The finisher's
+		# probes read the pitch itself: full throttle
+		# travels the nose up, full brake down. The shares
+		# accumulate into air_pitch_off, applied about
+		# the same takeoff axis as FP14's build. The
+		# integration PAUSES at AIR_ROT_KEEP of offset:
+		# the stored attitude stops travelling, but the
+		# RATE is remembered (air_pitch_rate / the trim's
+		# own velocity), so a car resting against the cap
+		# is still ARRIVING with its rotation when it
+		# lands - _land's roof ruling reads the rate, not
+		# the pose, which is what keeps the cap from
+		# resurrecting FP14's righting in disguise.
+		if air_violent or air_time > AIR_TRIM_ARM_S:
+			var step51: float = air_pitch_rate * delta
+			if air_time > AIR_TRIM_ARM_S:
+				var trim51: float = (in_throttle - in_brake) * AIR_TRIM_RATE
+				_trim_v51 += trim51 * delta
+				var tstep51: float = _trim_v51 * delta
+				air_trim_off += tstep51
+				step51 += tstep51
+			air_pitch_off = clampf(air_pitch_off + step51, -AIR_ROT_KEEP, AIR_ROT_KEEP)
+		var off51: float = off7 + air_pitch_off
+		if off51 != 0.0:
+			car.global_transform = Transform3D(air_basis0.rotated(air_basis0.x.normalized(), off51), pos)
 	# Fix Pass 9: the track s estimate comes from projecting the
 	# car's ACTUAL position (the old forward-motion integration
 	# assumed the velocity followed the spine - under the
@@ -8490,7 +8691,63 @@ func _slope_vy_at(fr: Dictionary, vel_xz: Vector2) -> float:
 	return vel_xz.dot(t2) * t3.y / maxf(t2.length_squared(), 0.04)
 
 
+## Fix Pass 51 (Item 3): the arrival's total attitude rate
+## at this moment - FP14's film build is analytic (its
+## derivative is -ACCEL x air_time, nose-down/positive in
+## the shared convention); the conserved and trim shares
+## are state. _land's roof ruling reads this, never the
+## pose alone: a car resting at the rotation cap with its
+## rate still live is ARRIVING rotating, and grading it by
+## its frozen pose would resurrect the righting FP51
+## exists to remove.
+func _arrival_rate51() -> float:
+	var film51: float = 0.0
+	if not air_from_release and not air_violent and air_time * AIR_NOSE_DOWN_ACCEL < 1.0:
+		film51 = -AIR_NOSE_DOWN_ACCEL * air_time
+	return film51 + air_pitch_rate + _trim_v51
+
+
 func _land(fr: Dictionary, lat: float, h: float) -> void:
+	# Fix Pass 51 (Item 3): THE ROOF RULING, read BEFORE any
+	# grading - an arrival on its roof, or still rotating
+	# past the gradeable window, is not a landing with
+	# extra steps, and the grade table below never sees
+	# it. The pose test is the up vector's angle to the
+	# road's (past ROOF_MISALIGN_DEG the car is inverted,
+	# not misaligned); the rate test is the total attitude
+	# rate at contact, GATED on commitment: past
+	# ROOF_RATE_RAD_S AND already tilted past
+	# ROOF_COMMIT_DEG the car is still going over (the cap
+	# can freeze a pose, never a ruling). The gate is the
+	# finisher's conviction, measured on the ribbon's own
+	# staircase at the reference lap's pace: the steps
+	# separate at up to +1.34 rad/s and arrive at 16-18 deg
+	# of tilt, wheels-down - rotation the suspension meets
+	# as a landing, on flights too short for the trim to
+	# even arm, so a rate-only ruling made the staircase's
+	# ordinary traffic an unavoidable ROOF. A car at
+	# 45+ deg still rotating at 1.2+ rad/s has no such
+	# meeting left in it. Crane drops are exempt (a
+	# release is the crane's own contract, FP13). A ROOF arrival: no
+	# springs story, no payout (the audit flight closes
+	# unbooked), the ruling named on the DIAG and in the
+	# log, and the crane stand-in collects the car - with
+	# the recovery's LONGER hold at the station (see
+	# _setup_hang_at's roof branch).
+	var up_pre51: Vector3 = car.global_transform.basis.y.normalized()
+	var mis_pre51: float = rad_to_deg(up_pre51.angle_to(fr["up"]))
+	var rate51: float = _arrival_rate51()
+	if not air_from_release and (mis_pre51 > ROOF_MISALIGN_DEG or (absf(rate51) > ROOF_RATE_RAD_S and mis_pre51 > ROOF_COMMIT_DEG)):
+		last_touchdown = "ROOF (tilt %.0f, rate %+.2f)" % [mis_pre51, rate51]
+		last_roof = "ROOF AT S %.0f - TILT %.0f RATE %+.2f - CRANE STAND-IN, LONG HOLD" % [air_s_est, mis_pre51, rate51]
+		_grab_event("ROOF s%.0f tilt %.0f rate %+.2f" % [air_s_est, mis_pre51, rate51])
+		if contact_label != null:
+			contact_label.text = "TOUCHDOWN ROOF - CRANE STAND-IN"
+			contact_readout_t = CONTACT_READOUT_S
+		audit_flight_open = false
+		roof_recovery = true
+		_begin_recovery(car.global_position, air_start_s)
+		return
 	# coming in below the ribbon edge costs extra impact (edge-catch rule)
 	# Fix Pass 40 (Item 1): the arrival speed is RELATIVE TO
 	# THE ROAD (see _slope_vy_at): on a descent the surface
@@ -8641,12 +8898,28 @@ func _land(fr: Dictionary, lat: float, h: float) -> void:
 	# number; on a banked or pitched one the in-plane angle
 	# is the angle the getaway actually has to kill.
 	contact_head_err = -rad_to_deg(atan2(d41.dot(Vector3(fr["side"])), d41.dot(Vector3(fr["tan"]))))
+	# Fix Pass 51 (Item 3): the grade decision comes BEFORE
+	# the retention spend and the payout below - they read
+	# this grade. DAMAGED (the honest bottom) is for the
+	# arrivals the grade table itself already scores worst
+	# AND the quality table calls HARD: a crossed-up
+	# face-slam (misalign past 30) or a hard arrival the
+	# connection table also scores CROSSED-UP. A merely
+	# FAST arrival (vy-driven HARD with a true connection)
+	# keeps its connection grade - the economy's staged
+	# fixtures grade exactly there (a 5 m fall arrives at
+	# vy ~9.9 with a perfect connection and pays CLEAN),
+	# and this pass does not reprice them. A ROOF arrival
+	# never reaches this table (see the ruling at _land's
+	# head).
 	if contact_lat_speed <= CONTACT_CLEAN_LAT and absf(contact_head_err) <= CONTACT_CLEAN_HDG:
 		contact_grade = "CLEAN"
 	elif contact_lat_speed <= CONTACT_SCRUB_LAT and absf(contact_head_err) <= CONTACT_SCRUB_HDG:
 		contact_grade = "SCRUBBED"
 	else:
 		contact_grade = "CROSSED-UP"
+	if quality == "HARD" and (contact_grade == "CROSSED-UP" or misalign > 30.0):
+		contact_grade = "DAMAGED"
 	contact_readout_t = CONTACT_READOUT_S
 	if contact_label != null:
 		contact_label.text = "TOUCHDOWN %s - LAT %.1f M/S, HDG %+.1f DEG" % [
@@ -9564,6 +9837,29 @@ func _update_suspension(delta: float) -> void:
 		# compression happens along later.
 		if rebound_gate_vy > 0.0 and grounded_t > REBOUND_GATE_EXPIRY_S:
 			rebound_gate_vy = 0.0
+		# Fix Pass 51 (Item 1, measurement): THE SEPARATION
+		# RATE. The road's pitch IN THE CAR'S PLANE - the
+		# angle of the forward the car is glued to, above
+		# the horizontal - differenced over the contact and
+		# low-passed over AIR_RATE_TAU. This is the rate the
+		# lip is rotating the car at: on the lab crests it
+		# reads vf x the pitch curvature (the 0.030/0.055
+		# rad/m story at their pinned 30), on a smooth climb
+		# at constant grade it reads ~0 (the car is not
+		# rotating, however steep), and at a crest's sharp
+		# top it peaks exactly where a launch separates.
+		# _enter_air inherits it. Measured on the DRIVE
+		# state only - the suspension's own stroke never
+		# enters it (the body's pitch_extra is a spring
+		# visual; the flight inherits the ROAD's rotation).
+		var rp_now51: float = rad_to_deg(asin(clampf(drive_fwd.y, -1.0, 1.0)))
+		if road_pitch_have and delta > 0.0:
+			var rp_raw51: float = (rp_now51 - road_pitch_prev) / delta
+			road_pitch_rate += (rp_raw51 - road_pitch_rate) * clampf(delta / AIR_RATE_TAU, 0.0, 1.0)
+		else:
+			road_pitch_rate = 0.0
+		road_pitch_prev = rp_now51
+		road_pitch_have = true
 		if wheel_air[0] and wheel_air[1] and wheel_air[2] and wheel_air[3] \
 				and (speed > 8.0 or frame_fall41):
 			# Fix Pass 21 (Item 2): every corner has
@@ -10621,6 +10917,36 @@ func debug_set_hang_dangle() -> void:
 		orient_yaw_v = 0.0
 
 
+func debug_stage_flight51(s: float, height: float, spd: float, pitch_off: float,
+		rate_rad_s: float, trim_v: float) -> void:
+	# Fix Pass 51 (Items 1-3): stage a flight mid-air above
+	# the road at s, at the given height and forward speed,
+	# with the attitude offset and the conserved rate set
+	# directly - the model's own variables, staged, so the
+	# rest of the flight (integration, contact, the roof
+	# ruling) runs production code. pitch_off is in the FP14
+	# convention (rad, + = nose-down about the takeoff axis).
+	var fr51: Dictionary = _frame_at(s)
+	mode = MODE_AIR
+	air_from_gap = false
+	air_from_release = false
+	air_from_rebound = false
+	air_basis0 = Basis(Vector3(1, 0, 0), 0.0)
+	car.global_transform = Transform3D(air_basis0, Vector3(fr51["pos"]) + Vector3.UP * height)
+	air_vel = Vector3(fr51["tan"]) * spd + Vector3.UP * 0.5
+	air_prev_pos = car.global_position
+	air_prev_h = 1e9
+	air_time = 0.0
+	air_s_est = s
+	air_start_s = s
+	air_exit_y = float(fr51["pos"].y)
+	air_pitch_off = pitch_off
+	_trim_v51 = trim_v
+	air_trim_off = 0.0
+	air_pitch_rate = rate_rad_s
+	air_violent = rate_rad_s <= -AIR_VIOLENCE_RAD_S # mirrors _enter_air's directional gate (finisher)
+
+
 func debug_force_fall_at(s: float) -> void:
 	# Fix Pass 20 (Item 3): stage a fall FROM s through the
 	# production loss path - the car is placed in AIR 20 m
@@ -10646,6 +10972,13 @@ func debug_force_fall_at(s: float) -> void:
 	air_vel = Vector3(0.0, -6.0, 0.0)
 	car.global_position = frf["pos"] - Vector3.UP * 20.0
 	air_basis0 = car.global_transform.basis # Fix Pass 44: as debug_stage_landing - a direct AIR entry records its takeoff basis
+	# Fix Pass 51 (support): the flight model's state too -
+	# a staged fall flies neutral (see debug_stage_landing).
+	air_pitch_off = 0.0
+	air_trim_off = 0.0
+	_trim_v51 = 0.0
+	air_pitch_rate = 0.0
+	air_violent = false
 
 
 func debug_audit_begin() -> void:
@@ -10751,6 +11084,16 @@ func debug_stage_landing(s: float, height: float, fwd_speed: float) -> void:
 	# basis ~7 deg off the ribbon's frame). The staged
 	# basis IS the takeoff basis - say so.
 	air_basis0 = car.global_transform.basis
+	# Fix Pass 51 (support, same class as FP44's note): a
+	# direct AIR entry bypasses _enter_air, so the flight
+	# model's state is reset here too - a staged landing
+	# flies NEUTRAL (no conserved rate, no trim history),
+	# never on whatever the last real flight left behind.
+	air_pitch_off = 0.0
+	air_trim_off = 0.0
+	_trim_v51 = 0.0
+	air_pitch_rate = 0.0
+	air_violent = false
 
 
 # --- Fix Pass 11 (Item 2): the lever-zone geometry audit ---------

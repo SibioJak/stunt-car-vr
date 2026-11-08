@@ -3305,6 +3305,18 @@ func _run() -> void:
 		if kick != 0.0:
 			var r0: Vector3 = main._heading_right()
 			main.vel2 += Vector2(r0.x, r0.z) * kick
+		# Fix Pass 51 (finisher, FLAGGED): the flight model's
+		# separation rate is staged NEUTRAL here - this
+		# stage's subject is the air trigger's timing, and a
+		# warp carries no honest rate: the settle frames run
+		# glued past the lip and manufacture one (-137 deg/s
+		# measured at the chasm lip), and a stale rate from
+		# the previous stage's driving leaks through the
+		# low-pass the same way (the climb case arrived ROOF
+		# in-suite on a rate its own approach never made).
+		# Driven separations are stages 41/58/73's subject.
+		main.road_pitch_rate = 0.0
+		main.road_pitch_have = false
 		main._enter_air(false, rebound)
 		var fa: int = 0
 		while fa < 700:
@@ -6435,7 +6447,7 @@ func _run() -> void:
 	# ---- the piece-drive recorder (probe-faithful) ----
 	var rec58: Dictionary = {"eps": [], "in_air": false, "t": 0.0, "s": 0.0,
 		"gap": false, "reb": false, "launch": 0.0, "minp": 0.0, "maxp": 0.0,
-		"hung": false, "slip": 0.0, "lat": 0.0, "heave": 0.0}
+		"hung": false, "slip": 0.0, "lat": 0.0, "heave": 0.0, "rate51": 0.0, "viol51": false}
 	var rec58_step: Callable = func() -> void:
 		var pd58: float = rad_to_deg(asin(clampf((-main.car.global_transform.basis.z).y, -1.0, 1.0)))
 		rec58["slip"] = maxf(float(rec58["slip"]), main.slip_state)
@@ -6452,13 +6464,23 @@ func _run() -> void:
 			rec58["launch"] = pd58
 			rec58["minp"] = pd58
 			rec58["maxp"] = pd58
+			# Fix Pass 51 (Items 1+3, support): the episode
+			# also records the flight model's own account -
+			# the conserved rate the separation measured and
+			# whether the flight flew violent (indices 8/9,
+			# read by stage 58). Additive only: the
+			# FP28 indices 0-7 are untouched.
+			rec58["rate51"] = main.air_pitch_rate
+			rec58["viol51"] = main.air_violent
 		elif main.mode == main.MODE_AIR:
 			rec58["t"] = float(rec58["t"]) + 1.0 / 90.0
 			rec58["minp"] = minf(float(rec58["minp"]), pd58)
 			rec58["maxp"] = maxf(float(rec58["maxp"]), pd58)
 		elif bool(rec58["in_air"]):
 			rec58["in_air"] = false
-			(rec58["eps"] as Array).append([rec58["s"], rec58["t"], rec58["gap"], rec58["reb"], rec58["launch"], rec58["minp"], rec58["maxp"], main.contact_grade])
+			var ep58x: Array = [rec58["s"], rec58["t"], rec58["gap"], rec58["reb"], rec58["launch"], rec58["minp"], rec58["maxp"], main.contact_grade,
+				float(rec58["rate51"]), bool(rec58["viol51"])]
+			(rec58["eps"] as Array).append(ep58x)
 	var rec58_reset: Callable = func() -> void:
 		rec58["eps"] = []
 		rec58["in_air"] = false
@@ -6566,18 +6588,35 @@ func _run() -> void:
 		main.test_throttle = 0.0
 		var best58: Array = []
 		for e58b: Array in rec58["eps"]:
+			if e58b.size() < 10:
+				continue # Fix Pass 51 (support): an episode short of the FP51 fields is not this piece's flight - skip, never index blind (finisher: the recorder's episodes carry exactly 10 fields, rate/violent at 8/9 - the drafted 11-field guard skipped every episode and the piece read as flightless)
 			if float(e58b[1]) >= 0.5 and (best58.is_empty() or float(e58b[1]) > float(best58[1])):
 				best58 = e58b
 		check(not best58.is_empty() and not bool(rec58["hung"]),
 			"stage58: piece 3 crest %d flies at the pinned 30" % ci58)
 		if not best58.is_empty():
-			print("stage58 P3 crest %d: flight %.2f s, launch %+.1f deg, pitch range %+.1f..%+.1f" % [ci58, float(best58[1]), float(best58[4]), float(best58[5]), float(best58[6])])
+			print("stage58 P3 crest %d: flight %.2f s, launch %+.1f deg, pitch range %+.1f..%+.1f, sep rate %.3f rad/s, violent %s" % [ci58, float(best58[1]), float(best58[4]), float(best58[5]), float(best58[6]), float(best58[8]), str(bool(best58[9]))])
 			check(float(best58[1]) >= float(crest_wins58[ci58][0]) and float(best58[1]) <= float(crest_wins58[ci58][1]),
 				"stage58: piece 3 crest %d - flight time in its measured window (%.2f s)" % [ci58, float(best58[1])])
 			check(absf(float(best58[4]) - float(crest_nom58[ci58])) <= 2.5,
 				"stage58: piece 3 crest %d - launch pitch matches the ramp (%.1f deg vs %.0f nominal)" % [ci58, float(best58[4]), float(crest_nom58[ci58])])
-			check(float(best58[6]) <= float(best58[4]) + 1.0 and float(best58[4]) - float(best58[5]) <= 30.5,
-				"stage58: piece 3 crest %d - the nose NEVER pitches past launch (peak %.1f vs launch %.1f): the current model cannot tumble, measured" % [ci58, float(best58[6]), float(best58[4])])
+			# Fix Pass 51 (Item 1, FLAGGED - the old law
+			# rewritten): FP28-FP50 asserted "the nose NEVER
+			# pitches past launch: the current model cannot
+			# tumble" - the confession this pass removes.
+			# The new law: BELOW the violence line the film's
+			# behaviour stands (peak at launch, arrival
+			# inside the film's build); AT/ABOVE it the
+			# flight ROTATES (peak travels past launch).
+			# Which side each crest sits on is stage 73's
+			# bracket; here the shape of each side is what
+			# is asserted.
+			if bool(best58[9]):
+				check(float(best58[6]) > float(best58[4]) + 25.0,
+					"stage58: piece 3 crest %d - VIOLENT: the flight rotates past launch (peak %.1f vs launch %.1f deg)" % [ci58, float(best58[6]), float(best58[4])])
+			else:
+				check(float(best58[6]) <= float(best58[4]) + 1.0 and float(best58[4]) - float(best58[5]) <= 30.5,
+					"stage58: piece 3 crest %d - ordinary: the nose never pitches past launch (peak %.1f vs launch %.1f), the film's law intact below the line" % [ci58, float(best58[6]), float(best58[4])])
 	# ---- PIECE 4: the chasm (pin 30) ----
 	rec58_reset.call()
 	main.debug_warp_to_s(main.gap_s0 - 80.0)
@@ -9224,10 +9263,16 @@ func _run() -> void:
 	check(bool(rs68[0]) and String(rs68[2]) == "SCRUBBED" and float(rs68[1]) >= 0.52 and float(rs68[1]) <= 0.68,
 		"stage68: a SCRUBBED arrival spends a real share (retention %.3f; FP40 read 0.694)" % float(rs68[1]))
 	var rx68: Array = await ret68.call(3.3, 24.0, 5.0)
-	check(bool(rx68[0]) and String(rx68[2]) == "CROSSED-UP" and float(rx68[1]) >= 0.34 and float(rx68[1]) <= 0.48,
+	# AMENDED (FP51, FLAGGED): both arrivals below are
+	# HARD crossed-up slams - under FP51's honest bottom
+	# they grade DAMAGED, not CROSSED-UP (stage 73 asserts
+	# the same regrade from the other side). The retention
+	# curve's row is shared between the two grades, so the
+	# FP42 bands stand unmoved; only the grade name moves.
+	check(bool(rx68[0]) and String(rx68[2]) == "DAMAGED" and float(rx68[1]) >= 0.34 and float(rx68[1]) <= 0.48,
 		"stage68: a CROSSED-UP arrival spends most of it (retention %.3f; FP40 read 0.544)" % float(rx68[1]))
 	var rslam68: Array = await ret68.call(12.0, 24.0, 3.5)
-	check(bool(rslam68[0]) and String(rslam68[2]) == "CROSSED-UP" and float(rslam68[1]) >= 0.15 and float(rslam68[1]) <= 0.29,
+	check(bool(rslam68[0]) and String(rslam68[2]) == "DAMAGED" and float(rslam68[1]) >= 0.15 and float(rslam68[1]) <= 0.29,
 		"stage68: the nose-first slam keeps almost nothing (retention %.3f; FP40 read 0.338)" % float(rslam68[1]))
 	main.start_race()
 	var dang68: bool = await wait_until(func() -> bool: return main.hang_phase == "dangle", 4000)
@@ -9920,6 +9965,310 @@ func _run() -> void:
 	check(rpm_tail72.size() == 60 and rpm_read72 > fp44_target72 + 0.30,
 		"stage72: at 48 in top gear the note reads alive (audio_rpm %.3f vs FP44's %.3f target)" % [
 			rpm_read72, fp44_target72])
+
+	# ---------- stage 73: Fix Pass 51 - THE FLIGHT MODEL ----
+	# Item 1: the separation rate is MEASURED (the road's
+	# pitch story in the car's plane, differenced over the
+	# contact) and, at/above the violence line, CONSERVED.
+	# MEASURED BRACKET (this pass's own census, flagged in
+	# the FP51 report): the brief's chosen bracket - the
+	# lab's piece-3 crests - DOES NOT EXIST in this model's
+	# geometry. Each crest separates from a CONSTANT GRADE
+	# (the piece is a ramp onto a pitched plateau): the
+	# face rotates the car at up to ~0.9 rad/s mid-climb,
+	# but a constant grade rotates nothing, so the rate AT
+	# SEPARATION reads ~0.05-0.10 rad/s at all three crests
+	# (per-frame trace in the report). The separations the
+	# model genuinely makes violent are SHARP edges - the
+	# ribbon staircase's steps (measured +0.31/+0.49 rad/s)
+	# and the gap lip - where separation and curvature
+	# coincide. So the bracket asserted here is: (a) the
+	# crests measured, all BELOW the line, their flights
+	# keeping the film's behaviour; (b) the staircase,
+	# where a violent separation's conservation SHOWS in
+	# the flight (the nose travels past where FP14's law
+	# alone would put it) and the arrival still lands.
+	# Item 2: the trim arms past AIR_TRIM_ARM_S and moves
+	# the attitude both ways, bounded. Item 3: a staged
+	# inverted arrival and a staged past-the-cap arrival
+	# both rule ROOF (no payout, the stand-in's longer
+	# attach), and a staged face-slam rules DAMAGED.
+	main._set_track("lab")
+	await frames(5)
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await frames(3)
+	main._do_release()
+	var ok73: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(ok73, "stage73: the lab stages (drop releases into a drive)")
+	var subs73: Dictionary = main.track_data["lab"]["features"]["subs"]
+	var rec73: Array = []
+	var rec_on73: Dictionary = {"on": true}
+	# Fix Pass 51 (support): a self-contained flight
+	# recorder in the shape of stage 58's (the stage-58
+	# closure is local to that stage and cannot be called
+	# from here - the FP51 recorder carries the same
+	# episode fields plus the FP51 rate/violent record at
+	# indices 8/9).
+	var st73: Dictionary = {"in_air": false, "t": 0.0, "s": 0.0, "gap": false, "reb": false,
+		"launch": 0.0, "minp": 0.0, "maxp": 0.0, "rate51": 0.0, "viol51": false}
+	var samples73 := func() -> void:
+		if not bool(rec_on73["on"]):
+			return
+		var pd73: float = rad_to_deg(asin(clampf((-main.car.global_transform.basis.z).y, -1.0, 1.0)))
+		if main.mode == main.MODE_AIR and not bool(st73["in_air"]):
+			st73["in_air"] = true
+			st73["t"] = 0.0
+			st73["s"] = main.car_s
+			st73["gap"] = main.air_from_gap
+			st73["reb"] = main.air_from_rebound
+			st73["launch"] = pd73
+			st73["minp"] = pd73
+			st73["maxp"] = pd73
+			st73["rate51"] = main.air_pitch_rate
+			st73["viol51"] = main.air_violent
+		elif main.mode == main.MODE_AIR:
+			st73["t"] = float(st73["t"]) + 1.0 / 90.0
+			st73["minp"] = minf(float(st73["minp"]), pd73)
+			st73["maxp"] = maxf(float(st73["maxp"]), pd73)
+		elif bool(st73["in_air"]):
+			st73["in_air"] = false
+			var ep73x: Array = [st73["s"], st73["t"], st73["gap"], st73["reb"], st73["launch"],
+				st73["minp"], st73["maxp"], main.contact_grade,
+				float(st73["rate51"]), bool(st73["viol51"])]
+			rec73.append(ep73x)
+	# Each crest driven on its own sub-span (stage 58's
+	# protocol), warp + pin 30, recorder running - the
+	# episodes the bracket reads.
+	var crests73: Array = subs73["p3_crests"]
+	for ci73: int in 3:
+		main.debug_warp_to_s(float(crests73[ci73][0]) - 40.0)
+		main.debug_pin_speed(30.0)
+		main.wheel_angle = 0.0
+		main.test_throttle = 0.0
+		main.test_brake = 0.0
+		var g73c: int = 0
+		while main.car_s < float(crests73[ci73][1]) + 45.0 and g73c < 3600:
+			await physics_frame
+			g73c += 1
+			autopilot_fast()
+			main.debug_pin_speed(30.0)
+			samples73.call()
+	rec_on73["on"] = false
+	# The episodes with a real launch pitch (>3 deg) are the
+	# crests' - the warp-in drop (launch 0) and any rebound
+	# hops are filtered out by the same test.
+	# (The recorder closes a flight only on landing - a
+	# ROOF recovery's flight closes on the recovery frame.)
+	var ep73: Array = []
+	for e73: Array in rec73:
+		if e73.size() < 10:
+			continue # an episode short of the FP51 fields is not a crest flight - skip, never index blind (finisher: the recorder's episodes carry exactly 10 fields, rate51/viol51 at 8/9 - the drafted 11-field guard skipped every episode)
+		if float(e73[4]) > 3.0:
+			ep73.append(e73)
+	check(ep73.size() >= 3 and rec73.size() >= 3,
+		"stage73: the three crest episodes recorded (%d pitched, %d total)" % [ep73.size(), rec73.size()])
+	if ep73.size() >= 3 and rec73.size() >= 3:
+		var r1_73: float = float(ep73[0][8])
+		var r2_73: float = float(ep73[1][8])
+		var r3_73: float = float(ep73[2][8])
+		print("stage73: crest separation rates %.3f / %.3f / %.3f rad/s (line %.3f); violent flags %s / %s / %s" % [
+			r1_73, r2_73, r3_73, main.AIR_VIOLENCE_RAD_S,
+			str(bool(ep73[0][9])), str(bool(ep73[1][9])), str(bool(ep73[2][9]))])
+		# The measured truth (see the stage header): a
+		# crest separates from a constant grade, and a
+		# constant grade rotates nothing - all three
+		# separation rates sit BELOW the line and the
+		# flights are the film's. Asserted as measured,
+		# not as the brief presumed; the violent bracket
+		# lives on the staircase, next section.
+		check(not bool(ep73[0][9]) and not bool(ep73[1][9]) and not bool(ep73[2][9])
+			and r1_73 < main.AIR_VIOLENCE_RAD_S and r2_73 < main.AIR_VIOLENCE_RAD_S and r3_73 < main.AIR_VIOLENCE_RAD_S,
+			"stage73: the lab crests separate BELOW the line (%.3f / %.3f / %.3f vs %.3f) - constant-grade separations carry no rotation to conserve" % [
+				r1_73, r2_73, r3_73, main.AIR_VIOLENCE_RAD_S])
+	# (b) THE STAIRCASE - the model's true violent bracket.
+	# The ribbon's steps are sharp edges: separation and
+	# curvature coincide, the measured rates clear the
+	# line, and conservation shows in the flight - the
+	# nose-down extreme travels PAST the launch pitch by
+	# degrees FP14's law (which only ever ADDS nose-down
+	# build on top of a levelled attitude) cannot explain
+	# at these flight times, while the arrivals still land
+	# and grade. Driven in stage 8's own lap protocol
+	# shape (pursuit autopilot, unpinned) over the
+	# staircase span only.
+	main._set_track("ribbon")
+	await frames(5)
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await frames(3)
+	main._do_release()
+	var ok73b: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(ok73b, "stage73: the ribbon stages for the staircase bracket")
+	rec73.clear()
+	rec_on73["on"] = true
+	main.debug_warp_to_s(690.0)
+	var g73s: int = 0
+	while main.car_s < 800.0 and g73s < 90 * 30:
+		await physics_frame
+		g73s += 1
+		autopilot()
+		samples73.call()
+	rec_on73["on"] = false
+	var viol73: Array = []
+	for e73s: Array in rec73:
+		# Fix Pass 51 (finisher, FLAGGED): the rotation
+		# proof needs a flight with air in it - the first
+		# violent episode the drafted filter drew was a
+		# zero-length step hop (t 0.0), which has no flight
+		# to rotate in and convicted the proof, not the
+		# model. A real flight (t >= 0.2 s) is the subject.
+		if e73s.size() >= 10 and bool(e73s[9]) and float(e73s[1]) >= 0.2:
+			viol73.append(e73s)
+	print("stage73: staircase episodes %s" % str(rec73))
+	check(viol73.size() >= 1,
+		"stage73: the staircase separates VIOLENT at least once (%d of %d flights at/above the line)" % [viol73.size(), rec73.size()])
+	if viol73.size() >= 1:
+		var ve73: Array = viol73[0]
+		check(float(ve73[4]) - float(ve73[5]) > 6.0,
+			"stage73: the violent staircase flight ROTATES in the air (launch %+.1f, nose-down extreme %+.1f deg - conservation integrated)" % [
+				float(ve73[4]), float(ve73[5])])
+		check(String(ve73[7]) != "",
+			"stage73: the violent staircase flight still LANDS and grades (%s) - conservation is survivable at step scale" % String(ve73[7]))
+	# Item 2 - trim staging on the chasm's long flight: the
+	# same launch flown three ways (hands off, full throttle
+	# trim, full brake trim), staged mid-air so the three
+	# flights are THE SAME flight apart from the trim.
+	# AMENDED (finisher, FLAGGED): staged at 6 m up, not
+	# 3 m - the drafted 3 m flight lasts 0.70 s measured,
+	# not the ~0.9 s the stage assumed, so the trim's
+	# window (past the 0.35 s arm floor) is 0.35 s and the
+	# share is 0.031 rad, under the stage's own 0.05 floor
+	# for reasons of arithmetic, not model. At 6 m the
+	# flight is ~1.15 s and the share ~0.16 rad. And the
+	# signs: the trim's stated direction is throttle
+	# nose-UP, brake nose-DOWN (nose-up positive, the
+	# convention asin(fwd.y) reads) - the drafted code ran
+	# it inverted and the drafted checks asserted the
+	# inverted shares; both are corrected (the finisher's
+	# probes read the flown pitch, not the share).
+	var runs73: Array = [[0.0, 0.0, "hands-off"], [1.0, 0.0, "throttle"], [0.0, 1.0, "brake"]]
+	var trim73: Array = []
+	for r73: Array in runs73:
+		main.debug_stage_flight51(50.0, 6.0, 20.0, 0.0, 0.0, 0.0)
+		main.test_throttle = float(r73[0])
+		main.test_brake = float(r73[1])
+		var tlo73: float = 0.0
+		var thi73: float = 0.0
+		var g73: int = 0
+		while main.mode == main.MODE_AIR and g73 < 90 * 4:
+			await physics_frame
+			g73 += 1
+			tlo73 = minf(tlo73, main.air_trim_off)
+			thi73 = maxf(thi73, main.air_trim_off)
+		main.test_throttle = 0.0
+		main.test_brake = 0.0
+		var t73: float = thi73 if absf(thi73) > absf(tlo73) else tlo73
+		trim73.append(t73)
+		print("stage73: staged flight %s - trim share %.3f rad (lo %.3f hi %.3f, %d frames)" % [
+			String(r73[2]), t73, tlo73, thi73, g73])
+		await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE or main.mode == main.MODE_HANG, 400)
+		if main.mode == main.MODE_HANG:
+			main.debug_set_hang_dangle()
+			main._do_release()
+			await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(trim73.size() == 3 and absf(float(trim73[0])) < 0.02 and float(trim73[1]) > 0.05 and float(trim73[2]) < -0.05,
+		"stage73: TRIM - hands-off moves nothing (%.3f), THROTTLE pitches nose-UP (%.3f), BRAKE pitches nose-DOWN (%.3f)" % [
+			float(trim73[0]), float(trim73[1]), float(trim73[2])])
+	check(absf(float(trim73[1])) < 0.9 and absf(float(trim73[2])) < 0.9,
+		"stage73: the trim's authority is BOUNDED across the staged flight (%.2f / %.2f rad)" % [
+			float(trim73[1]), float(trim73[2])])
+	# Item 3 - the outcomes, staged directly on the model's
+	# own variables (debug_stage_flight51): an INVERTED
+	# arrival rules ROOF; an arrival ROTATING PAST THE CAP
+	# with its pose frozen at the cap still rules ROOF (the
+	# rate, not the pose, is the ruling); both pay nothing
+	# and take the stand-in's longer attach. An ordinary
+	# recovery beside them takes the ordinary attach.
+	main._set_track("ribbon")
+	await frames(5)
+	main.test_throttle = 0.0
+	main.test_brake = 0.0
+	# AMENDED (finisher, FLAGGED): three drafted observables
+	# could not see what they claimed. (1) The pose case is
+	# staged at 0.5 m, inside the trim-arm floor: at the
+	# drafted 1.2 m the flight outlives the arm and the
+	# model's own AIR_ROT_KEEP clamps the staged 170 deg
+	# offset to the 86 deg cap mid-flight, so the inverted
+	# arrival never existed - the probe lands it as an
+	# ordinary paying touchdown. A 0.32 s fall presents the
+	# pose untouched: the POSE arm, cleanly. (2) The ruling
+	# is read on last_roof, its persistent record - the
+	# roof_recovery flag is consumed inside _setup_hang_at
+	# before any observer can see it true. (3) The meter is
+	# SET to a known 50.0 first: the drafted clause read an
+	# ambient balance and an unrelated +0.8 payout (the
+	# mis-staged case's own ordinary landing) failed it.
+	# The meter carries the clause alone: last_pay_units
+	# is stale after a roof by construction (the roof
+	# branch returns before _pay_for_landing, the writer
+	# that zeroes it), so it cannot testify either way.
+	main.boost_meter = 50.0
+	var pay0_73: float = 50.0
+	main.debug_stage_flight51(50.0, 0.5, 20.0, deg_to_rad(170.0), 0.0, 0.0)
+	var roof1_73: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 400)
+	check(roof1_73 and main.last_roof.contains("ROOF AT S"),
+		"stage73: an inverted arrival rules ROOF and the crane stand-in collects it (LAST: %s)" % main.last_roof)
+	check(main.boost_meter <= pay0_73 + 0.001,
+		"stage73: a ROOF arrival books NO payout (meter %.1f, set to %.1f at staging)" % [main.boost_meter, pay0_73])
+	var att1_73: int = 0
+	while main.mode == main.MODE_HANG and main.hang_phase == "attach" and att1_73 < 90 * 15:
+		await physics_frame
+		att1_73 += 1
+	print("stage73: roof attach frames %d (ordinary is 90)" % att1_73)
+	check(att1_73 > 90 * 5,
+		"stage73: the roof recovery's attach is VISIBLY longer than ordinary (%d frames vs 90)" % att1_73)
+	main.debug_set_hang_dangle()
+	main._do_release()
+	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	main.debug_stage_flight51(50.0, 1.2, 20.0, main.AIR_ROT_KEEP, 1.5, 0.0)
+	var roof2_73: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 400)
+	check(roof2_73 and main.last_roof.contains("ROOF AT S"),
+		"stage73: an arrival rotating past the cap rules ROOF on its RATE, its pose frozen at the cap (LAST: %s)" % main.last_roof)
+	main.debug_set_hang_dangle()
+	main._do_release()
+	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	main.debug_force_fall_at(50.0)
+	var att3_73: int = 0
+	var hang3_73: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 400)
+	while hang3_73 and main.hang_phase == "attach" and att3_73 < 90 * 5:
+		await physics_frame
+		att3_73 += 1
+	print("stage73: ordinary attach frames %d" % att3_73)
+	check(hang3_73 and not main.roof_recovery and att3_73 >= 88 and att3_73 <= 95,
+		"stage73: an ordinary recovery keeps the ordinary attach (%d frames) and clears the roof flag" % att3_73)
+	main.debug_set_hang_dangle()
+	main._do_release()
+	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	# The honest bottom on a wheels-down arrival: a staged
+	# crossed-up face-slam (a 12 m fall carrying 5 m/s of
+	# lateral - the connection table's worst row AND the
+	# quality table's HARD) grades DAMAGED.
+	main.debug_stage_landing(70.0, 12.0, 24.0)
+	main.air_from_release = false
+	main.air_vel += Vector3(main._frame_at(70.0)["side"]) * 5.0
+	var dmg73: bool = await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	check(dmg73 and main.contact_grade == "DAMAGED",
+		"stage73: a crossed-up face-slam grades DAMAGED, the honest bottom (grade %s)" % main.contact_grade)
+	check(main._build_diag_block().contains("DAMAGED"),
+		"stage73: the DAMAGED ruling is named on the DIAG")
+	main.test_throttle = 0.0
+	main.test_brake = 1.0
+	var bz73: int = 0
+	while (main.mode != main.MODE_DRIVE or main.speed > 0.01) and bz73 < 900:
+		await physics_frame
+		bz73 += 1
+	main.test_brake = 0.0
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")

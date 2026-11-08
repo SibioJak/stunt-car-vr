@@ -44,6 +44,18 @@ Geoff Crammond's *Stunt Car Racer* (1989) in VR: cockpit view, a ribbon track on
 
 - None outstanding. Every fork raised during drafting has been decided or assigned to Test 1's verdict.
 
+## LOOP DOCTRINE — standing law for any future loop element (Chris, 2026-11-07)
+
+Chris's ruling, in substance verbatim: the builders are to have a better understanding of how to do this moving forward, "cuz if we gotta go through with every loop de loop, then no loop de loops." The FP41–FP50 education (ten passes) is paid for exactly once. Any future loop starts from ALL of this, at the first attempt:
+
+1. **Form: a HOOP, not a curled road.** A structure standing on the ground with its hole open to the sky (Hard Drivin' 1988; Chris's toy references on file in research/). The road threads it; the track bends/twists up its inside as a shallow helix — the descending leg lands BESIDE the ascending leg, never stacked, never overhanging the approach.
+2. **Proportion by surface, not height.** Ring diameter ~5–6× the driving surface. Reach it by NARROWING the surface through the element (~6 m, flared at the feet) with a modest ring (R 16–18 class, crown ~33 m) — never by building a skyscraper (FP47's ~50 m crown made the descent a 50 m fall and the exit unmanageable).
+3. **Roll closes INSIDE the element.** Surface tilt is 0° at both feet by construction; nothing is re-levelled on the road after the exit.
+4. **Drift is gated low.** The sideways drift between the legs is earned across the UPPER ring; zero sideways travel in the lower ~8.5 m of each leg, so the descent never sweeps across the entrance road — on approach or while being driven.
+5. **Separation covers EVERYTHING built.** No surface, cheek, band section, gusset, post, skirt, or footing intrudes into the road space — at the base, along the descent, anywhere. Verification sweeps the BUILT MESHES, not station math alone (FP48 measured surfaces and passed while the band's cheeks stood in the lane for three passes).
+6. **Proof is human-plausible.** Staged pins use the general road-following driver, run through the exit and 30 m beyond, and report entry/exit speed and exit-foot roll. Recorder-clean is not seat-clean; the driver's eye is the verdict, consulted FIRST (approach and threshold frames), not last.
+7. **Known open look item (parked 2026-11-07):** the descent's backing must not present as a solid brown wall — the ring has to visually complete from the seat. Any future loop dresses this from the start.
+
 ## DE TEST PLAN — "Drop & Dangle" (Test 1)
 
 *Start low, cheap, short. One track, one car, no season, no designer, no menu chrome. This test proves the path; it is a throwaway feel prototype, not the game.*
