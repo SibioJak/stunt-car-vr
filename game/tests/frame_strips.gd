@@ -188,6 +188,52 @@ func _run() -> void:
 			tiles2.append(await _grab())
 	_save_strip(tiles2, "crest_edge_strip.png")
 
+	# ---- FP52 strip: the ridge flight, DRIVEN, before/after
+	# in one image pair ---- The owner's FP51 verdict terrain:
+	# the drumbeat ridge's third hump at pin 48 with the
+	# throttle HELD through the flight (the racing input).
+	# Before the fix this flight's trim share ran to
+	# +0.83 rad, the nose rotated backward through the
+	# flight's second half and past the landing slope -
+	# the after strip is the same staging on the repaired
+	# model: the nose never travels above its launch pitch.
+	# The staging mirrors stage 26c's protocol (warp behind
+	# the row, PD steer, pin 48); tiles every 3rd physics
+	# frame from the car-anchored camera, from the target
+	# flight's separation through its landing.
+	main._set_track("circuit")
+	await physics_frame
+	await physics_frame
+	main.jitter_on = false
+	main.debug_warp_to_s(main.ext_s0 - 68.0)
+	main.test_throttle = 1.0
+	main.test_brake = 0.0
+	var tiles52: Array = []
+	var step52: int = 0
+	var in52: bool = false
+	var landed52: int = 0
+	for f52: int in 90 * 14:
+		autopilot_steer(0.0)
+		main.debug_pin_speed(48.0)
+		await physics_frame
+		step52 += 1
+		if not in52 and main.mode == main.MODE_AIR and main.car_s > main.ext_s0 + 150.0:
+			in52 = true
+		if in52:
+			if step52 % 3 == 0:
+				_place_cam(1.0)
+				tiles52.append(await _grab())
+			if main.mode == main.MODE_DRIVE:
+				landed52 += 1
+				if landed52 > 12:
+					break
+			if main.mode == main.MODE_HANG:
+				break
+	main.test_throttle = 0.0
+	check(tiles52.size() >= 10,
+		"FP52 strip: the driven ridge flight was captured dense (%d tiles)" % tiles52.size())
+	_save_strip(tiles52, "fp52_ridge_strip.png")
+
 	# ---- FP51 strip: the end-over-end, staged ----
 	# FLAGGED REPOINT (FP51 report): the strip was specced
 	# on the lab's crest 3, but the crest separates from a

@@ -714,6 +714,30 @@ const AIR_NOSE_DOWN_MAX: float = 0.489 # rad (~28 deg) cap on the build # ground
 # the staged rates in smoke stage 73, so a future model
 # change that moves the bracket moves the argument too.
 const AIR_VIOLENCE_RAD_S: float = 0.25 # launch |pitch rate| (rad/s) at/above which conservation rules
+# Fix Pass 52 (Item 2): THE WINDOW THE GATE READS. FP51's
+# gate read the EMA at the separation FRAME - but the
+# separation frame is the travel frame: all four corners
+# airborne means the car is already ~3 m (a wheelbase at
+# pace) past the lip whose rotation spun it, and the EMA
+# there reads the road the car is OVER (flat past the lip:
+# ~0.000 on every calm drive-off in the FP52 census). The
+# signal that predicts a flight's rotation lives in the
+# contact BEFORE the lip: the windowed peak |road pitch
+# rate| over the last AIR_RATE_TAU of contact. On driven
+# laps that window CONVICTS AND CLEARS at once: Track 01's
+# hump rows back off at 0.02-0.16 rad/s in-window and the
+# staircase's steps read 0.28-0.62 (census pace) to 1.01/
+# 1.34 (lap pace) - while the DRIVEN separation EMA on
+# ordinary terrain swings -1.15..+0.51 rad/s on crest
+# transitions the window never carries (it is a travel-
+# frame read: crest top -28 deg/s one frame, drumbeat
+# valley +44 the next). The conservation GATE below stays
+# at 0.25 rad/s on the WINDOWED rate - the margin over
+# the fastest ordinary in-window separation measured is
+# 0.25 vs 0.163 (the ridge driven at pin 48). The
+# separation-EMA read survives as the DIAG's story and
+# stage 73's crest bracket (constant-grade separations
+# read ~0 on both).
 const AIR_RATE_TAU: float = 0.10 # s of road contact the separation rate is measured over
 const AIR_ROT_KEEP: float = 1.5 # rad/s (~86 deg): the airborne attitude basis stops integrating here - a cap, not a wall (see _fp51_att)
 # Item 2 - LONG-AIR AGENCY. Past AIR_TRIM_ARM_S of flight
@@ -730,8 +754,52 @@ const AIR_ROT_KEEP: float = 1.5 # rad/s (~86 deg): the airborne attitude basis s
 # conserved rate outright (0.30 rad/s still arrives
 # rotating) - it saves a marginal arrival or spoils a
 # good one, which is the brief's law.
+# Fix Pass 52 (Item 3): THE TRIM, REPAIRED. FP52's driven
+# probes convicted FP51's trim on ordinary flights: the
+# triggers are ANALOG on the owner's rig (the XR path
+# reads trigger floats; desktop keys are binary) and a
+# racing driver HOLDS the throttle through a flight - at
+# full deflection the double integral outruns FP14's
+# CAPPED film build (0.489 rad) on any flight past ~1.2 s
+# and keeps growing: on the drumbeat ridge driven at pin
+# 48 with the throttle held, ordinary flights (rate 0.000,
+# film's own) accumulated +0.54/+0.54/+0.83 rad of trim
+# share, arrived rotating nose-UP at up to +1.56 rad/s of
+# accumulated trim velocity, and the third went over
+# backward into a ROOF ruling - the owner's film, staged.
+# "Beyond control" is structural: the accumulated rate
+# never decays, so releasing the trigger does not stop
+# the rotation it bought. The repair bounds the channel
+# three ways, none of which touches its stated direction
+# or its 0.35 s arming: (1) the trim's accumulated RATE
+# is capped at AIR_TRIM_V_MAX - sized so the trim can
+# always arrest the fastest rotation the ordinary band
+# can carry (the conservation gate's 0.25 rad/s) with
+# margin, and so its share can never outrun the film
+# build it shares the attitude with: the cap is UNDER
+# the film's own max rate (0.349 x ~1.4 s ~ 0.49 rad/s
+# at the cap's reach); (2) the trim's SHARE of the
+# attitude is capped at AIR_TRIM_OFF_MAX, under the
+# film build's own cap (0.489 rad): on an ordinary flight
+# the two channels stay comparable, the film's shape
+# survives, and a held trigger reads as a held correction,
+# not a second engine; (3) NEUTRAL IS A BRAKE: with both
+# triggers released the accumulated rate decays at
+# AIR_TRIM_V_DECAY toward zero - the driver can STOP a
+# rotation he bought by letting go, which is what makes
+# it a control. Opposite input still reverses the rate
+# at the full AIR_TRIM_RATE. Measured after (stage 73 +
+# the FP52 driven probes): the same ridge flight's held-
+# throttle share ends at the +0.40 cap (was +0.83), the
+# arrival rate is bounded, and full opposite trim from
+# the top of the ordinary band arrests a 0.25 rad/s
+# conserved rotation inside the flight and returns the
+# car to a gradeable attitude (the brief's Item 3 test).
 const AIR_TRIM_ARM_S: float = 0.35 # s of flight before the triggers arm as trim
 const AIR_TRIM_RATE: float = 0.5 # rad/s^2 of trim authority at full deflection
+const AIR_TRIM_V_MAX: float = 0.40 # Fix Pass 52: rad/s cap on the trim's accumulated rate (see above)
+const AIR_TRIM_OFF_MAX: float = 0.40 # Fix Pass 52: rad cap on the trim's share of the attitude (see above)
+const AIR_TRIM_V_DECAY: float = 1.2 # Fix Pass 52: rad/s^2 the trim's rate decays at neutral input (see above)
 # Item 3 - THE ROOF OUTCOME. An inverted arrival (or one
 # still rotating past the gradeable window at contact) is
 # not a landing: _land rules it ROOF, books NO payout, and
@@ -1297,6 +1365,9 @@ var air_from_gap: bool = false
 var road_pitch_rate: float = 0.0 # the road's pitch story, measured in DRIVE (deg/s of lip rotation; + = nose rising)
 var road_pitch_prev: float = 0.0 # last drive frame's in-plane road pitch (deg)
 var road_pitch_have: bool = false
+var road_pitch_peak51: float = 0.0 # Fix Pass 52: the signed peak |road_pitch_rate| inside the trailing AIR_RATE_TAU window of contact (deg/s) - the rate the conservation gate reads (see the AIR_VIOLENCE note)
+var road_pitch_hist51: Array = [] # Fix Pass 52: [sim_time, rate_deg_s] ring for the window above (DRIVE only)
+var road_pitch_t51: float = 0.0 # Fix Pass 52: accumulated DRIVE time (s) stamping the ring above - physics time, never wall time
 var air_pitch_off: float = 0.0 # rad of integrated attitude offset (conservation + trim), clamped at AIR_ROT_KEEP
 var air_pitch_rate: float = 0.0 # rad/s: the conserved rate this flight carries (violent flights; else 0)
 var air_trim_off: float = 0.0 # rad of the trim's own share of air_pitch_off (reported separately)
@@ -1825,7 +1896,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP51 · 2026-11-07"
+const BUILD_STAMP: String = "FP52 · 2026-11-08"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -5078,11 +5149,40 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 	# conservation rules - the drafted code ADDED them,
 	# double-counting the rotation on the flights this
 	# pass exists to change).
+	# Fix Pass 52 (Item 2): the gate reads the WINDOWED
+	# rate (road_pitch_peak51 - the peak of the measured
+	# signal across the last AIR_RATE_TAU of contact),
+	# not this frame's EMA: the separation frame is a
+	# travel frame (the car is a wheelbase past the lip
+	# that spun it, over road that is already flat), and
+	# the FP52 driven census convicted the frame read on
+	# both sides - calm drive-offs whose frame EMA swung
+	# to -1.15 rad/s on a crest transition were ruled
+	# violent, while genuine lip rotations had already
+	# left the EMA by the frame the wheels let go. The
+	# conserved VALUE is the windowed rate: it is the
+	# rotation the lip actually imparted during contact.
+	# Two entry classes NEVER conserve, by their own
+	# contracts: the GAP entry (from_gap - the chasm
+	# flight is a launch the film build returns; its
+	# approach crosses the lip's shaped entry, whose
+	# in-window rotation is the launch's shape, not a
+	# tumble) and the REBOUND (pending_rebound - a spring
+	# throw off a landing's stored energy; the car leaves
+	# from a compressed stroke over whatever face it just
+	# landed on, and FP51's census recorded rebounds at
+	# rate 0.000 on every calm drive - the window's peak
+	# inside a landing's contact is the LANDING's story,
+	# not a separation rotation. FP52's first after-census
+	# convicted exactly this: ridge rebounds conserving
+	# -0.60 rad/s of landing-transient and arriving
+	# DAMAGED on the owner's own row). Both classes keep
+	# the film law, as they did under FP51.
 	air_pitch_off = 0.0
 	air_trim_off = 0.0
 	_trim_v51 = 0.0
-	air_pitch_rate = deg_to_rad(road_pitch_rate)
-	air_violent = air_pitch_rate <= -AIR_VIOLENCE_RAD_S
+	air_pitch_rate = deg_to_rad(road_pitch_peak51)
+	air_violent = air_pitch_rate <= -AIR_VIOLENCE_RAD_S and not from_gap and not pending_rebound
 	if not air_violent:
 		air_pitch_rate = 0.0
 	grounded_t = 0.0
@@ -8553,11 +8653,24 @@ func _update_air(delta: float) -> void:
 		if air_violent or air_time > AIR_TRIM_ARM_S:
 			var step51: float = air_pitch_rate * delta
 			if air_time > AIR_TRIM_ARM_S:
+				# Fix Pass 52 (Item 3): the bounded trim (see
+				# the constants note). The accumulated rate is
+				# CAPPED at AIR_TRIM_V_MAX; at neutral input it
+				# DECAYS toward zero (letting go stops a bought
+				# rotation); the share is clamped to
+				# AIR_TRIM_OFF_MAX so a held trigger stays a
+				# correction beside the film build, never a
+				# second engine past it. Direction and arming
+				# are FP51's, untouched.
 				var trim51: float = (in_throttle - in_brake) * AIR_TRIM_RATE
-				_trim_v51 += trim51 * delta
+				if trim51 != 0.0:
+					_trim_v51 = clampf(_trim_v51 + trim51 * delta, -AIR_TRIM_V_MAX, AIR_TRIM_V_MAX)
+				else:
+					_trim_v51 = move_toward(_trim_v51, 0.0, AIR_TRIM_V_DECAY * delta)
 				var tstep51: float = _trim_v51 * delta
-				air_trim_off += tstep51
-				step51 += tstep51
+				var new_trim52: float = clampf(air_trim_off + tstep51, -AIR_TRIM_OFF_MAX, AIR_TRIM_OFF_MAX)
+				step51 += new_trim52 - air_trim_off
+				air_trim_off = new_trim52
 			air_pitch_off = clampf(air_pitch_off + step51, -AIR_ROT_KEEP, AIR_ROT_KEEP)
 		var off51: float = off7 + air_pitch_off
 		if off51 != 0.0:
@@ -9860,6 +9973,28 @@ func _update_suspension(delta: float) -> void:
 			road_pitch_rate = 0.0
 		road_pitch_prev = rp_now51
 		road_pitch_have = true
+		# Fix Pass 52 (Item 2): the windowed peak the gate
+		# reads. The EMA above is kept (it is the DIAG's
+		# story and stage 73's crest read), but it is a
+		# TRAVEL-frame signal: at the separation frame it
+		# has already swung to the road past the lip. The
+		# peak of the same signal across the trailing
+		# AIR_RATE_TAU of contact is the lip's own story -
+		# it is what a crest's face did to the car while
+		# the road still held it. Ring-buffered here, read
+		# in _enter_air. (The window is the brief's
+		# "approach-rate measurement's window", convicted
+		# on the driven census - see the constants note.)
+		road_pitch_t51 += delta
+		road_pitch_hist51.append([road_pitch_t51, road_pitch_rate])
+		var win_cut51: float = road_pitch_t51 - AIR_RATE_TAU
+		while road_pitch_hist51.size() > 0 and float((road_pitch_hist51[0] as Array)[0]) < win_cut51:
+			road_pitch_hist51.pop_front()
+		road_pitch_peak51 = 0.0
+		for ent51: Array in road_pitch_hist51:
+			var rv51: float = float(ent51[1])
+			if absf(rv51) > absf(road_pitch_peak51):
+				road_pitch_peak51 = rv51
 		if wheel_air[0] and wheel_air[1] and wheel_air[2] and wheel_air[3] \
 				and (speed > 8.0 or frame_fall41):
 			# Fix Pass 21 (Item 2): every corner has

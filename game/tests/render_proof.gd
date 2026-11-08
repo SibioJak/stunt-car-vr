@@ -1593,6 +1593,56 @@ func _run() -> void:
 		"capture 33: mid-flight the trim reads both ways from the seat (brake %+.3f rad nose-down, throttle %+.3f rad nose-up)" % [
 			float(trim51[0]), float(trim51[1])])
 
+	# Capture 34 (Fix Pass 52): THE RIDGE FROM THE SEAT,
+	# HELD THROTTLE - the owner's verdict terrain flown
+	# the way he flies it (circuit, warp behind the
+	# drumbeat row, PD steer, pin 48, throttle held 1.0
+	# through the flights), captured mid-flight on the
+	# row's long third flight from the fallback eye. On
+	# the FP51 build this flight's second half rotated
+	# BACKWARD to +28.7 deg past its +10.0 launch; the
+	# capture's check asserts the repaired law on the
+	# same terms the strip asserts: the pitch never
+	# travels above launch. Structural only under
+	# llvmpipe - the feel is the seat's.
+	main._set_track("circuit")
+	for i34z: int in 3:
+		await physics_frame
+	main.debug_warp_to_s(main.ext_s0 - 68.0)
+	main.test_throttle = 1.0
+	main.test_brake = 0.0
+	var in34: bool = false
+	var tgt34: bool = false
+	var lp34: float = 0.0
+	var mx34: float = -999.0
+	var snapped34: bool = false
+	var f34: int = 0
+	while main.car_s < main.ext_s0 + 245.0 and f34 < 90 * 20 and not snapped34:
+		if main.mode == main.MODE_DRIVE:
+			main.debug_pin_speed(48.0)
+			main.wheel_angle = clampf(-main.car_lat * 0.06 - main.lat_vel * 0.03, -0.6, 0.6)
+		await physics_frame
+		f34 += 1
+		var pd34: float = rad_to_deg(asin(clampf((-main.car.global_transform.basis.z).y, -1.0, 1.0)))
+		if main.mode == main.MODE_AIR and not in34:
+			in34 = true
+			lp34 = pd34
+			mx34 = pd34
+			tgt34 = main.air_start_s > main.ext_s0 + 150.0
+		elif main.mode == main.MODE_AIR:
+			mx34 = maxf(mx34, pd34)
+			if tgt34 and main.air_time > 0.9:
+				await snap(main.fallback_cam, "fp52_ridge_view.png")
+				snapped34 = true
+		elif in34:
+			in34 = false
+	main.test_throttle = 0.0
+	print("capture 34: ridge target flight - snapped %s, launch %+.1f, max through capture %+.1f deg" % [
+		str(snapped34), lp34, mx34])
+	check(snapped34 and mx34 <= lp34 + 0.5,
+		"capture 34: the ridge's long flight, throttle held, never pitches past its launch from the seat (max %+.1f vs launch %+.1f deg)" % [
+			mx34, lp34])
+
 	print("---")
 	if failures == 0:
 		print("RENDER PROOF: ALL %d CHECKS PASSED" % checks)

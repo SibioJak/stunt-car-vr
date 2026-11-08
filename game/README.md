@@ -7622,3 +7622,180 @@ FEELS like going over; whether the trim's authority and
 direction feel right on a long flight; whether the roof
 stand-in's longer hold reads as the placeholder it is. The
 flight's feel is not claimed by any number above.
+
+## Fix Pass 52 - THE FLIGHT, REPAIRED (the owner's seat verdict on FP51)
+
+THE VERDICT (headset, 2026-11-08, ~110 s of Track 01 film): "If you go
+fast off a jump, you almost fly, even off little jumps, and it starts
+tilting backwards, beyond control. It's making little hills near corner
+more difficult because I seem to be flying forward more." Three charges:
+small jumps at speed FLY; in the air the car tilts BACKWARDS; the tilt
+is BEYOND CONTROL. Convicted on driven roads before production was
+touched, in the owner's own conditions (drumbeat ridge, throttle HELD
+at 1.0 through every flight, speed pinned at 48 - the racing input, not
+the census autopilot's):
+
+(1) THE TRIM WAS AN UNBOUNDED RATCHET FED BY THE RACING INPUT. The
+conviction instrument (scratch probe, ridge at pin 48, FP51 build):
+three long flights accumulated +0.54 / +0.54 / +0.83 rad of trim share;
+the third's pitch trace sags film-shaped to +6.2 deg, then CLIMBS
+monotonically to +28.7 deg in the flight's second half - backward
+rotation in plain numbers - and the run ended in a backward ROOF
+(TILT 72, RATE +1.40: the arrival rate was the accumulated trim
+velocity itself). The mechanism: past the 0.35 s arm, held throttle
+integrates _trim_v51 at 0.50 rad/s^2 with NO rate cap and NO decay -
+the film build it fights is capped at -0.489 rad of offset; the trim's
+share passes that at ~1.2 s of held throttle and keeps growing, and
+releasing the input does not reduce the accumulated rate, which is why
+the tilt read as beyond control: structurally, it was. The ballistics
+were innocent: the FP50 baseline (3e63d20) on the IDENTICAL staging
+flew the identical air times (1.80 / 1.79 / 2.14 / 3.13 s) with pure
+film traces (max == launch on every flight, all CLEAN, span completed).
+Air time never changed; the car ARRIVED nose-high and rotating instead
+of slope-matched, which is what "almost fly" was.
+
+(2) THE GATE READ THE RATE ON THE WRONG FRAME. Separation needs all
+four corners airborne, so the car is ~a wheelbase past the lip when
+_enter_air read FP51's frame EMA (tau 0.10 s) - by then the EMA reads
+whatever the road under the car is doing NOW. The driven census (full
+laps, cap-71 autopilot, both tracks) convicted it both ways: calm
+hump flights separate with EMA ~0.000 while other ordinary separations
+on the same terrain read -1.145 rad/s at the frame (a drumbeat-ridge
+separation at 24 m/s ruled violent, arriving DAMAGED), and zero-length
+violent episodes fired on successive contact frames mid-unload as the
+EMA was still falling off a crest.
+
+THE REPAIR (production, main.gd; FP51's design fenced - conservation
+above the gate, trim direction and arming, the ROOF ruling, the
+DAMAGED grade all stand):
+
+- WINDOWED GATE: the separation signal is now the peak of the measured
+  road pitch rate across the trailing AIR_RATE_TAU (0.10 s) of CONTACT
+  (a sim-time-stamped ring maintained beside the EMA), not the frame
+  value. The threshold is UNCHANGED (0.25 rad/s, nose-down). Margin in
+  numbers: the fastest ordinary in-window separation in the driven
+  evidence is 0.163 rad/s (ridge, pin 48); the staircase's windowed
+  peaks run 0.44-0.58; the line sits between them with the same
+  clearance FP51 claimed for the wrong instrument. Two entry classes
+  never conserve, by their own contracts (FLAGGED in place after the
+  first after-census convicted them): the GAP entry - the chasm flight
+  is a launch the film build returns, and its approach crosses the
+  lip's shaped entry - and the REBOUND, whose window peak inside a
+  landing's contact is the landing's story, not a separation rotation
+  (FP51's own census recorded rebounds at rate 0.000 on every calm
+  drive; the windowed gate's first circuit census had ridge rebounds
+  conserving -0.60 rad/s of landing transient and arriving DAMAGED).
+- BOUNDED TRIM: three bounds on FP51's channel, direction and arming
+  untouched. The accumulated rate caps at AIR_TRIM_V_MAX = 0.40 rad/s
+  (above the gate's 0.25, so trim can always arrest the fastest
+  ordinary-band rotation; under the film's own ~0.49 peak rate). The
+  share caps at AIR_TRIM_OFF_MAX = 0.40 rad (under the film cap
+  0.489). At neutral input the accumulated rate decays at
+  AIR_TRIM_V_DECAY = 1.2 rad/s^2 - letting go stops a bought rotation;
+  opposite input still reverses at the full rate. The line between
+  "the driver can fight it" and "violence" is drawn by this measured
+  strength, per the brief: below the gate, full opposite trim arrests
+  the rotation inside the flight (stage 73's new arrest proof, below);
+  at staircase rates (1.0-1.4 rad/s) no trim authority this side of a
+  redesign wins, and those flights stay beyond saving by design.
+
+THE DRIVES AFTER (identical staging, FP51 -> FP52): the ridge at pin
+48, throttle held: shares +0.54/+0.54/+0.83 -> +0.400/+0.400/+0.400
+(at the cap, working as drawn); pitch max == launch on ALL FIVE
+flights (zero backward travel); traces sag film-shaped and recover
+slightly at the tail without ever passing launch; all five flights
+present, span completed, NO HANG - the FP50 character, restored on the
+FP51 model. The one violent separation in the span (a genuine edge,
+windowed -0.706) flies nose-down 0.20 s and grades CLEAN. The Dive
+floor at pin 48 is unchanged in character (short flights under the
+cap's reach keep FP51's trim feel).
+
+DRIVEN CENSUS, BEFORE/AFTER (same driver, same laps):
+- Ribbon, 1 lap: IDENTICAL - 19 flights, 2 violent (the staircase
+  steps at -0.43/-0.65 windowed, both CLEAN), grades {CLEAN 15,
+  SCRUBBED 1, CROSSED-UP 2, DAMAGED 1 (the s 177 early oddity, present
+  in both)}. The sharp-edge country still tumbles as ordered.
+- Circuit, 2 laps: 75 -> 70 flights, violent 21 -> 20, roofs 0 -> 0,
+  grades CLEAN 54 -> 51, SCRUBBED 10 -> 11, CROSSED-UP 8 -> 4,
+  DAMAGED 3 -> 4. The DAMAGED roster is the same names in both
+  builds: the boosted chasm flight both laps (film arrival at -37 deg,
+  pre-FP51 history, a grading question outside this pass) and the
+  ridge's s 2972 separation (windowed -1.41/-1.23 rad/s - staircase-
+  class by the numbers; DAMAGED on one lap before, both laps after -
+  a phase draw of the same genuinely violent separation, disclosed,
+  not hidden). No backward-rotating flight exists in either census
+  (the census driver never holds throttle in the air - the tilt only
+  ever lived under the seat's input, which is why the ridge probe,
+  not the census, is the conviction instrument). No DAMAGED arrives
+  off ordinary terrain in either build that was not already there.
+
+STAGE 73 GAINS THREE PROOFS (flagged in place): the ARREST (a staged
+flight carrying exactly the gate rate, -0.25 rad/s conserved, full
+opposite trim from the arm: the rotation arrests and the flight LANDS
+gradeable - the rotation bottoms at -8.4 deg and the car comes back to +8.0 deg, landing in DRIVE); the RELEASE (throttle held 0.5 s past
+the arm, then released: the bought rate decays to ~zero at neutral and
+the share grows +0.026 rad after release, where FP51's
+ratchet kept integrating it to the landing); the RIDGE DRIVE (stage
+26c's protocol with the throttle HELD through the flights: 3 flights,
+worst nose-up travel past launch +0.00 deg, no hang, span completed). One test-side staging fix rides along, FLAGGED: stage 29's
+direct _enter_air helper now also stages the windowed peak neutral,
+or its settle frames' manufactured lip rate would rule its staged
+flights violent through the new window.
+
+THE SUITE'S OWN WOUNDS (disclosed in full): this pass's first smoke
+run reported 11 failures of 860 against FIVE printed FAIL lines -
+stage 58's piece-1 rows (3 checks), its piece-7 straddle holds (2,
+printed), its audit drive dying at s 1875 of 2684 (5 checks, two
+printed) and stage 73's staircase rotation proof (1, printed). Six
+never printed: the sandbox's output capture eats FAIL lines under
+load, and the suite's count - the honest number - is what flagged
+them. Convictions: the staircase proof drew the FIRST flagged
+episode where FP51's drew a deep one (re-derived in place, FLAGGED:
+the subject is now the deepest-rotating violent episode). Stage 58's
+eight are a STAGING collapse, not a model change - its piece drives
+run back-to-back off shared state, the straddle holds derail the
+car, and the audit inherits the wreck; the identical production code
+re-derives every stage-58 figure exactly (below) when the pieces are
+flown from a clean staging. The eight therefore ALSO assert in a
+stage-73 appendix (fresh second instance, stage 58's own protocols,
+words and bounds, flagged as moved; the originals stay in place and
+will count on any run whose stage-58 drive survives - the P7
+straddle holds are the appendix's one omission: they assert a
+sustained edge-line state no clean staging reproduced in-pass, and
+they stand as this run's disclosed residue if they fail again).
+
+DISCLOSED, NOT FIXED (the ridge at pin 40): the second hump's
+re-separation after flight 1's landing conserves a windowed -1.22
+rad/s and tumbles FORWARD to a ROOF (TILT 61) - digit-identical on
+FP51 (TILT 61, RATE -1.22), so not a regression of this pass; the
+pinned car cannot lift or slow between humps the way a driven car
+does, and the full-lap census crosses the ridge at pace in both laps
+with no roof. It stands as the known edge of the pinned staging, named
+here for the seat to judge if it ever appears in a real lap.
+
+ECONOMY (reported only, per the standing ruling): stage-54 audit UNMOVED from FP51: circuit 168.0 units per lap, ribbon 91.5; stage-58 lab audit 30.37 s payable air, 300 units - identical figures on both of this pass's full-suite runs.
+
+GATES: preflight clean (import + boot, re-run after
+every test-side amendment); SMOKE ALL 868 (857 + 3 stage-73 proofs +
+8 appendix assertions - the confirmation run's count includes stage
+58's own eight passing in place); API GUARD ALL 71. Render proof
+184 of 187 with captures regenerated for real (new portrait:
+capture 34, the ridge's long flight from the seat, throttle held -
+launch +10.0, max through capture +10.0, snapped mid-flight): the
+three misses are the standing wheel-hub reach artifact (every
+baseline since FP31), the 1-of-63 DIAG sightline graze that flips
+between runs (FP51's run had it too), and capture 32's bowl
+portrait staging (the warp leaves the car in MODE_AIR this run -
+a portrait staging draw on untouched funlab geometry, disclosed;
+the threshold portrait beside it passed). Capture 33's trim pair
+re-derives at the FP52 bound's arithmetic exactly: brake -0.031 /
+throttle +0.031 rad at the capture frame. Frame strips ALL 7 (the FP52 driven ridge strip at 78 tiles; the
+FP51 staged end-over-end re-run at 17 tiles, tumble intact through
+to the crane collection). Stamp FP52.
+
+WHAT THE SEAT STILL OWES: the FP52 verdict itself - ordinary Track 01
+pace (little hills near corners are hills again?), a violent launch
+(the staircase, the ridge's sharp edge: still goes over the way it
+should?), and the trim fight (held throttle on a long flight: the nose
+stays yours?). Carried from FP51: the roof stand-in's long hold, and
+the VIEW A/B ruling, still open since run 15/16.
