@@ -56,6 +56,11 @@ Chris's ruling, in substance verbatim: the builders are to have a better underst
 6. **Proof is human-plausible.** Staged pins use the general road-following driver, run through the exit and 30 m beyond, and report entry/exit speed and exit-foot roll. Recorder-clean is not seat-clean; the driver's eye is the verdict, consulted FIRST (approach and threshold frames), not last.
 7. **Known open look item (parked 2026-11-07):** the descent's backing must not present as a solid brown wall — the ring has to visually complete from the seat. Any future loop dresses this from the start.
 
+## TRACK GEOGRAPHY — standing notes for future circuits (Chris)
+
+- **Straights are breaths** (2026-11-03): a circuit straight is a SHORT deliberate breath between efforts — any straight long enough to sit at top speed on is a design defect. Efforts and breaths, never cruising.
+- **Elevation is the fun** (2026-11-09): "Lot of elevation changes are fun, especially downhill curves." Vertical movement is a feature, not dressing: circuits should climb and fall often, and the prized piece is the curve that falls away — a turn taken while descending, where the car is gathering speed and the road is dropping out from under the line. Carries a physics dependency: descents must actually ADD speed (Chris's FP53-session count: the car currently holds speed downhill instead of gathering it) — downhill pieces only pay when the physics lets them run.
+
 ## DE TEST PLAN — "Drop & Dangle" (Test 1)
 
 *Start low, cheap, short. One track, one car, no season, no designer, no menu chrome. This test proves the path; it is a throwaway feel prototype, not the game.*
