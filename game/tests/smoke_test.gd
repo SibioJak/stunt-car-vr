@@ -2827,7 +2827,9 @@ func _run() -> void:
 	# (381 m of low curvature from s 0): brake to zero, floor
 	# it, pursuit-steer. vmax must be the new clamp and the
 	# 0->45 time is the engine's honest run (16 / 0.10 terms
-	# since FP36, the launch's wheelspin tax included).
+	# since FP36, the launch's wheelspin tax included;
+	# FP54: the drag terms are the reshaped pair now - see
+	# the FP54 amendment at the check below).
 	main._set_track("circuit")
 	await frames(3)
 	main.start_race()
@@ -2903,7 +2905,16 @@ func _run() -> void:
 	# give") - the FP44 audit's segmented standing run read
 	# 0-45 in 6.83 s (0-30 3.27 + the pinned 30->45 leg
 	# 3.56). Band re-derived [6.2, 7.4].
-	check(t45_26 > 6.2 and t45_26 < 7.4, "stage26: 0->45 m/s in %.1f s (standing start, opening straight)" % t45_26)
+	# AMENDED (FP54, FLAGGED): the run shortens on purpose
+	# - FP54's Item 2 cut the drag for the downhill count
+	# (at 25 m/s the drag asks 1.16, was 2.50), so the same
+	# bands and forces reach 45 sooner everywhere. The
+	# FP54 smoke run read 5.7 s here (5.74 stage 68, 5.76
+	# composed stage 71). Bands, forces, the flat
+	# equilibrium and the reserve law are untouched and
+	# their checks pass; band re-derived [5.1, 6.3] around
+	# the measured figure, same margins as FP44's.
+	check(t45_26 > 5.1 and t45_26 < 6.3, "stage26: 0->45 m/s in %.1f s (standing start, opening straight)" % t45_26)
 	# (c) the circuit hump span at pin 48 (stage 20's protocol
 	# at 24): the car must keep landing - flights counted, no
 	# drone call, the span completed. Longest flight reported;
@@ -9165,7 +9176,11 @@ func _run() -> void:
 	# the spread): the FP44 audit's segmented standing run
 	# read 0-45 in 6.83 s. Band re-derived [6.2, 7.4] -
 	# stage 26's band, same run, same reason.
-	check(t45_68 > 6.2 and t45_68 < 7.4,
+	# AMENDED (FP54, FLAGGED): stage 26's amendment is
+	# this one's too - FP54's drag cut shortened the run;
+	# this stage's FP54 smoke read is 5.74 s. Band
+	# re-derived [5.1, 6.3], same margins.
+	check(t45_68 > 5.1 and t45_68 < 6.3,
 		"stage68: 0-45 m/s in %.2f s through the gears (FP36's flat engine: 3.54)" % t45_68)
 	check(spin_peak68 > 0.9,
 		"stage68: first gear burns out (spin peak %.2f; FP36's launch peaked 0.72)" % spin_peak68)
@@ -9630,9 +9645,17 @@ func _run() -> void:
 		str(gear71), str(gear_t71), t30_71, hook71])
 	check(str(gear71) == "[1, 2, 3, 4]",
 		"stage71: the box climbs all four gears in order (%s)" % str(gear71))
+	# AMENDED (FP54, FLAGGED): only the top-gear entry
+	# bound moves. FP54's drag cut (Item 2, the downhill
+	# count) brings every shift earlier; gears 2 and 3
+	# still land inside their FP44 windows (1.57 / 2.97)
+	# but top gear now arrives at 4.71 s, under its 4.9
+	# floor. The pulls are the same bands at the same
+	# speeds - they are reached sooner against less drag.
+	# Gear-4 window re-derived [4.1, 5.3] around 4.71.
 	check(float(gear_t71.get(2, -1.0)) > 1.3 and float(gear_t71.get(2, -1.0)) < 2.0 \
 		and float(gear_t71.get(3, -1.0)) > 2.8 and float(gear_t71.get(3, -1.0)) < 3.6 \
-		and float(gear_t71.get(4, -1.0)) > 4.9 and float(gear_t71.get(4, -1.0)) < 5.9,
+		and float(gear_t71.get(4, -1.0)) > 4.1 and float(gear_t71.get(4, -1.0)) < 5.3,
 		"stage71: each gear is a long pull (shifts at %s; FP42's box was through them by ~3 s)" % str(gear_t71))
 	check(t30_71 > 2.9 and t30_71 < 3.5,
 		"stage71: floored 0-30 m/s in %.2f s" % t30_71)
@@ -9736,9 +9759,18 @@ func _run() -> void:
 	var t48_71: float = t45_71 + dt48_71
 	print("stage71: segments 30->45 %.2f s, 45->48 %.2f s; composed 0-45 %.2f s, 0-48 %.2f s (gear %d rev %.2f at 48)" % [
 		dt45_71, dt48_71, t45_71, t48_71, gear48_71, rev48_71])
-	check(dt45_71 > 3.2 and dt45_71 < 3.9 and t45_71 > 6.2 and t45_71 < 7.4,
+	# AMENDED (FP54, FLAGGED): stage 26's amendment,
+	# composed edition - FP54's drag cut shortened both
+	# legs: the FP54 smoke run read the 30->45 leg in
+	# 2.80 s and the composed 0-45 in 5.76 s, and the old
+	# ceiling point now arrives at 6.40 s (the 45->48 leg
+	# itself, 0.64 s, still sits inside its window and is
+	# untouched). Bands re-derived around the measured
+	# figures, same margins: leg [2.2, 3.4], composed
+	# [5.1, 6.3] (stages 26/68's band), 0-48 [5.8, 7.0].
+	check(dt45_71 > 2.2 and dt45_71 < 3.4 and t45_71 > 5.1 and t45_71 < 6.3,
 		"stage71: 0-45 m/s in %.2f s composed (30->45 leg %.2f s)" % [t45_71, dt45_71])
-	check(dt48_71 > 0.6 and dt48_71 < 1.2 and t48_71 > 7.0 and t48_71 < 8.4,
+	check(dt48_71 > 0.6 and dt48_71 < 1.2 and t48_71 > 5.8 and t48_71 < 7.0,
 		"stage71: the old 48 ceiling point arrives at %.2f s (FP42: 6.01) - late, not early" % t48_71)
 	check(gear48_71 == 4 and rev48_71 > 0.18 and rev48_71 < 0.28,
 		"stage71: at 48 the car is deep in top gear, still pulling (gear %d, rev %.2f)" % [gear48_71, rev48_71])

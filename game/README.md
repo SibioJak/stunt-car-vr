@@ -7964,3 +7964,177 @@ through the flight now, does the weight read back, and does the
 early correction still feel like yours on a marginal launch?
 Carried: the roof stand-in's long hold, and the VIEW A/B ruling,
 still open since run 15/16.
+
+## Fix Pass 54 - THREE COUNTS: the tilt's onset, the downhill, the brakes
+
+THE VERDICTS (headset, 2026-11-09, on FP53 - one drive session, three
+counts): (1) THE TILT'S ONSET: "the tilt is better, but not quite
+there. It feels like you lift off a jump, flatten out....but stay
+flat too long, before the downward tilt kicks in." (2) THE DOWNHILL:
+"need to pick up speed going down hill." (3) THE BRAKES: "brakes are
+too strong, you can stop this thing on a dime if you want." Plus his
+track note the same hour, filed in design-spec.md (TRACK GEOGRAPHY):
+"Lot of elevation changes are fun, especially downhill curves" -
+downhill pieces only pay once descents actually add speed.
+
+THE MEASUREMENTS (inside the pass, before production was touched -
+probe54, scratch only, staged like the suite's own drivers):
+
+ITEM 1 - ONSET. On the ridge flights (FP53 staging, pin 48, dense
+pitch traces), onset = time from separation to sustained nose-down
+travel, FP53 as shipped. HANDS-OFF: 2 deg of travel at 0.46 s, 5 deg
+at 0.71 s, half the travel at 1.19 s; pitch rates -6 / -11 / -16 /
+-21 / -31 deg/s at 0.25 / 0.5 / 0.75 / 1.0 / 1.5 s - the pure
+quadratic signature: the film build's rate grows in proportion to
+air time, so the first half-second of every flight is nearly flat BY
+CONSTRUCTION. THROTTLE HELD: worse - 5 deg at 1.01 s, rates -5 / -5 /
+-8 through the first second: FP53's fade (TAU 1.5 from the grab)
+leaves the trim senior through the whole first second, cancelling
+the build's early rate before the spend bites. BOTH channels are the
+flat phase the owner feels; his held-throttle flight sums them.
+(Arrivals reproduced FP53's shipped -3.6 / -9.8 exactly - staging
+true.)
+
+ITEM 2 - DESCENTS. Held throttle / coast, pin-staged entries, the
+roster's real grades. THE DIVE (circuit, 348 m, -16 deg mean):
+throttle 40.7 -> 66.3 (mid-grade +4.10) - the engine covers the
+steep one; COAST 39.5 -> 29.1 (mid-grade -0.70) - the car slows down
+downhill. T13 (160 m, -13.5 deg): throttle 31.2 -> 43.2 (+1.84);
+COAST 29.3 -> 24.0 (-0.51). RIBBON (on-grade release at -13.7 deg):
+coast from 30 reads -1.02 m/s^2 in the first second. Coast is
+negative EVERYWHERE, even at 29-30 m/s on 13.5-16 deg grades - the
+two-term arithmetic convicts itself: gravity's slope term after the
+0.85 drivetrain factor pays 2.0-2.6 m/s^2 on these grades while the
+linear drag (vf x 0.10) charges 3.0-4.0 at descent speeds. Coast
+terminal speeds as shipped: ~26 on the Dive, ~19 on T13, ~17 on the
+ribbon grade. A real car coasts DOWN a steep hill.
+
+ITEM 3 - STOPS. Full brake, flat, pin-staged. From 30: 1.91 s /
+27.9 m, peak decel -16.8 smoothed (the brake's flat 14.0 plus drag).
+From 60: NO clean driven completion exists on FP53 - the attempt
+aborted 1.38 s in at the home straight's brow (s ~3790, both axle
+loads read 0.00 at speed; the car separates there under braking on
+either build - see the FP54 note below). The brake as shipped is a
+flat -14.0 m/s^2 (~1.43 g), above the tires' own longitudinal
+budget (mu = 11.0), with no reference to the tires at all.
+
+THE REPAIRS (production, main.gd):
+
+ITEM 1 - THE TILT STARTS WHEN THE FLIGHT STARTS. Two convicted
+channels, two moves. (a) The film build opens with a RATE TERM:
+offset = -(0.14 x t + 0.5 x 0.20 x t^2), capped at FP14's -0.489
+rad as always. It starts travelling at ~8 deg/s the moment the
+flight starts; the quadratic grows on top. Total travel and cap
+untouched - every saturating flight arrives exactly where it did
+(ridge 1.8 s / 3.13 s arrivals -18.1 / -14.5 against FP53's -18.0 /
+-14.3, staging jitter aside); unsaturated flights arrive deeper by
+the early travel that was missing. _arrival_rate51's derivative is
+the honest one now (-(RATE0 + ACCEL x t) while travelling, zero at
+the cap; FP51's t x ACCEL < 1.0 gate overstated the rate for the
+last second before the cap). (b) The trim's spend starts sooner:
+FP53's mechanism untouched in kind - fade TAU 1.5 -> 0.9, bleed
+2.5 -> 3.5 (equilibrium share ~0.016 rad at full fade). AFTER
+(identical staging): hands-off 2 deg at 0.22 s, 5 deg at 0.48 s,
+half travel at 1.02 s, rates -11 / -14 / -17 / -20 / -26 - travel
+under way at once, evenly, to the same total. Throttle held: 5 deg
+at 0.50 s (was 1.01), rates -9 / -8 / -10 through the first second -
+the throttle channel's onset now tracks hands-off's; the correction
+still lands early (1.8 s arrival -8.4, a ~10 deg residue against
+hands-off's -18.1) and the film build owns the rest; no plateau
+anywhere (rates stay negative and grow after 1.0 s). The ridge's
+marginal humps still flip between film and conservation channels
+run to run (pre-existing phase draw, FP52's pin-40 family) - stage
+73's ridge law (no nose-up travel past launch, no hang) is the
+arbiter and holds.
+
+ITEM 2 - A DESCENT ADDS SPEED. Two convicted terms, two moves.
+(a) The 0.85 drivetrain factor on slope gravity is GONE: the term
+stands at its honest 9.8 x sin(grade) - the Dive's -18 deg pushes
+3.03, not 2.57. The term is symmetric: climbs bite exactly as much
+harder as descents push; no descent was bought by flattening a
+climb. (b) The drag is reshaped: a small rolling term plus the aero
+square (0.0154 x v + 0.001241 x v^2), sized so the Odd Rod law is
+untouched - drag still meets top gear's faded force at ~67 on the
+flat (6.60 against 6.62) and still outweighs it at the clamp (7.16
+vs 6.45 at 70, so a pinned-at-70 car still falls away), while at
+40 it asks 2.60 instead of 4.00 and at 25 only 1.16 instead of
+2.50. Bands, forces, the feather law and the peel-out are
+untouched. AFTER (identical staging): the Dive COAST now GAINS -
+39.7 -> 40.6, mid-grade +0.44 (was -0.70), settling toward its new
+terminal ~44; T13 COAST 29.6 -> 31.4 (+0.68, was -0.51); the ribbon
+grade release, coast from 30: +0.62 m/s^2 (was -1.02). Held
+throttle: the Dive from a 35 entry exits at 68.6 (mid-grade +4.95) -
+arriving at the clamp's door down a long grade is the reserve law
+working, not a violation; from 40 the staged driver now reaches
+the clamp on the Dive and cannot hold the exit S - a staging limit,
+disclosed, not a physics failure. Coast terminal speeds roughly
+double: Dive ~44, T13 ~37, ribbon ~34.
+
+ITEM 3 - BRAKES THE TIRES CAN CASH. The pedal still asks for 14.0;
+what reaches the road is capped at the tires' budget: min(demand,
+GRIP_LAT_ACCEL = 11.0), scaled by the contact-transient factor
+while the springs take the car's weight after a touchdown - the
+load story's designed ramp, the same one the spin cap reads.
+Demand past the budget simply does not transmit; no lockup theatre.
+The cap does NOT read the live axle loads: that form was tried
+first and dropped on its arithmetic (braking down the home
+straight, the suspension's swell noise reads axle loads as low as
+0.04, which would collapse the force to ~1.5 for those frames and
+slam it back - a surge no pedal should produce). AFTER: from 30,
+2.54 s / 37.7 m, peak decel -12.9 (was 1.91 s / 27.9 m, -16.8) -
+a third longer, and the peak now sits at the tires' budget plus
+drag, not past the tires. From 60, no clean driven completion
+exists on this roster on either build (the s ~3790 brow sits
+inside the stop from the home-straight site; both builds separate
+there under braking) - the driven clean phase reads 59.8 -> 38.7
+at the capped total (-16.5 = 11.0 brake + reshaped drag) for 1.2 s
+before the brow, and the model integral from the measured terms
+gives ~4.6 s / ~135 m. Slope hold, measured: full brake on the
+roster's steepest grade (-19.8 deg) - creep 0.00 over 8 s, as
+before; the capped 11.0 outweighs gravity's honest push (3.3)
+threefold. The air brake (FP51's trim, FP53's spend) is untouched.
+
+GATES: preflight clean (import + boot on the shipped tree);
+SMOKE ALL 868; API GUARD ALL 71 (reported inside the smoke run).
+The smoke figure is the pass's own smoke3 run: the tree it ran on
+is byte-identical to the shipped tree (main.gd and smoke_test.gd
+both predate the log and neither moved after it - confirmed at
+the finisher's audit, which also ruled the smoke amendments at
+stages 26/68/71 legitimate: flagged re-derivations around the
+pass's measured figures at FP44's own margins, the drag cut's
+honest repricing - not bounds moved into green). Render proof
+185 of 187, captures regenerated for real - the two misses are
+the standing pair (the wheel-hub reach artifact, every baseline
+since FP31; the 1-of-63 DIAG sightline graze that flips between
+runs); capture 34 reads launch +10.0, max +10.0, snapped on a car
+travelling down under held throttle. Frame strips ALL 8 checks
+(FP51 end-over-end intact to the crane collection); the FP53
+pitch assertion reads launch +10.1 -> last airborne -0.2 deg
+this run (FP53's run read -14.4 - the strip's staging draws its
+own phase; the assertion is the sign and the travel, and both
+hold). Disclosure: the FP54 builder was killed at the owner's
+order after three watchdog flags with the pass essentially
+complete and this entry drafted; a finisher audited the tree,
+ran the remaining gates (preflight, render proof, frame
+strips), filled this line, and shipped it.
+
+ECONOMY (report-only, as always): the stage-54 audit reprices the
+circuit 181.4 -> 185.4 units/lap (payable air 19.12 s) and the
+ribbon 91.5 -> 91.7. The circuit's rise comes with slightly LESS
+payable air than FP53's audit - the audit driver now descends
+faster and brakes at the capped demand into the corners, and the
+trim's quicker spend changes which flights pay at which grade.
+Reported, not chased; the dials are untouched, per the owner's
+standing ruling that the economy is revisited whole when the
+physics settles.
+
+STILL NAMED, NOT IN THIS PASS: the lab chasm rebound; the crane
+stick; the ridge pin-40 forward tumble. Carried: the roof
+stand-in's long hold; the VIEW A/B ruling.
+
+UNVERIFIED UNTIL THE SEAT JUDGES: all three counts are feel counts.
+The tilt's onset in the headset (does the downward tilt now read as
+starting WITH the flight, throttle held?), the downhill (does a
+descent now gather speed under your foot, especially the downhill
+curves the track note prizes?), and the brakes (does the stop now
+feel like tires, not a wall?).

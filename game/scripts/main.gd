@@ -263,6 +263,31 @@ const GEAR_FORCES: Array = [22.0, 15.0, 11.0, 8.5] # engine tire force at each b
 const GEAR_BAND_FADE: float = 0.25 # force fraction surrendered across a band
 const SHIFT_GAP_S: float = 0.22 # the engine's silence inside a shift (FP42: was 0.13)
 const SHIFT_HYSTERESIS: float = 1.5 # m/s below a band's floor before the box takes the lower gear
+# Fix Pass 54 (Item 2): THE DRAG, RESHAPED. The old term
+# was a flat linear vf x 0.10 - 4.0 m/s^2 at 40 m/s, 6.8
+# at the equilibrium. It was doing two jobs at once: the
+# top-speed governor (with the gear fade, above) and, in
+# effect, a descent brake - the FP54 descent measurement
+# convicted it on the roster's own grades: coasting, the
+# car DECELERATED down every descent measured (the Dive,
+# -16 deg mean: 39.5 -> 29.1 m/s, mid-grade -0.70 m/s^2;
+# T13, -13.5 deg: 29.3 -> 24.0; the ribbon at -13.7 deg:
+# -1.02 m/s^2 from 30), because at descent speeds the
+# linear drag outweighs gravity's whole slope term. A
+# real car coasts DOWN a steep hill. The new drag is a
+# small linear (rolling) term plus a quadratic (aero)
+# term, sized so the governor's law is untouched - drag
+# still meets top gear's faded force at ~67 on the flat
+# (6.60 at 67, against the force's 6.62) and still
+# outweighs it at the 71 clamp (7.16 vs 6.45, so a car
+# pinned at 70 still falls away) - while at 40 m/s it
+# asks 2.60 instead of 4.00, and at 25 only 1.16 instead
+# of 2.50. Coast terminal speeds on the roster's grades
+# roughly double (Dive ~26 -> ~44, T13 ~19 -> ~37,
+# ribbon ~17 -> ~34). Bands and forces above are
+# untouched; the peel-out reads the spin cap, not drag.
+const DRAG_LIN: float = 0.0154 # Fix Pass 54: rolling drag, m/s^2 per m/s
+const DRAG_QUAD: float = 0.001241 # Fix Pass 54: aero drag, m/s^2 per (m/s)^2
 # Fix Pass 40 (Item 3): THE FISHTAIL. One tire, one friction
 # circle: longitudinal demand at the driven (rear) axle is
 # spent from the same budget the lateral bleed draws on.
@@ -664,7 +689,26 @@ const REBOUND_CHAIN_RESET_S: float = 0.5
 # slope-matched, nose-first. The build is quadratic in air
 # time (a constant angular acceleration of the attitude),
 # capped so a very long flight cannot arrive inverted.
-const AIR_NOSE_DOWN_ACCEL: float = 0.349 # rad/s^2 of attitude build (~20 deg/s^2)
+# Fix Pass 54 (Item 1): THE ONSET. The owner's FP53 verdict:
+# the tilt is better, but "you lift off a jump, flatten
+# out....but stay flat too long, before the downward tilt
+# kicks in." The FP54 onset measurement convicted the
+# quadratic's own shape: its rate grows in proportion to
+# air time (measured -6 / -11 / -16 / -21 / -31 deg/s at
+# 0.25 / 0.5 / 0.75 / 1.0 / 1.5 s), so 2 deg of travel
+# takes 0.46 s and half the travel waits until 1.19 s -
+# the first half-second of every flight is nearly flat BY
+# CONSTRUCTION. The build now opens with a RATE TERM: it
+# starts travelling at AIR_NOSE_DOWN_RATE0 the moment the
+# flight starts and the quadratic grows on top. The cap
+# (total travel) is FP14's, untouched, so every flight
+# long enough to saturate arrives exactly where it always
+# did (the ridge's 1.8 s and 3.13 s arrivals are the cap,
+# unchanged); unsaturated flights arrive deeper by the
+# early travel that was always missing - same arrivals in
+# total, earlier travel, which is the verdict's whole ask.
+const AIR_NOSE_DOWN_RATE0: float = 0.14 # Fix Pass 54: rad/s of attitude rate the build opens with (~8 deg/s)
+const AIR_NOSE_DOWN_ACCEL: float = 0.20 # Fix Pass 54: rad/s^2 of attitude build growth (FP14: 0.349 pure quadratic)
 const AIR_NOSE_DOWN_MAX: float = 0.489 # rad (~28 deg) cap on the build # grounded seconds that re-arm the return
 # Fix Pass 51: THE FLIGHT MODEL - honest pitch in the air.
 # The confession FP14's law stands on, in its own comment
@@ -844,9 +888,26 @@ const AIR_TRIM_V_DECAY: float = 1.2 # Fix Pass 52: rad/s^2 the trim's rate decay
 # Hands-off never enters this block - the film build is
 # untouched, and the FP53 after-traces must show the
 # hands-off channel bit-comparable to FP52/FP50.
-const AIR_TRIM_SPEND_TAU: float = 1.5 # Fix Pass 53: s - the held trim's authority fade time constant (see above)
+# Fix Pass 54 (Item 1, second channel): THE SPEND STARTS
+# SOONER. The FP54 onset measurement: under held throttle
+# the pitch rate at 0.5 / 0.75 / 1.0 s of flight read
+# -5 / -5 / -8 deg/s against hands-off's -11 / -16 / -21 -
+# FP53's fade (TAU 1.5 from the grab) leaves the trim
+# senior through the whole first second, so 5 deg of
+# travel took 1.01 s under throttle against 0.71 s
+# hands-off: the flat phase the owner feels is the sum of
+# the film build's slow start (fixed at the build) and
+# this one. The mechanism is FP53's, untouched in kind -
+# the fade clock runs faster (TAU 1.5 -> 0.9) and the
+# bleed pulls harder (2.5 -> 3.5), so a correction still
+# lands early at full strength, but the film build takes
+# the flight back inside the first second instead of
+# after it. Equilibrium share at full fade becomes
+# 0.5 x 0.10 / (3.5 x 0.90) ~ 0.016 rad. The re-application
+# rule, the floor and the per-direction clock are FP53's.
+const AIR_TRIM_SPEND_TAU: float = 0.9 # Fix Pass 54: s - the held trim's authority fade time constant (FP53: 1.5; see above)
 const AIR_TRIM_SPEND_FLOOR: float = 0.10 # Fix Pass 53: the faded authority floor, and the sustainable fraction of a bought share (see above)
-const AIR_TRIM_BLEED_K: float = 2.5 # Fix Pass 53: 1/s - the bought share's bleed rate constant while held (see above)
+const AIR_TRIM_BLEED_K: float = 3.5 # Fix Pass 54: 1/s - the bought share's bleed rate constant while held (FP53: 2.5; see above)
 # Item 3 - THE ROOF OUTCOME. An inverted arrival (or one
 # still rotating past the gradeable window at contact) is
 # not a landing: _land rules it ROOF, books NO payout, and
@@ -1945,7 +2006,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP53 · 2026-11-09"
+const BUILD_STAMP: String = "FP54 · 2026-11-09"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -8391,18 +8452,59 @@ func _update_drive(delta: float) -> void:
 		tail_catch_t = FISHTAIL_CATCH_S
 	throttle_prev = in_throttle
 	var accel: float = tire_long
-	accel -= in_brake * 14.0
-	accel -= vf * 0.10
+	# Fix Pass 54 (Item 3): THE BRAKE, CAPPED BY THE TIRES.
+	# The pedal still ASKS for 14.0, but what reaches the
+	# road is capped at the tires' longitudinal budget -
+	# the one mu, GRIP_LAT_ACCEL - read through the load
+	# story's DESIGNED channel: the contact-transient
+	# factor, the smooth ramp the spin cap also reads,
+	# which scales the cap only while the springs take the
+	# car's weight after a touchdown. Pedal demand past
+	# the budget simply does not transmit - no lockup
+	# theatre in this pass. As shipped (FP53) the flat
+	# 14.0 out-stopped the tires themselves (60 -> 0 in a
+	# measured 4.06 s / 121.4 m, peak decel past -19 with
+	# the drag's help); the owner: "you can stop this
+	# thing on a dime." On a grade the capped brake still
+	# outweighs gravity's push threefold on the roster's
+	# steepest (11.0 vs 3.3 at -19.8 deg), so a full-brake
+	# hold on a hill still holds. The AIR brake - FP51's
+	# nose-down trim - is a different job and is untouched.
+	# NOTE (FP54 measurement, flagged in place): the cap
+	# does NOT read the live axle loads. That form was
+	# tried first and dropped on its arithmetic: braking
+	# down the home straight at 60, the suspension's own
+	# swell noise reads axle loads as low as 0.04 / 0.23
+	# in ordinary driving, which would collapse the brake
+	# force to ~1.5 for those frames and slam it back at
+	# 11 - a surge no pedal should produce. Raw axle load
+	# is a launch signal (the spin state reading it is
+	# smoothed); a direct force takes the budget at
+	# nominal load and the transient ramp above.
+	var brake54: float = minf(in_brake * 14.0, GRIP_LAT_ACCEL)
+	if contact_transient_t > 0.0:
+		brake54 *= _contact_load_factor()
+	accel -= brake54
+	# Fix Pass 54 (Item 2): the reshaped drag (see the
+	# DRAG_LIN / DRAG_QUAD constants note): a small rolling
+	# term plus the aero square. Signed through vf x |vf|
+	# so reverse drags honestly too.
+	accel -= DRAG_LIN * vf + DRAG_QUAD * vf * absf(vf)
 	# Fix Pass 41 (Item 1): slope gravity is gravity's
-	# component along the car's own forward (0.85 = the
-	# standing drivetrain factor). Aligned on a slope this
-	# is the pre-FP41 -GRAV * tan.y * 0.85 to the digit;
-	# angled across a slope the hill now pulls the way the
-	# nose points, and up the loop's wall it is the force
-	# the climb is priced against (tan.y * 0.85 read the
-	# road the same way - the terms agree wherever the car
-	# follows the road).
-	accel += -GRAV * d41.y * 0.85 # slope gravity: climbs bite, descents push
+	# component along the car's own forward. Aligned on a
+	# slope this is the pre-FP41 -GRAV * tan.y form; angled
+	# across a slope the hill pulls the way the nose
+	# points, and up the loop's wall it is the force the
+	# climb is priced against.
+	# Fix Pass 54 (Item 2): the 0.85 drivetrain factor is
+	# GONE - gravity is gravity. The factor was quietly
+	# taxing every grade both ways; with the drag reshaped
+	# (above) the slope term now stands at its honest
+	# 9.8 x sin(grade): the Dive's -18 deg pushes 3.03, not
+	# 2.57. The term is symmetric, so climbs bite exactly
+	# as much harder as descents push - no descent was
+	# bought by flattening a climb.
+	accel += -GRAV * d41.y # slope gravity: climbs bite, descents push
 	vf = clampf(vf + accel * delta, -6.0, TOP_SPEED)
 	if in_brake > 0.05 and vf < 0.5 and vf > -0.5:
 		vf = 0.0
@@ -8678,7 +8780,7 @@ func _update_air(delta: float) -> void:
 		# added the two and double-counted the rotation.
 		var off7: float = 0.0
 		if not air_violent:
-			off7 = clampf(-0.5 * AIR_NOSE_DOWN_ACCEL * air_time * air_time, -AIR_NOSE_DOWN_MAX, 0.0)
+			off7 = clampf(-(AIR_NOSE_DOWN_RATE0 * air_time + 0.5 * AIR_NOSE_DOWN_ACCEL * air_time * air_time), -AIR_NOSE_DOWN_MAX, 0.0) # Fix Pass 54: rate term + quadratic (see the constants note)
 		# Fix Pass 51 (Items 1+2): the honest share of the
 		# attitude. A CONSERVED flight integrates the rate
 		# it separated with; a TRIMMED flight (past the arm
@@ -8880,17 +8982,22 @@ func _slope_vy_at(fr: Dictionary, vel_xz: Vector2) -> float:
 
 ## Fix Pass 51 (Item 3): the arrival's total attitude rate
 ## at this moment - FP14's film build is analytic (its
-## derivative is -ACCEL x air_time, nose-down/positive in
-## the shared convention); the conserved and trim shares
-## are state. _land's roof ruling reads this, never the
-## pose alone: a car resting at the rotation cap with its
-## rate still live is ARRIVING rotating, and grading it by
-## its frozen pose would resurrect the righting FP51
-## exists to remove.
+## derivative is -(RATE0 + ACCEL x air_time) while the
+## build is still travelling, zero once it rests at the
+## cap - Fix Pass 54's honest saturation test replaces
+## FP51's t x ACCEL < 1.0 gate, which overstated the rate
+## for the last second before the cap); the conserved and
+## trim shares are state. _land's roof ruling reads this,
+## never the pose alone: a car resting at the rotation cap
+## with its rate still live is ARRIVING rotating, and
+## grading it by its frozen pose would resurrect the
+## righting FP51 exists to remove.
 func _arrival_rate51() -> float:
 	var film51: float = 0.0
-	if not air_from_release and not air_violent and air_time * AIR_NOSE_DOWN_ACCEL < 1.0:
-		film51 = -AIR_NOSE_DOWN_ACCEL * air_time
+	if not air_from_release and not air_violent:
+		var unc54: float = AIR_NOSE_DOWN_RATE0 * air_time + 0.5 * AIR_NOSE_DOWN_ACCEL * air_time * air_time
+		if unc54 < AIR_NOSE_DOWN_MAX:
+			film51 = -(AIR_NOSE_DOWN_RATE0 + AIR_NOSE_DOWN_ACCEL * air_time)
 	return film51 + air_pitch_rate + _trim_v51
 
 
