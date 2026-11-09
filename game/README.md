@@ -7799,3 +7799,168 @@ pace (little hills near corners are hills again?), a violent launch
 should?), and the trim fight (held throttle on a long flight: the nose
 stays yours?). Carried from FP51: the roof stand-in's long hold, and
 the VIEW A/B ruling, still open since run 15/16.
+
+## Fix Pass 53 - THE GLIDE: the trim spends itself
+
+THE VERDICT (headset, 2026-11-08, on FP52): split. "Smaller hill are
+fine" - FP52's count, closed. The big jumps: "car still feels too
+light, flying horizontally without nose coming down at all... the big
+jumps I nearly glide." On long flights the car held its launch
+attitude level and sailed; the film's signature - nose travelling
+down through the flight, arriving nose-first - was missing exactly
+where the flight was long enough to show it.
+
+THE CONVICTION (measured, not theorised - a traces-only pass,
+2026-11-09, three-way traces on identical staging: hands off /
+throttle held / brake held, ridge + chasm + lab chasm, before any
+production was touched): the channel eating the nose-down travel is
+the FP51 trim under HELD THROTTLE, the racing input. FP52 capped
+the trim's rate (0.40 rad/s) and its share (+0.40 rad) - but the
+film build's own cap is only -0.489 rad, so the trim's share is 83%
+of the entire film build. On any flight long enough to saturate
+both, the held throttle cancels the film build almost exactly: the
+trim buys its share in the first ~1.2 s of armed air and holds it
+forever - capped in rate and size, never in PERSISTENCE. Ridge
+hump 1 (launch +10 deg, 1.8 s): hands-off +10.0 -> -18.0 CLEAN;
+throttle held flattens onto a +6 deg PLATEAU and arrives +4.7; on
+the ridge's 3.13 s flight it arrives +8.6 - nose-up after three
+seconds of air. Brake held is the mirror crime: its share stacks
+ON TOP of the film build and arrives -41.2, DAMAGED, on every ridge
+flight. The trim is not a correction beside the film build in
+either direction; at these sizes it is a second attitude engine,
+senior to the first. Hands-off does NOT glide - the film build
+runs pure and arrives nose-first, trace-identical to FP50: the
+film build is innocent. "TOO LIGHT" IS NOT GUILTY either: air
+times match FP50 to +/-0.01 s, apex heights to +/-0.02 m, height
+traces overlay sample-for-sample on every flight in all three
+channels. FP52 does not fly longer or descend slower than FP50;
+"light" is the level attitude alone - a car holding +6 deg through
+its descent reads as a glider, and a glider reads as light.
+
+THE REPAIR (production, main.gd; ONE mechanism, symmetric): the
+trim's authority is now finite in TIME as well as size - a bought
+share that spends itself. While a trim input is held, (1) its
+AUTHORITY FADES: the acceleration a held input applies is scaled
+by AIR_TRIM_SPEND_FLOOR + (1 - FLOOR) x exp(-held_t / TAU) with
+TAU = AIR_TRIM_SPEND_TAU = 1.5 s and FLOOR = AIR_TRIM_SPEND_FLOOR
+= 0.10 - full FP52 strength at the grab, fading toward a tenth;
+and (2) the share it has bought BLEEDS BACK: the accumulated rate
+is pulled by (share - FLOOR x share) x AIR_TRIM_BLEED_K (K =
+2.5 /s), so only the FLOOR fraction of a bought share is
+sustainable against a continued hold and the rest spends itself.
+The two meet at a small equilibrium share (~0.022 rad at full
+fade): a correction lands early in the flight, at full strength
+while it is fresh, and the film build owns the rest. RE-
+APPLICATION RULE: the fade clock is per-direction and resets when
+the input is released or REVERSED - a fresh pulse is a fresh
+correction at full authority, and a reversal unwinds a spent
+share at full strength (the bleed rides inside the held step, so
+the arrival-rate read stays honest). At neutral nothing new runs:
+FP52's rate decay is the whole neutral law, and a partially spent
+share neither grows nor resurrects. Fenced and untouched: FP52's
+windowed gate, trim direction and 0.35 s arming, rate cap, share
+cap, neutral decay; FP51's conservation, ROOF ruling, crane
+stand-in, DAMAGED grade; the film build itself.
+
+THE TRACES AFTER (the retry probe re-run, identical staging,
+before -> after):
+- Hands-off: BIT-IDENTICAL. All four ridge flights and the chasm
+  match FP52 digit for digit (arrivals -18.0 / -18.4 / -18.5 /
+  -14.3, trim share +0.000 throughout) - the fix never leaks
+  outside its fence.
+- Ridge 1.8 s, throttle held: arrival +4.7 -> -3.6, and the
+  PLATEAU IS GONE: the dense trace descends the whole flight,
+  crosses zero at ~1.35 s and keeps travelling (-4.4 at the dip,
+  arrival -3.6 after the landing frame's snap) where FP52's trace
+  flattened at +6.0 and sat there. The share at landing is
+  +0.256, not the +0.400 cap - still a held correction's worth of
+  offset against hands-off's -18.0 at this length (see below).
+- Ridge 3.13 s, throttle held: arrival +8.6 -> -9.8 against
+  hands-off's -14.3 - inside 5 deg of the film build's own
+  arrival, nose-down through the flight (the dense trace sags to
+  -0.5 mid-flight as the share peaks, the film build takes the
+  flight back, and it arrives travelling down). The longer the
+  flight, the more completely the film build owns it: at ~1.8 s
+  the correction still holds ~14 deg of the film's travel; at
+  3.13 s, ~4.5 deg. That gradient IS the mechanism working as
+  drawn - a correction that lands early and spends, not a second
+  engine with a smaller cap.
+- Brake held: the stack is cut, not hidden: ridge arrivals
+  -41.2 -> -32.8 / -33.9 on the short flights (share -0.255, was
+  -0.400; still DAMAGED - a full brake held for a whole flight is
+  still a spoiled arrival, now by the film build's own depth plus
+  a spent correction rather than a second engine's stack), and
+  the 3.12 s brake flight lands CLEAN at -19.0 (was DAMAGED at
+  -37.3) - given time, the brake's share spends too and the film
+  build brings the car home.
+- Chasm (boosted, 1.73 s): throttle arrival -4.1 vs hands-off
+  -18.2, the same ~14 deg correction residue as the ridge at this
+  length; lab chasm (0.98 s): spread narrows 5.9 -> ~4.9 deg
+  (OFF +0.2 / THR +5.1 / BRK -4.6). Air times and apexes unmoved
+  everywhere (ballistics never were the charge).
+
+THE FOUR PROTECTED RE-PROOFS (stage 73, re-run, not assumed):
+CREST LAW - the lab crests separate at 0.000, below the line,
+peak == launch stands; ARREST - a staged flight at exactly the
+gate rate (-0.25 conserved) with full opposite trim: bottoms at
+-9.4 deg (FP52: -8.4), returns to +8.0, LANDS in DRIVE - the early
+authority the arrest stands on survives the fade, as designed;
+RELEASE - rate bought to +0.197, released: decays to +0.000, the
+share grows only +0.015 rad after (FP52: +0.026) and a partially
+spent share does not resurrect; RIDGE DRIVE - the held-throttle
+row at pin 48: worst nose-up travel past launch +0.00 deg over 3
+flights, no hang, span completed. The trim staging beside them
+reads +/-0.088 rad of share on the 6 m flight (FP52 read ~0.16 -
+the spend is visible even there; direction and bounds intact).
+
+TEST-SIDE AMENDMENTS (both FLAGGED in place, no bound moved to
+make a failure pass): capture 33's snap re-times from the 63rd
+frame to the 90th (1.0 s) - FP53's early correction is
+deliberately smaller by the old frame (~0.026 rad by the
+arithmetic, under the check's 0.03 bound, which is the capture's
+strength and stays); at 1.0 s the pair reads brake -0.085 /
+throttle +0.088, both ways past the bound, same flight, same air
+time. The frame strips gain ONE check on the FP52 ridge strip's
+own staging: the target flight's pitch at separation and its last
+airborne pitch, asserted nose-down (this run: launch +9.6 -> last
+airborne -14.4, throttle held) - the glide's dense-frame proof,
+carried in the suite from here on.
+
+ECONOMY (reported only, per the standing ruling; nothing
+retuned): stage-54 audit - circuit 181.4 units/lap this run
+(FP52's run read 168.0; the audit's driven draws include the
+driver's own held-throttle trim, so the trim's new shape reprices
+the draw - reported, not chased), ribbon 91.5 unmoved; stage-58
+lab audit 30.37 s payable air, 300 units - identical to FP52.
+
+GATES: preflight clean (import + boot, re-run after the
+production edit). SMOKE ALL 868 - the count is FP52's, unmoved:
+no stage added or lost, and stage 58 passed ENTIRE in place this
+run, its appendix included. API GUARD ALL 71. Render proof 185 of
+187 with captures regenerated for real: the two misses are the
+standing pair - the wheel-hub reach artifact (every baseline
+since FP31) and the 1-of-63 DIAG sightline graze that flips
+between runs; capture 32's bowl portrait staging, FP52's third
+miss, passed this run. Capture 34 (the ridge's long flight from
+the seat, throttle held): launch +10.0, max through capture
++10.0 - snapped mid-flight on a car already travelling down.
+Frame strips ALL 8 checks across the 7 strips (FP52 ridge strip
+73 tiles, plus the FP53 pitch assertion above; the FP51 staged
+end-over-end re-run intact to the crane collection). Stamp FP53.
+
+NAMED, NOT IN THIS PASS (all stand): the lab chasm rebound - this
+pass's probe re-read it conserving -1.31..-1.40 rad/s and arriving
+DAMAGED in all three channels, exactly FP52's observation; it
+enters as a fresh separation, so the gate's rebound exemption
+does not cover it, and no fix was smuggled in. The crane stick
+(2026-11-08: a few seconds stuck on the crane, no sway, self-
+released, after a long-glide crash) - different system, its own
+item when called. The ridge pin-40 forward tumble (FP52's named
+edge) - the pinned staging's known draw; driven laps cross clean.
+
+WHAT THE SEAT STILL OWES: the FP53 verdict itself - the big jumps
+at held throttle, in the headset: does the nose travel down
+through the flight now, does the weight read back, and does the
+early correction still feel like yours on a marginal launch?
+Carried: the roof stand-in's long hold, and the VIEW A/B ruling,
+still open since run 15/16.

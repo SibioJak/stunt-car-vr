@@ -800,6 +800,53 @@ const AIR_TRIM_RATE: float = 0.5 # rad/s^2 of trim authority at full deflection
 const AIR_TRIM_V_MAX: float = 0.40 # Fix Pass 52: rad/s cap on the trim's accumulated rate (see above)
 const AIR_TRIM_OFF_MAX: float = 0.40 # Fix Pass 52: rad cap on the trim's share of the attitude (see above)
 const AIR_TRIM_V_DECAY: float = 1.2 # Fix Pass 52: rad/s^2 the trim's rate decays at neutral input (see above)
+# Fix Pass 53 (Item 1): THE TRIM SPENDS ITSELF. FP52's caps
+# bounded the trim in RATE and SIZE but never in
+# PERSISTENCE - and the measured conviction (the FP53
+# traces-only pass, 2026-11-09) is that this is the whole
+# glide: the trim's share cap (0.40 rad) is 83% of the
+# film build's own cap (0.489 rad), the trim buys its full
+# share in the first ~1.2 s of armed flight, and a held
+# throttle then cancels the film build almost exactly for
+# as long as the flight runs (ridge, held throttle: the
+# trace flattens onto a +6 deg plateau, arrival +4.7 deg
+# where hands-off arrives -18.0; on the 3.13 s flight,
+# arrival +8.6 - nose-up after three seconds of air).
+# Brake is the mirror crime: its held share stacks ON TOP
+# of the film build and arrives at -41.2 deg, DAMAGED, on
+# every ridge flight. The owner's law: a held control may
+# CORRECT a flight; it may not hold the car level against
+# its own physics for the whole flight. The fix is one
+# mechanism, symmetric in both directions: while a trim
+# input is HELD, (1) its AUTHORITY fades - the
+# acceleration a held input can apply is scaled by
+# AIR_TRIM_SPEND_FLOOR + (1 - FLOOR) x exp(-held_t / TAU),
+# full strength at the grab, fading on TAU toward the
+# FLOOR; and (2) the share it has bought BLEEDS back -
+# the accumulated rate is pulled by
+# (share - FLOOR x share) x AIR_TRIM_BLEED_K, i.e. only
+# the FLOOR fraction of a bought share is sustainable
+# against a continued hold, and the rest spends itself
+# at BLEED_K. The two meet at a small equilibrium share
+# (at full fade: 0.5 x 0.10 / (2.5 x 0.90) ~ 0.022 rad,
+# ~1.3 deg): a correction lands early in the flight, at
+# full FP52 strength while it is fresh, and the film
+# build owns the rest of the flight. RE-APPLICATION
+# RULE: the fade clock is per-direction and resets when
+# the input is released or REVERSED - a fresh pulse after
+# a release (or a reversal fighting a spent share) is a
+# fresh correction at full authority; the bleed is part
+# of the held step, so a reversal unwinds the old share
+# at full strength too - FP52's arrest arithmetic is
+# untouched in kind. At neutral nothing here runs:
+# FP52's rate decay is the whole neutral law, and a
+# partially spent share neither grows nor resurrects.
+# Hands-off never enters this block - the film build is
+# untouched, and the FP53 after-traces must show the
+# hands-off channel bit-comparable to FP52/FP50.
+const AIR_TRIM_SPEND_TAU: float = 1.5 # Fix Pass 53: s - the held trim's authority fade time constant (see above)
+const AIR_TRIM_SPEND_FLOOR: float = 0.10 # Fix Pass 53: the faded authority floor, and the sustainable fraction of a bought share (see above)
+const AIR_TRIM_BLEED_K: float = 2.5 # Fix Pass 53: 1/s - the bought share's bleed rate constant while held (see above)
 # Item 3 - THE ROOF OUTCOME. An inverted arrival (or one
 # still rotating past the gradeable window at contact) is
 # not a landing: _land rules it ROOF, books NO payout, and
@@ -1373,6 +1420,8 @@ var air_pitch_rate: float = 0.0 # rad/s: the conserved rate this flight carries 
 var air_trim_off: float = 0.0 # rad of the trim's own share of air_pitch_off (reported separately)
 var air_violent: bool = false # this flight separated at/above the violence threshold
 var _trim_v51: float = 0.0 # Fix Pass 51 (Item 2): the trim's accumulated attitude velocity (rad/s) - bounded authority lives here
+var _trim_held53: float = 0.0 # Fix Pass 53 (Item 1): s the current trim direction has been continuously held - the spend fade's clock
+var _trim_sign53: float = 0.0 # Fix Pass 53 (Item 1): the held trim's direction (+1 throttle / -1 brake / 0 none) - a change resets the clock
 var roof_recovery: bool = false # the current hang is a ROOF stand-in recovery (longer hold)
 var last_roof: String = "-" # the last ROOF ruling, for the DIAG ("" until the first)
 # Fix Pass 10 (Item 1): the s at which the car LEFT the road,
@@ -1896,7 +1945,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP52 · 2026-11-08"
+const BUILD_STAMP: String = "FP53 · 2026-11-09"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -5181,6 +5230,8 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 	air_pitch_off = 0.0
 	air_trim_off = 0.0
 	_trim_v51 = 0.0
+	_trim_held53 = 0.0 # Fix Pass 53: the spend clock starts empty on every flight
+	_trim_sign53 = 0.0
 	air_pitch_rate = deg_to_rad(road_pitch_peak51)
 	air_violent = air_pitch_rate <= -AIR_VIOLENCE_RAD_S and not from_gap and not pending_rebound
 	if not air_violent:
@@ -8065,6 +8116,8 @@ func _do_release() -> void:
 	air_pitch_off = 0.0
 	air_trim_off = 0.0
 	_trim_v51 = 0.0
+	_trim_held53 = 0.0 # Fix Pass 53: the spend clock starts empty on every flight
+	_trim_sign53 = 0.0
 	air_pitch_rate = 0.0
 	air_violent = false
 	mode = MODE_AIR
@@ -8664,8 +8717,29 @@ func _update_air(delta: float) -> void:
 				# are FP51's, untouched.
 				var trim51: float = (in_throttle - in_brake) * AIR_TRIM_RATE
 				if trim51 != 0.0:
-					_trim_v51 = clampf(_trim_v51 + trim51 * delta, -AIR_TRIM_V_MAX, AIR_TRIM_V_MAX)
+					# Fix Pass 53 (Item 1): the trim spends
+					# itself (see the constants note). The
+					# fade clock runs per direction: a
+					# release or a reversal restarts it, so
+					# a fresh pulse is a fresh correction.
+					if _trim_sign53 == 0.0 or signf(trim51) != _trim_sign53:
+						_trim_sign53 = signf(trim51)
+						_trim_held53 = 0.0
+					_trim_held53 += delta
+					var auth53: float = AIR_TRIM_SPEND_FLOOR + (1.0 - AIR_TRIM_SPEND_FLOOR) * exp(-_trim_held53 / AIR_TRIM_SPEND_TAU)
+					_trim_v51 = clampf(_trim_v51 + trim51 * auth53 * delta, -AIR_TRIM_V_MAX, AIR_TRIM_V_MAX)
+					# The bleed is part of the trim's step,
+					# so _arrival_rate51 reads it honestly.
+					# A fresh pulse after a release fights
+					# at full strength against whatever
+					# share remains - FP52's arrest is
+					# untouched in kind.
+					var sus53: float = air_trim_off * AIR_TRIM_SPEND_FLOOR
+					if absf(air_trim_off - sus53) > 0.001:
+						_trim_v51 = clampf(_trim_v51 - (air_trim_off - sus53) * AIR_TRIM_BLEED_K * delta, -AIR_TRIM_V_MAX, AIR_TRIM_V_MAX)
 				else:
+					_trim_sign53 = 0.0
+					_trim_held53 = 0.0
 					_trim_v51 = move_toward(_trim_v51, 0.0, AIR_TRIM_V_DECAY * delta)
 				var tstep51: float = _trim_v51 * delta
 				var new_trim52: float = clampf(air_trim_off + tstep51, -AIR_TRIM_OFF_MAX, AIR_TRIM_OFF_MAX)
@@ -11078,6 +11152,8 @@ func debug_stage_flight51(s: float, height: float, spd: float, pitch_off: float,
 	air_pitch_off = pitch_off
 	_trim_v51 = trim_v
 	air_trim_off = 0.0
+	_trim_held53 = 0.0 # Fix Pass 53: a staged flight starts with a fresh spend clock
+	_trim_sign53 = 0.0
 	air_pitch_rate = rate_rad_s
 	air_violent = rate_rad_s <= -AIR_VIOLENCE_RAD_S # mirrors _enter_air's directional gate (finisher)
 
@@ -11112,6 +11188,8 @@ func debug_force_fall_at(s: float) -> void:
 	air_pitch_off = 0.0
 	air_trim_off = 0.0
 	_trim_v51 = 0.0
+	_trim_held53 = 0.0 # Fix Pass 53: the spend clock starts empty on every flight
+	_trim_sign53 = 0.0
 	air_pitch_rate = 0.0
 	air_violent = false
 
@@ -11227,6 +11305,8 @@ func debug_stage_landing(s: float, height: float, fwd_speed: float) -> void:
 	air_pitch_off = 0.0
 	air_trim_off = 0.0
 	_trim_v51 = 0.0
+	_trim_held53 = 0.0 # Fix Pass 53: the spend clock starts empty on every flight
+	_trim_sign53 = 0.0
 	air_pitch_rate = 0.0
 	air_violent = false
 

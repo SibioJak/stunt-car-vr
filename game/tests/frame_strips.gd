@@ -212,6 +212,17 @@ func _run() -> void:
 	var step52: int = 0
 	var in52: bool = false
 	var landed52: int = 0
+	# Fix Pass 53: the same strip now also carries the
+	# glide's dense pitch read - the target flight's pitch
+	# at separation and its last airborne pitch, asserted
+	# below: on FP52 this flight (throttle held) arrived
+	# at +8.6 deg, nose-UP past its +13.7 launch in
+	# character (the trace parked at +8.6); the spending
+	# trim must bring it home nose-down through the
+	# flight, the way the FP53 probe's dense traces read.
+	var lp53: float = 0.0
+	var arr53: float = 0.0
+	var saw53: bool = false
 	for f52: int in 90 * 14:
 		autopilot_steer(0.0)
 		main.debug_pin_speed(48.0)
@@ -219,7 +230,11 @@ func _run() -> void:
 		step52 += 1
 		if not in52 and main.mode == main.MODE_AIR and main.car_s > main.ext_s0 + 150.0:
 			in52 = true
+			lp53 = rad_to_deg(asin(clampf((-main.car.global_transform.basis.z).y, -1.0, 1.0)))
+			saw53 = true
 		if in52:
+			if main.mode == main.MODE_AIR:
+				arr53 = rad_to_deg(asin(clampf((-main.car.global_transform.basis.z).y, -1.0, 1.0)))
 			if step52 % 3 == 0:
 				_place_cam(1.0)
 				tiles52.append(await _grab())
@@ -232,6 +247,9 @@ func _run() -> void:
 	main.test_throttle = 0.0
 	check(tiles52.size() >= 10,
 		"FP52 strip: the driven ridge flight was captured dense (%d tiles)" % tiles52.size())
+	print("FP53 strip: ridge long flight pitch - launch %+.1f, last airborne %+.1f deg (throttle held)" % [lp53, arr53])
+	check(saw53 and arr53 <= lp53 - 8.0,
+		"FP53 strip: the ridge's long flight arrives NOSE-DOWN through the flight (launch %+.1f -> %+.1f deg) - no level sail" % [lp53, arr53])
 	_save_strip(tiles52, "fp52_ridge_strip.png")
 
 	# ---- FP51 strip: the end-over-end, staged ----

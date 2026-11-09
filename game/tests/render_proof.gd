@@ -1570,13 +1570,24 @@ func _run() -> void:
 	# throttle's share is positive, brake's negative. The
 	# drafted capture asserted the inverted pair and passed
 	# its bound by 0.001 rad.
+	# AMENDED (Fix Pass 53, FLAGGED): the capture frame
+	# moves from the 63rd to the 90th (1.0 s of flight -
+	# the 6 m staged flight runs ~1.15 s). FP53's trim
+	# SPENDS itself: its early correction is deliberately
+	# smaller by the old frame (the FP53 arithmetic reads
+	# ~0.026 rad there, under this check's 0.03 bound -
+	# the bound is the capture's strength and is NOT
+	# moved); at 1.0 s the pair still reads both ways past
+	# the bound (probe arithmetic ~0.06 rad), and the two
+	# portraits remain the same flight at the same air
+	# time, which is all the capture ever claimed.
 	main._set_track("ribbon")
 	var trim51: Array = []
 	for t51: int in 2:
 		main.debug_stage_flight51(50.0, 6.0, 20.0, 0.0, 0.0, 0.0)
 		main.test_throttle = 1.0 if t51 == 1 else 0.0
 		main.test_brake = 0.0 if t51 == 1 else 1.0
-		for w51: int in 63: # ~0.7 s of flight: past the arm floor, mid-flight
+		for w51: int in 90: # 1.0 s of flight: past the arm floor, mid-flight (FP53: re-timed, see above)
 			await physics_frame
 		trim51.append(main.air_trim_off)
 		await snap(main.fallback_cam, "fp51_trim_brake_view.png" if t51 == 0 else "fp51_trim_throttle_view.png")
