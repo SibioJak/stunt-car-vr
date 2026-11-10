@@ -8138,3 +8138,153 @@ starting WITH the flight, throttle held?), the downhill (does a
 descent now gather speed under your foot, especially the downhill
 curves the track note prizes?), and the brakes (does the stop now
 feel like tires, not a wall?).
+
+## Fix Pass 55 - THE CAR: an Odd Rod, built from parts
+
+THE WANT (on record since 2026-11-01, the owner's words): a car
+that doesn't look like "a 5 piece lego set." The placeholder was
+five boxes - white cube blower, black slab, orange wedges. THE
+LOAD (2026-11-09, complete in his words - "thats it"): (1) one
+hero car built from DISCRETE PARTS; (2) Odd Rods proportions off
+the filed reference sheet (7 Donruss cards: DEALER, FIREBIRD,
+PUSHIN INTO, NO HANDS, BOSS 429 + 2 - late-'60s muscle silhouette,
+rear tires massively oversized, skinny fronts, drag rake, hood
+cut for a blown motor, side pipes/zoomies, candy paint, chrome);
+(3) "make it look powerful"; (4) engine VIBRATION felt in the
+visual channels; (5) exhaust SMOKE IN THE PERIPHERY. And his note
+on the sheet, which amends the old "blowers taller than the car"
+line: "lets try to not obscure view too much with blowers and
+such" - the induction reads big from outside; from the seat it
+stays out of the sightline. PRESENTATION ONLY: the drive model
+is untouched entire - any measured drive change would be a leak,
+and none was measured (the suite's staged numbers stand unmoved;
+the stage-54 economy audit reads circuit 185.4 / ribbon 91.7,
+identical to FP54).
+
+ITEM 1 - THE BODY, FROM PARTS. The procedural boxes are replaced
+by 39 named parts, every one a MeshInstance3D riding DIRECTLY on
+car_body and registered in body_parts55 - the list IS the carnage
+build's flying-parts inventory by construction (parts detach from
+exactly this registry when carnage comes): FloorPan, SidePodL/R,
+RearDeck, TailPanel, TailLightL/R, DeckSpoiler, FuelCap,
+RearBumper, Nose, HoodStep, Grille, HeadlightL/R, FrontBumper,
+FrontFenderL/R, RearFenderL/R, EngineBlock, ValveCoverL/R,
+BlowerCase, BlowerHat, BeltDrive, BeltPulley, HeaderL/R,
+SidePipeL/R, PipeTipL/R, TubRailL/R, SeatBack, RollBarPostL/R,
+RollBarTop - plus the wheels' own sub-parts (a chrome hub disc on
+each wheel's outer face and a fat slick-shoulder ring on each
+rear, children of the wheel nodes so they inherit travel and
+steer). Proportions honest to the physics: footprint, wheelbase,
+contact patches and ride height are the model's - the visual
+wheels still sit where the model's wheels are; the rake is the
+suspension's own (FP11's attach heights), the bodywork follows it
+and never fakes a tilt. Tire widths/diameters are the shipped
+visual set (the rears already dwarf the fronts, 0.94 m against
+0.66 - capture 20's standing check); the fat shoulders and the
+flared rear fenders carry the "massive" read. COLOUR CALL: deep
+candy purple (the sheet's PUSHIN INTO and No. 97 cars) - paint at
+roughness 0.32 / metallic 0.25, chrome at 0.22 / 0.9. Stage 2f's
+width guard convicted the first build twice against the < 2.1
+bound (FP10's "two cars pass" proportion): the front fenders at
+2.18 m, slimmed; then the front hub discs, sitting proud of the
+tire face, at 2.12 m, recessed flush. The shipped car measures
+2.08 m with the front TIRE itself the widest thing on it. THE SIGHTLINE LAW,
+MEASURED on identical staging (render proof's FP55 block,
+replicating the FP11 audit with the binder named): the FP54
+placeholder bound the view at 5.32 deg (nearest visible road
+18.7 m, binder an unnamed box). The new body binds at the
+BlowerHat, 5.68 deg - nearest visible road 17.5 m. The hat is
+0.56 m wide against the cube's 0.30 and the road view is BETTER
+than the placeholder's, because the stack's forward top edge sits
+at 1.14 m, under the cube's 1.17: the drama is in the width, the
+belt drive and the chrome, not in height across the eye line
+(capture 36 asserts the hat's top, tremble included, stays under
+EYE_ANCHOR).
+
+ITEM 2 - ENGINE VIBRATION (visual channel). A new engine-state
+channel on the FP44 shudder's discipline - it writes ONLY
+presentation offsets and is fenced off vf, the contact model,
+the carried frame and body_sink by construction (stage 74
+asserts body_sink sits at rest while it runs; stage 72's guard
+is amended, flagged in place, to skip the four mounted parts by
+identity - the wheels' live-state category - with its teeth kept
+for every other part: the guard still reads worst deviation
+0.0000 across the rest). Driven by audio_rev / in_throttle /
+wheelspin / shift_t: an idle LOPE at 6.5 Hz (two detuned sines -
+a single sine reads as a fault, the pair reads as a motor),
+frequency rising to 24 Hz at full rev while amplitude settles to
+half (a motor at song trembles finer than a motor at lope), a
+blip envelope (x1.9, decaying at 5/s) kicked by every gear change
+and held at full envelope through the shift gap. Where it lands:
+(a) the blower assembly - BlowerCase, BlowerHat, BeltDrive,
+BeltPulley - trembles on its mounts: +/-6 mm vertical, +/-2.5 mm
+lateral, +/-0.010 rad of rock, scaled by the envelope (0.55 at
+idle); (b) a +/-2.2 mm buzz through the shell via car_body; (c)
+the seat: +/-1.6 mm added into the body node's offsets beside
+FP44's shudder. Alive in DRIVE and AIR and at the dangle (idling
+on the chains - capture 35 asserts the envelope is up there);
+dead through the crane's attach and slew and in DONE. Measured
+at idle (stage 74): hat travel 6.53 mm peak-to-peak, shell
+2.42 mm, envelope 0.55. The audio side is untouched - this item
+is what the eyes get.
+
+ITEM 3 - SMOKE IN THE PERIPHERY. Two GPUParticles3D (22
+particles each, the project's existing unshaded-puff
+construction) at the exhaust tips. The placement took three
+tries, each convicted by measurement, and the record is the
+point: (1) at the rear bumper, the pass's own seat capture
+showed a plume entirely BEHIND the driver - smoke nobody sees
+(FP42's lesson, relearned); (2) beside the tub is no better -
+the eye sits ahead of mid-car, so a flank plume there is >90
+deg off-axis, behind the eye plane; (3) the shipped placement:
+ZOOMIES AT THE FRONT FENDER, the exit the reference cards draw
+beside the motor - tips at (+/-0.92, 0.55, -1.38), emitters just
+outboard, plume blowing out/up/back and rising beside the
+fenders the driver already sees at the frame's edges. The gate
+is geometric (render proof capture 38): each side's mid-plume
+point (tip + plume velocity x 0.45 s) must sit 40-85 deg off the
+forward axis; both measure 48 deg. The seat capture shows grey
+puffs riding both frame edges; a glance frame (camera yawed 55
+deg toward the left pipe) shows the column whole. Driven in
+_update_telegraph off the engine state, DRIVE only: idle puffs
+at a 0.16 base breathing with the lope phase (x0.75..1.0), +0.55
+of throttle, +0.45 of wheelspin, +0.35 through a shift gap,
+clamped at 1.0. Zero in every other mode - none on the crane,
+none in the hang, none after a wreck (stage 74 asserts
+emitting=false and ratio exactly 0.0 in HANG). The puffs are the
+project's standing sphere construction - discrete bubbles up
+close; softening them is a look item for the seat verdict, not
+silently rebuilt here.
+
+PROOF (captures regenerated for real): capture 35 the car on
+the chains from a front three-quarter; 36 the seat at the
+dangle; 37 the lope pair from the seat (hat travel between the
+two frames 4.61 mm, measured); 38 the burnout from the seat
+plus the glance frame; frame strips gain the FP55 lope strip
+(tiles every 2nd physics frame across the idle, the hat's
+travel traced at 6.03 mm peak-to-peak over the witness window).
+Stage 74 (new) gates the inventory, the idle tremble, the sink
+fence and the crane's smoke discipline.
+
+GATES: smoke ALL 874 + stage 74 (API guard ALL 71 inside the
+same run) on the shipped tree. The road there: run one read
+873/874, the single failure stage 2f's width guard on the first
+fenders; run two was killed after its stage 2f read the hub
+discs at 2.12 - the recess answered it and the final run is
+clean. Render proof 204/206 on the shipped tree (the two
+failures the standing sandbox pair: "wheel hub 0.31 m below
+the eye" and the flipping 1-of-63 DIAG graze - the FP54
+baseline carried the same two at 185/187), frame strips ALL 11.
+
+STILL NAMED, NOT IN THIS PASS: carnage itself (the parts exist
+now; DETACHING them is the next build); the crane dead-pause
+(confirmed x3 on roof landings); brakes "a little more work"
+(its own item, direction to be asked, not guessed); CRAMMOND's
+car and roster variants (later art - one hero car now).
+
+UNVERIFIED UNTIL THE SEAT JUDGES: the look (does it read Odd
+Rod powerful from the crane and the chase angles?), the
+sightline from the real seat in both view modes, the tremble's
+feel (alive or annoying?), and the smoke's presence at the edge
+of vision. The captures are evidence for the owner's eyes, not
+a claim the car looks right - art is his verdict, as always.

@@ -300,6 +300,55 @@ func _run() -> void:
 		"FP51 strip: the staged violent flight was captured dense (%d tiles)" % tiles51.size())
 	_save_strip(tiles51, "fp51_crest_strip.png")
 
+	# ---- FP55 strip: the idle lope, dense ----
+	# The car at rest in DRIVE on the ribbon, engine idling:
+	# tiles every 2nd physics frame (45 fps against the
+	# ~6.5 Hz lope - five-plus tiles per cycle) from the
+	# anchored trackside camera, so the hat's tremble can be
+	# TRACED across the strip, not just posed. The numeric
+	# witness runs beside it: the hat's measured travel over
+	# a two-second window at the same idle.
+	main._set_track("ribbon")
+	await physics_frame
+	await physics_frame
+	main.start_race()
+	main.debug_set_hang_dangle()
+	await physics_frame
+	await physics_frame
+	main._do_release()
+	for w55: int in 240:
+		await physics_frame
+		if main.mode == main.MODE_DRIVE:
+			break
+	main.test_throttle = 0.0
+	main.test_brake = 1.0
+	var bz55: int = 0
+	while (main.mode != main.MODE_DRIVE or main.speed > 0.01) and bz55 < 900:
+		await physics_frame
+		bz55 += 1
+	main.test_brake = 0.0
+	for s55: int in 30:
+		await physics_frame
+	var tiles55: Array = []
+	for f55: int in 30:
+		await physics_frame
+		if f55 % 2 == 0:
+			_place_cam(1.0)
+			tiles55.append(await _grab())
+	check(tiles55.size() >= 12,
+		"FP55 strip: the idle lope was captured dense (%d tiles)" % tiles55.size())
+	_save_strip(tiles55, "fp55_lope_strip.png")
+	var hmn55: float = 1e9
+	var hmx55: float = -1e9
+	for f55b: int in 180:
+		await physics_frame
+		hmn55 = minf(hmn55, main.blower_hat_mi.position.y)
+		hmx55 = maxf(hmx55, main.blower_hat_mi.position.y)
+	print("FP55 strip: hat travel at idle %.2f mm peak-to-peak, vib envelope %.2f" % [
+		(hmx55 - hmn55) * 1000.0, main.vib_env])
+	check(hmx55 - hmn55 > 0.004,
+		"FP55 strip: the hat TRACES the lope - %.2f mm peak-to-peak across the window, not a posed still" % ((hmx55 - hmn55) * 1000.0))
+
 	print("---")
 	if failures == 0:
 		print("FRAME STRIPS: ALL %d CHECKS PASSED" % checks)

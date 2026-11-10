@@ -474,9 +474,17 @@ func fp45_walk(n: Node, path: String, out: Dictionary, main_node: Node) -> void:
 	# find them) and the flask's slosh assembly (pruned at
 	# its pivot: the liquid is a spring witness, not a
 	# static part).
+	# AMENDED (FP55, FLAGGED): the blower assembly (case,
+	# hat, belt, pulley) joins the live-state category - the
+	# engine vibration channel poses it from engine state
+	# every frame (it trembles on its mounts by design).
+	# Skipped by identity, the wheels' own treatment. The
+	# guard's teeth stay: every OTHER part's local transform
+	# is still recorded and gated below, and an uncommanded
+	# rotation on any of them still fails the stage.
 	if n == main_node.flask_liquid_pivot:
 		return
-	if n is Node3D and not main_node.wheel_mis.has(n):
+	if n is Node3D and not main_node.wheel_mis.has(n) and not main_node.vib_part_nodes.has(n):
 		out[path] = (n as Node3D).transform
 	for c45: Node in n.get_children():
 		fp45_walk(c45, path + "/" + c45.name, out, main_node)
@@ -10656,6 +10664,85 @@ func _run() -> void:
 		await physics_frame
 		bz73 += 1
 	main.test_brake = 0.0
+
+	# ---------- stage 74: Fix Pass 55 - THE CAR (parts, vibration, exhaust) ----
+	# Item 1: the parts inventory - every registered part a
+	# real, separable MeshInstance3D riding DIRECTLY on
+	# car_body (the render proof's sightline audit reads the
+	# direct-child silhouette; the registry keeps that
+	# contract honest), the headline parts present by name.
+	# Item 2: the vibration alive at idle (hat travel + shell
+	# buzz measured, not asserted from the code) and its
+	# fence: body_sink - FP32's law, which the channel must
+	# never write - sits at rest while the vib runs.
+	# Item 3: exhaust puffs live at idle in DRIVE and dead
+	# on the crane.
+	main._set_track("ribbon")
+	await frames(5)
+	if main.mode != main.MODE_DRIVE:
+		main.start_race()
+		main.debug_set_hang_dangle()
+		await frames(5)
+		main._do_release()
+		await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+	main.test_throttle = 0.0
+	main.test_brake = 1.0
+	var bz74: int = 0
+	while (main.mode != main.MODE_DRIVE or main.speed > 0.01) and bz74 < 900:
+		await physics_frame
+		bz74 += 1
+	main.test_brake = 0.0
+	await frames(30)
+	var parts_ok74: bool = main.body_parts55.size() >= 36
+	var direct_ok74: bool = true
+	for pn74: String in main.body_parts55:
+		var p74: MeshInstance3D = main.body_parts55[pn74]
+		if p74 == null or p74.get_parent() != main.car_body:
+			direct_ok74 = false
+	for want74: String in ["FloorPan", "Nose", "HoodStep", "EngineBlock", "BlowerCase",
+			"BlowerHat", "BeltDrive", "BeltPulley", "HeaderL", "SidePipeL", "SidePipeR",
+			"PipeTipR", "FrontFenderL", "RearFenderR", "Grille", "TailPanel", "RollBarTop", "SeatBack"]:
+		if not main.body_parts55.has(want74):
+			parts_ok74 = false
+	check(parts_ok74 and direct_ok74,
+		"stage74: the Odd Rod body is %d discrete parts, every one a direct child of car_body" % main.body_parts55.size())
+	var hat74: MeshInstance3D = main.blower_hat_mi
+	var hmn74: float = 1e9
+	var hmx74: float = -1e9
+	var bmn74: float = 1e9
+	var bmx74: float = -1e9
+	for i74: int in 180:
+		await physics_frame
+		hmn74 = minf(hmn74, hat74.position.y)
+		hmx74 = maxf(hmx74, hat74.position.y)
+		bmn74 = minf(bmn74, main.car_body.position.y)
+		bmx74 = maxf(bmx74, main.car_body.position.y)
+	print("stage74: idle vib - hat %.2f mm p2p, shell %.2f mm p2p, env %.2f, body_sink %.4f" % [
+		(hmx74 - hmn74) * 1000.0, (bmx74 - bmn74) * 1000.0, main.vib_env, main.body_sink])
+	check(hmx74 - hmn74 > 0.003,
+		"stage74: the blower hat trembles on its mounts at idle (%.2f mm peak-to-peak)" % ((hmx74 - hmn74) * 1000.0))
+	check(bmx74 - bmn74 > 0.001,
+		"stage74: the shell buzzes at idle (%.2f mm peak-to-peak)" % ((bmx74 - bmn74) * 1000.0))
+	check(absf(main.body_sink) < 0.002,
+		"stage74: body_sink stays FP32's at rest (%.4f) - the vib channel never writes it" % main.body_sink)
+	var ex_idle74: float = 0.0
+	for em74: GPUParticles3D in main.exhaust_emitters:
+		ex_idle74 = maxf(ex_idle74, em74.amount_ratio)
+	check(main.exhaust_emitters.size() == 2 and ex_idle74 > 0.05,
+		"stage74: exhaust puffs live at idle in DRIVE (ratio %.2f)" % ex_idle74)
+	main._call_crane()
+	var hang74: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 700)
+	await frames(30)
+	var ex_hang74: float = 0.0
+	var em_hang74: bool = false
+	for em74b: GPUParticles3D in main.exhaust_emitters:
+		ex_hang74 = maxf(ex_hang74, em74b.amount_ratio)
+		em_hang74 = em_hang74 or em74b.emitting
+	check(hang74 and not em_hang74 and ex_hang74 == 0.0,
+		"stage74: no exhaust on the crane (emitting %s, ratio %.2f)" % [str(em_hang74), ex_hang74])
+	main.debug_set_hang_dangle()
+	main._do_release()
+	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")

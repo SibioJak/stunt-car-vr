@@ -183,6 +183,38 @@ func _nearest_visible_road(eye: Vector3) -> float:
 	return (eye.y - road_y) / tan(theta)
 
 
+func _sightline55(eye: Vector3) -> Array:
+	# Fix Pass 55: _nearest_visible_road with its workings
+	# shown - the binding grazing angle in degrees and the
+	# name of the part that binds it, so the sightline law
+	# (the road view no less than the placeholder's) is
+	# measured against the part that sets it.
+	var road_y: float = -(main.CLEARANCE + main.heave_off)
+	var to_car: Transform3D = main.car.global_transform.affine_inverse()
+	var theta: float = 999.0
+	var binder: String = "<none>"
+	for child: Node in main.car_body.get_children():
+		var mi: MeshInstance3D = child as MeshInstance3D
+		if mi == null or not mi.is_visible_in_tree():
+			continue
+		var ab: AABB = mi.get_aabb()
+		var cmin := Vector3(1e9, 1e9, 1e9)
+		var cmax := Vector3(-1e9, -1e9, -1e9)
+		for ci: int in 8:
+			var corner: Vector3 = to_car * (mi.global_transform * ab.get_endpoint(ci))
+			cmin = cmin.min(corner)
+			cmax = cmax.max(corner)
+		var p := Vector3(clampf(eye.x, cmin.x, cmax.x), cmax.y, cmin.z)
+		if p.z < eye.z - 0.10 and p.y < eye.y:
+			var th: float = atan2(eye.y - p.y, eye.z - p.z)
+			if th < theta:
+				theta = th
+				binder = mi.name
+	if theta >= 900.0:
+		return [999.0, 999.0, binder]
+	return [rad_to_deg(theta), (eye.y - road_y) / tan(theta), binder]
+
+
 func _seg_hits_aabb(a: Vector3, b: Vector3, box: AABB) -> bool:
 	var av: Array[float] = [a.x, a.y, a.z]
 	var dv: Array[float] = [b.x - a.x, b.y - a.y, b.z - a.z]
@@ -482,6 +514,24 @@ func _run() -> void:
 	print("render proof: nearest visible road %.1f m at the raised seat, %.1f m at the old height" % [nvr_new, nvr_old])
 	check(nvr_new < nvr_old - 0.5,
 		"seat raise buys visible road (%.1f m now, %.1f m at the old height)" % [nvr_new, nvr_old])
+
+	# Fix Pass 55 (Item 1): THE SIGHTLINE LAW, MEASURED. The
+	# Odd Rod body against the placeholder it replaced, on
+	# this identical staging (the FP54 build measured by the
+	# pass's probe on the same boot state: binding angle
+	# 5.32 deg, nearest visible road 18.7 m, the binder an
+	# unnamed placeholder box). The new body's binder must
+	# be a NAMED part, its angle no shallower, its nearest
+	# visible road no farther - the blower got wider and the
+	# road view got no worse: the law, in numbers.
+	var sl55: Array = _sightline55(main._eye_anchor())
+	print("render proof FP55 sightline: binding angle %.2f deg by %s, nearest visible road %.1f m (FP54 placeholder: 5.32 deg, 18.7 m)" % [
+		float(sl55[0]), String(sl55[2]), float(sl55[1])])
+	check(String(sl55[2]) == "BlowerHat",
+		"FP55 sightline: the binder is the blower hat itself (%s)" % String(sl55[2]))
+	check(float(sl55[0]) >= 5.32 - 0.05 and float(sl55[1]) <= 18.7 + 0.2,
+		"FP55 sightline: the road view is no less than the placeholder's (%.2f deg / %.1f m vs 5.32 deg / 18.7 m)" % [
+			float(sl55[0]), float(sl55[1])])
 
 	# Fix Pass 12 (Item 2): capture 1 is now shot the way the
 	# owner drives - boards HIDDEN (their spawn state). Assert
@@ -1653,6 +1703,127 @@ func _run() -> void:
 	check(snapped34 and mx34 <= lp34 + 0.5,
 		"capture 34: the ridge's long flight, throttle held, never pitches past its launch from the seat (max %+.1f vs launch %+.1f deg)" % [
 			mx34, lp34])
+
+	# Captures 35-38 (Fix Pass 55): THE CAR. 35 = the Odd
+	# Rod on the chains from a front three-quarter - the
+	# card view: candy, raked, blown, huge rears. 36 = the
+	# seat at the same dangle - the view-first law's frame:
+	# the hat in frame, its top under the eye line, the road
+	# corridor open. 37 = the idle lope pair, shot from the
+	# seat at the lope's two extremes (the dense-motion
+	# proof lives in frame_strips' FP55 strip; this pair is
+	# the seat's still of the same tremble, with the hat's
+	# measured travel between the frames). 38 = a staged
+	# burnout from the seat: throttle against brake, the
+	# exhaust bloom live, and both pipe tips projecting into
+	# the frame's outer bands - the periphery, geometrically.
+	main._set_track("ribbon")
+	for i55z: int in 3:
+		await physics_frame
+	main.start_race()
+	main.debug_set_hang_dangle()
+	for i55a: int in 30:
+		await physics_frame
+	check(main.vib_env > 0.2,
+		"capture 35: the engine idles on the chains (vib envelope %.2f at the dangle)" % main.vib_env)
+	var cam35 := Camera3D.new()
+	main.add_child(cam35)
+	var ct35: Transform3D = main.car.global_transform
+	cam35.global_position = ct35 * Vector3(3.2, 1.2, -4.4)
+	cam35.look_at(ct35 * Vector3(0.0, 0.5, 0.0), Vector3.UP)
+	await snap(cam35, "oddrod_dangle_view.png")
+	cam35.queue_free()
+	if main.panels_visible:
+		main._toggle_panels()
+	await snap(main.fallback_cam, "oddrod_seat_view.png")
+	var hat_top55: float = main.blower_hat_mi.position.y + 0.06 + main.VIB_HAT_AMP
+	check(hat_top55 < main.EYE_ANCHOR.y,
+		"capture 36: the hat's top (%.3f m incl. its tremble) stays under the eye line (%.2f m)" % [
+			hat_top55, main.EYE_ANCHOR.y])
+	# 37: release, stop, and shoot the lope's extremes.
+	main._do_release()
+	var drv37: int = 0
+	while main.mode != main.MODE_DRIVE and drv37 < 700:
+		await physics_frame
+		drv37 += 1
+	main.test_throttle = 0.0
+	main.test_brake = 1.0
+	var bz37: int = 0
+	while (main.mode != main.MODE_DRIVE or main.speed > 0.01) and bz37 < 900:
+		await physics_frame
+		bz37 += 1
+	main.test_brake = 0.0
+	for i37: int in 30:
+		await physics_frame
+	var hat_hi37: float = -1e9
+	var hat_lo37: float = 1e9
+	var snap_hi37: bool = false
+	var snap_lo37: bool = false
+	var g37: int = 0
+	while (not snap_hi37 or not snap_lo37) and g37 < 600:
+		await physics_frame
+		g37 += 1
+		var ph37: float = fmod(main.vib_ph, TAU)
+		if not snap_hi37 and ph37 > 1.2 and ph37 < 1.9:
+			hat_hi37 = main.blower_hat_mi.position.y
+			await snap(main.fallback_cam, "oddrod_lope_hi_view.png")
+			snap_hi37 = true
+		elif not snap_lo37 and ph37 > 4.4 and ph37 < 5.1:
+			hat_lo37 = main.blower_hat_mi.position.y
+			await snap(main.fallback_cam, "oddrod_lope_lo_view.png")
+			snap_lo37 = true
+	print("capture 37: lope extremes - hat at %.4f (hi) and %.4f (lo), travel %.2f mm" % [
+		hat_hi37, hat_lo37, (hat_hi37 - hat_lo37) * 1000.0])
+	check(snap_hi37 and snap_lo37 and hat_hi37 - hat_lo37 > 0.003,
+		"capture 37: the hat rides the lope between the two frames (%.2f mm of travel)" % ((hat_hi37 - hat_lo37) * 1000.0))
+	# 38: the staged burnout and the periphery geometry.
+	main.test_brake = 1.0
+	main.test_throttle = 1.0
+	for i38: int in 72:
+		await physics_frame
+	main.fallback_cam.current = true
+	await process_frame
+	var ex38: float = 0.0
+	for em38: GPUParticles3D in main.exhaust_emitters:
+		ex38 = maxf(ex38, em38.amount_ratio)
+	# The periphery, measured as geometry, not projection:
+	# unproject_position lies about points behind the eye
+	# (this pass's first capture-38 build proved that - the
+	# rear tips "projected" mirrored into the frame's top).
+	# The honest measure: each side's MID-PLUME point (tip +
+	# plume velocity x 0.45 s) must sit in the peripheral
+	# cone from the eye - 40 to 85 degrees off the forward
+	# axis, neither at the centre of vision nor behind the
+	# eye plane.
+	var peri38: bool = main.exhaust_emitters.size() == 2
+	var eye38: Vector3 = main.fallback_cam.global_position
+	var fwd38: Vector3 = -main.fallback_cam.global_transform.basis.z
+	for em38b: GPUParticles3D in main.exhaust_emitters:
+		var pm38: ParticleProcessMaterial = em38b.process_material as ParticleProcessMaterial
+		var vel38: Vector3 = main.car.global_transform.basis * (pm38.direction.normalized() * 1.9)
+		var mid38: Vector3 = em38b.global_position + vel38 * 0.45
+		var off38: float = rad_to_deg(fwd38.angle_to(mid38 - eye38))
+		print("capture 38: mid-plume point %.0f deg off the forward axis" % off38)
+		if off38 < 40.0 or off38 > 85.0:
+			peri38 = false
+	await snap(main.fallback_cam, "oddrod_launch_smoke_view.png")
+	# The glance frame: a temp camera at the eye, yawed 55
+	# degrees toward the left pipe - the driver's fraction
+	# of a head-turn - with the plume in frame.
+	var cam38 := Camera3D.new()
+	main.add_child(cam38)
+	cam38.global_position = eye38
+	cam38.global_rotation = main.fallback_cam.global_rotation + Vector3(0.0, 0.96, 0.0)
+	await snap(cam38, "oddrod_launch_smoke_glance_view.png")
+	cam38.queue_free()
+	print("capture 38: burnout - wheelspin %.2f, exhaust ratio %.2f" % [main.wheelspin, ex38])
+	check(main.wheelspin > 0.3 and ex38 > 0.3,
+		"capture 38: the staged launch is a real burnout (wheelspin %.2f) with the exhaust bloom live (%.2f)" % [
+			main.wheelspin, ex38])
+	check(peri38,
+		"capture 38: both plumes ride the peripheral cone (40-85 deg off-axis) - at the edge of vision, not the centre, not behind")
+	main.test_throttle = 0.0
+	main.test_brake = 0.0
 
 	print("---")
 	if failures == 0:

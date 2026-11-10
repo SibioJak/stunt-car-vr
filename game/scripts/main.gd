@@ -413,6 +413,26 @@ const SHUDDER_LAT_PHASE: float = -1.1 # rad, lateral phase offset (not a copy of
 const SHUDDER_FREQ: float = 8.0 # Hz at full envelope (0.65x at rest)
 const SHUDDER_ENV_ATTACK: float = 9.0 # 1/s
 const SHUDDER_ENV_RELEASE: float = 4.5 # 1/s
+# Fix Pass 55 (Item 2): THE ENGINE VIBRATION - a presentation-only
+# channel on the FP44 shudder's discipline: it writes ONLY part
+# offsets (the blower assembly on its mounts), the body node's
+# own position (the shell buzz) and a small addition into the
+# seat offsets the shudder already feeds. It never enters vf,
+# the contact model, the carried frame or body_sink - stage 72's
+# guard (the vib parts are posed from live state, the wheels'
+# category) and the suite's staged numbers are the tripwires.
+# The lope is two detuned sines: an idle is uneven, a single
+# sine reads as a machine fault, not a motor.
+const VIB_FREQ_IDLE: float = 6.5 # Hz, the lope at rest
+const VIB_FREQ_REV: float = 24.0 # Hz at full audio_rev
+const VIB_HAT_AMP: float = 0.006 # m, blower assembly vertical tremble at full envelope
+const VIB_HAT_AMP_X: float = 0.0025 # m, its lateral component
+const VIB_HAT_ROT: float = 0.010 # rad, its rocking component
+const VIB_BODY_AMP: float = 0.0022 # m, the shell buzz through car_body.position
+const VIB_SEAT_AMP: float = 0.0016 # m, the engine's addition at the seat node
+const VIB_ENV_ATTACK: float = 7.0 # 1/s
+const VIB_ENV_RELEASE: float = 3.5 # 1/s
+const VIB_BLIP_DECAY: float = 5.0 # 1/s, the shift blip's fall
 # Yaw through flight (Part C): a car's rotation does not
 # vanish because it left the ground. The HEADING still
 # freezes airborne (FP8's law, untouched - stage 10b
@@ -1702,6 +1722,13 @@ var spin_shudder: float = 0.0 # Fix Pass 44 (Item 2b): the seat shudder's vertic
 var spin_shudder_lat: float = 0.0 # Fix Pass 44 (Item 2b): the shudder's lateral offset, m
 var spin_shudder_env: float = 0.0 # Fix Pass 44 (Item 2b): the shudder's envelope, 0..1
 var spin_shudder_ph: float = 0.0 # Fix Pass 44 (Item 2b): the shudder's phase, rad
+var vib_env: float = 0.0 # Fix Pass 55 (Item 2): the engine vibration's envelope, 0..1
+var vib_ph: float = 0.0 # Fix Pass 55: the lope's main phase, rad
+var vib_ph2: float = 0.0 # Fix Pass 55: the lope's detuned second phase, rad
+var vib_blip: float = 0.0 # Fix Pass 55: the shift blip envelope, 0..1
+var vib_prev_gear: int = 1 # Fix Pass 55: gear-change witness for the blip
+var vib_seat: float = 0.0 # Fix Pass 55: engine component at the seat node (vertical), m
+var vib_seat_lat: float = 0.0 # Fix Pass 55: engine component at the seat node (lateral), m
 var tail_catch_t: float = 0.0 # Fix Pass 42 (Item 2): seconds of catch boost remaining
 var load_pitch: float = 0.0 # Fix Pass 42 (Item 4): the body load-pitch channel, rad (negative = nose up under power)
 var load_pitch_v: float = 0.0 # Fix Pass 42 (Item 4): the load-pitch spring's velocity
@@ -1760,6 +1787,12 @@ var thump_arm: Array[float] = [-1.0, -1.0] # Fix Pass 32 (Item 3): armed severit
 var thump_age: float = 9.0 # Fix Pass 32 (Item 3): seconds since the arming landing
 var dust_emitters: Array[GPUParticles3D] = [] # per-wheel contact-patch dust (FL, FR, RL, RR)
 var spin_emitters: Array[GPUParticles3D] = [] # Fix Pass 36: wheelspin smoke at the driven (rear) patches (RL, RR)
+var exhaust_emitters: Array[GPUParticles3D] = [] # Fix Pass 55 (Item 3): exhaust smoke at the side-pipe tips (L, R)
+var body_parts55: Dictionary = {} # Fix Pass 55 (Item 1): the discrete body parts by name - the carnage inventory
+var vib_part_nodes: Array[Node3D] = [] # Fix Pass 55 (Item 2): the blower assembly, trembling on its mounts
+var vib_part_base_pos: Array[Vector3] = [] # Fix Pass 55: their build positions (parallel to vib_part_nodes)
+var vib_part_base_rot: Array[Vector3] = [] # Fix Pass 55: their build rotations (parallel)
+var blower_hat_mi: MeshInstance3D # Fix Pass 55: the scoop/hat - the vib channel's witness part
 
 # --- nodes ---
 var car: Node3D
@@ -2006,7 +2039,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP54 · 2026-11-09"
+const BUILD_STAMP: String = "FP55 · 2026-11-09"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -2019,6 +2052,56 @@ func _mat(c: Color) -> StandardMaterial3D:
 	m.albedo_color = c
 	m.roughness = 0.85
 	return m
+
+
+func _matp(c: Color, rough: float, metal: float) -> StandardMaterial3D:
+	# Fix Pass 55: the paint/chrome material - _mat with the
+	# roughness and metallic the candy-and-chrome bodywork reads by.
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c
+	m.roughness = rough
+	m.metallic = metal
+	return m
+
+
+func _cyl(parent: Node, radius: float, height: float, pos: Vector3, mat: Material, rot_deg: Vector3 = Vector3.ZERO, bname: String = "") -> MeshInstance3D:
+	# Fix Pass 55: _box's round sibling (pipes, caps, lamps).
+	# CylinderMesh's axis is Y; rotate (90, 0, 0) for a Z axis.
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = radius
+	cm.bottom_radius = radius
+	cm.height = height
+	cm.radial_segments = 20
+	mi.mesh = cm
+	mi.position = pos
+	mi.rotation_degrees = rot_deg
+	if mat != null:
+		mi.material_override = mat
+	if bname != "":
+		mi.name = bname
+	parent.add_child(mi)
+	return mi
+
+
+func _part55(mi: MeshInstance3D) -> MeshInstance3D:
+	# Fix Pass 55 (Item 1): register a discrete body part in the
+	# inventory the carnage build will tear from. Parts are
+	# DIRECT children of car_body - the render proof's sightline
+	# audit reads the direct-child silhouette, and the registry
+	# keeps that contract assertable (stage 74).
+	body_parts55[mi.name] = mi
+	return mi
+
+
+func _reg_vib55(mi: MeshInstance3D) -> void:
+	# Fix Pass 55 (Item 2): put a part on the engine's mounts -
+	# its build transform is kept and the vib channel writes
+	# base + offset every frame (stage 72 skips these by
+	# identity: posed from live state, the wheels' category).
+	vib_part_nodes.append(mi)
+	vib_part_base_pos.append(mi.position)
+	vib_part_base_rot.append(mi.rotation)
 
 
 func _mat_unshaded(c: Color) -> StandardMaterial3D:
@@ -5311,23 +5394,86 @@ func _build_car() -> void:
 	car_body = Node3D.new()
 	car_body.name = "Body"
 	car.add_child(car_body)
-	var paint := _mat(Color(0.85, 0.35, 0.08))
+	# Fix Pass 55 (Item 1): THE ODD ROD BODY, BUILT FROM PARTS.
+	# The five-box placeholder (orange slab nose, white cube
+	# blower, two stacks) is replaced by a discrete-parts body
+	# in the reference sheet's language (research/
+	# odd-rods-reference-sheet.jpg): late-'60s muscle silhouette,
+	# huge rears and skinny fronts, the drag rake carried by the
+	# suspension's attach heights as always (FP11 - the bodywork
+	# follows it, never fakes it), a blown motor through the
+	# hood, side pipes, candy paint, chrome. Every part is a
+	# NAMED, DIRECT child of car_body, registered in
+	# body_parts55: the list is the carnage build's flying-parts
+	# inventory by construction. THE SIGHTLINE LAW (the owner's
+	# note on the sheet): the induction reads big from OUTSIDE -
+	# wide hat, wide case, belt drive - while its forward top
+	# edge stays BELOW the placeholder blower's top (1.14 m vs
+	# the cube's 1.17), so the road view from the seat is no
+	# less than it was; the render proof's FP55 captures measure
+	# the binding grazing angle before/after.
+	var paint := _matp(Color(0.30, 0.08, 0.45), 0.32, 0.25) # deep candy purple (the sheet's PUSHIN INTO / No. 97 cars)
 	var dark := _mat(Color(0.13, 0.13, 0.15))
+	var chrome := _matp(Color(0.85, 0.87, 0.90), 0.22, 0.9)
+	var polished := _matp(Color(0.72, 0.74, 0.78), 0.35, 0.85)
+	var darkmetal := _matp(Color(0.16, 0.16, 0.18), 0.5, 0.6)
+	var lens_red := _matp(Color(0.55, 0.05, 0.05), 0.3, 0.1)
+	var lens_pale := _matp(Color(0.95, 0.92, 0.75), 0.4, 0.0)
 	# Floor + side pods (driver sits centre, eye anchor at EYE_ANCHOR)
-	_box(car_body, Vector3(1.30, 0.16, 3.30), Vector3(0, 0.32, 0), dark)
-	_box(car_body, Vector3(0.34, 0.42, 2.60), Vector3(-0.72, 0.48, 0.1), paint)
-	_box(car_body, Vector3(0.34, 0.42, 2.60), Vector3(0.72, 0.48, 0.1), paint)
-	# Long nose with the engine block + blower you see from the seat
-	nose_mi = _box(car_body, Vector3(0.86, 0.34, 1.50), Vector3(0, 0.52, -1.95), paint, "Nose")
-	_box(car_body, Vector3(0.62, 0.30, 0.80), Vector3(0, 0.78, -1.85), dark) # engine block
-	_box(car_body, Vector3(0.30, 0.26, 0.44), Vector3(0, 1.04, -1.85), _mat(Color(0.75, 0.75, 0.78))) # blower
-	_box(car_body, Vector3(0.10, 0.20, 0.10), Vector3(-0.28, 1.0, -2.45), _mat(Color(0.6, 0.6, 0.62))) # stacks
-	_box(car_body, Vector3(0.10, 0.20, 0.10), Vector3(0.28, 1.0, -2.45), _mat(Color(0.6, 0.6, 0.62)))
-	# Roll bar behind the seat + rear deck
-	_box(car_body, Vector3(0.08, 0.62, 0.08), Vector3(-0.42, 1.05, 0.78), dark)
-	_box(car_body, Vector3(0.08, 0.62, 0.08), Vector3(0.42, 1.05, 0.78), dark)
-	_box(car_body, Vector3(0.92, 0.08, 0.08), Vector3(0, 1.36, 0.78), dark)
-	_box(car_body, Vector3(1.15, 0.30, 0.85), Vector3(0, 0.52, 1.55), paint)
+	_part55(_box(car_body, Vector3(1.34, 0.14, 3.70), Vector3(0, 0.30, 0.05), dark, "FloorPan"))
+	_part55(_box(car_body, Vector3(0.34, 0.42, 2.60), Vector3(-0.72, 0.48, 0.1), paint, "SidePodL"))
+	_part55(_box(car_body, Vector3(0.34, 0.42, 2.60), Vector3(0.72, 0.48, 0.1), paint, "SidePodR"))
+	# Rear deck, tail, spoiler lip, lamps, bumpers
+	_part55(_box(car_body, Vector3(1.18, 0.16, 0.95), Vector3(0, 0.66, 1.55), paint, "RearDeck"))
+	_part55(_box(car_body, Vector3(1.18, 0.34, 0.10), Vector3(0, 0.52, 2.00), paint, "TailPanel"))
+	_part55(_box(car_body, Vector3(0.30, 0.09, 0.04), Vector3(-0.36, 0.58, 2.06), lens_red, "TailLightL"))
+	_part55(_box(car_body, Vector3(0.30, 0.09, 0.04), Vector3(0.36, 0.58, 2.06), lens_red, "TailLightR"))
+	_part55(_box(car_body, Vector3(1.24, 0.05, 0.30), Vector3(0, 0.80, 1.92), darkmetal, "DeckSpoiler"))
+	_part55(_cyl(car_body, 0.06, 0.03, Vector3(0.30, 0.755, 1.45), chrome, Vector3.ZERO, "FuelCap"))
+	_part55(_box(car_body, Vector3(1.10, 0.09, 0.07), Vector3(0, 0.34, 2.07), chrome, "RearBumper"))
+	# The long nose: two stepped tiers, the motor through the top one
+	nose_mi = _part55(_box(car_body, Vector3(0.88, 0.30, 1.30), Vector3(0, 0.50, -2.05), paint, "Nose"))
+	_part55(_box(car_body, Vector3(0.80, 0.14, 0.85), Vector3(0, 0.68, -1.72), paint, "HoodStep"))
+	_part55(_box(car_body, Vector3(0.66, 0.20, 0.06), Vector3(0, 0.47, -2.72), chrome, "Grille"))
+	_part55(_cyl(car_body, 0.085, 0.05, Vector3(-0.30, 0.56, -2.71), lens_pale, Vector3(90, 0, 0), "HeadlightL"))
+	_part55(_cyl(car_body, 0.085, 0.05, Vector3(0.30, 0.56, -2.71), lens_pale, Vector3(90, 0, 0), "HeadlightR"))
+	_part55(_box(car_body, Vector3(1.06, 0.09, 0.07), Vector3(0, 0.30, -2.74), chrome, "FrontBumper"))
+	# Fenders over the wheels (fronts over the VISUAL tyre's
+	# stepped-out pose, rears over the big slicks)
+	_part55(_box(car_body, Vector3(0.26, 0.10, 0.86), Vector3(-0.90, 0.79, -1.95), paint, "FrontFenderL"))
+	_part55(_box(car_body, Vector3(0.26, 0.10, 0.86), Vector3(0.90, 0.79, -1.95), paint, "FrontFenderR"))
+	_part55(_box(car_body, Vector3(0.46, 0.12, 1.16), Vector3(-0.78, 0.90, 1.45), paint, "RearFenderL"))
+	_part55(_box(car_body, Vector3(0.46, 0.12, 1.16), Vector3(0.78, 0.90, 1.45), paint, "RearFenderR"))
+	# The blown motor: block, chrome valve covers, and the
+	# blower assembly (case, hat, belt, pulley) registered on
+	# the engine's mounts for Item 2's tremble.
+	_part55(_box(car_body, Vector3(0.66, 0.34, 0.85), Vector3(0, 0.80, -1.85), darkmetal, "EngineBlock"))
+	_part55(_box(car_body, Vector3(0.16, 0.10, 0.60), Vector3(-0.38, 0.90, -1.85), chrome, "ValveCoverL"))
+	_part55(_box(car_body, Vector3(0.16, 0.10, 0.60), Vector3(0.38, 0.90, -1.85), chrome, "ValveCoverR"))
+	var blower_case55: MeshInstance3D = _part55(_box(car_body, Vector3(0.36, 0.22, 0.52), Vector3(0, 0.945, -1.85), polished, "BlowerCase"))
+	blower_hat_mi = _part55(_box(car_body, Vector3(0.56, 0.12, 0.62), Vector3(0, 1.08, -1.90), polished, "BlowerHat"))
+	var belt55: MeshInstance3D = _part55(_box(car_body, Vector3(0.14, 0.34, 0.04), Vector3(0, 1.00, -2.17), dark, "BeltDrive"))
+	var pulley55: MeshInstance3D = _part55(_cyl(car_body, 0.11, 0.06, Vector3(0, 0.90, -2.18), darkmetal, Vector3(90, 0, 0), "BeltPulley"))
+	_reg_vib55(blower_case55)
+	_reg_vib55(blower_hat_mi)
+	_reg_vib55(belt55)
+	_reg_vib55(pulley55)
+	# Exhaust: headers off the block's flanks, side pipes along
+	# the pods, flared tips - the smoke's exits (Item 3).
+	_part55(_cyl(car_body, 0.05, 0.70, Vector3(-0.44, 0.72, -1.80), chrome, Vector3(90, 0, 0), "HeaderL"))
+	_part55(_cyl(car_body, 0.05, 0.70, Vector3(0.44, 0.72, -1.80), chrome, Vector3(90, 0, 0), "HeaderR"))
+	_part55(_cyl(car_body, 0.055, 0.62, Vector3(-0.88, 0.52, -1.72), chrome, Vector3(90, 0, 0), "SidePipeL"))
+	_part55(_cyl(car_body, 0.055, 0.62, Vector3(0.88, 0.52, -1.72), chrome, Vector3(90, 0, 0), "SidePipeR"))
+	_part55(_cyl(car_body, 0.065, 0.22, Vector3(-0.92, 0.55, -1.38), darkmetal, Vector3(90, 0, 0), "PipeTipL"))
+	_part55(_cyl(car_body, 0.065, 0.22, Vector3(0.92, 0.55, -1.38), darkmetal, Vector3(90, 0, 0), "PipeTipR"))
+	# Cockpit surround: tub rails and the seat back
+	_part55(_box(car_body, Vector3(0.10, 0.10, 1.30), Vector3(-0.60, 0.86, 0.35), paint, "TubRailL"))
+	_part55(_box(car_body, Vector3(0.10, 0.10, 1.30), Vector3(0.60, 0.86, 0.35), paint, "TubRailR"))
+	_part55(_box(car_body, Vector3(0.62, 0.55, 0.10), Vector3(0, 0.95, 0.62), dark, "SeatBack"))
+	# Roll bar behind the seat
+	_part55(_box(car_body, Vector3(0.08, 0.62, 0.08), Vector3(-0.42, 1.05, 0.78), darkmetal, "RollBarPostL"))
+	_part55(_box(car_body, Vector3(0.08, 0.62, 0.08), Vector3(0.42, 1.05, 0.78), darkmetal, "RollBarPostR"))
+	_part55(_box(car_body, Vector3(0.92, 0.08, 0.08), Vector3(0, 1.36, 0.78), darkmetal, "RollBarTop"))
 	# Wheels (visual). Fix Pass 5: references are kept, tagged by axle,
 	# so the suspension model can move them through their travel
 	# relative to the body (the bounce you can SEE from the cockpit:
@@ -5366,6 +5512,35 @@ func _build_car() -> void:
 		car_body.add_child(w)
 		wheel_mis.append(w)
 		wheel_axle.append(0 if wl.y < 0.0 else 1)
+		# Fix Pass 55 (Item 1): the wheel's own sub-parts - a
+		# chrome hub disc on the outer face and, on the rears, a
+		# fat slick shoulder (a wider, slightly smaller ring
+		# that reads as the slick's sidewall bulge). Children of
+		# the wheel node, so they inherit its pose (travel and
+		# the fronts' steer) and stay OUT of body_parts55: they
+		# are wheel sub-parts, and stage 72's walk records their
+		# static locals like any other part's. (The wheel node's
+		# local +Y is the axle, pointing at world -X.)
+		var hub55 := MeshInstance3D.new()
+		var hubm55 := CylinderMesh.new()
+		hubm55.top_radius = 0.19 if is_rear_w else 0.15
+		hubm55.bottom_radius = hubm55.top_radius
+		hubm55.height = 0.03
+		hub55.mesh = hubm55
+		hub55.position = Vector3(0.0, -signf(wl.x) * ((WHEEL_WID_R if is_rear_w else WHEEL_WID_F) * 0.5 - 0.02), 0.0)
+		hub55.material_override = chrome
+		hub55.name = "HubR" if is_rear_w else "HubF"
+		w.add_child(hub55)
+		if is_rear_w:
+			var sh55 := MeshInstance3D.new()
+			var shm55 := CylinderMesh.new()
+			shm55.top_radius = 0.435
+			shm55.bottom_radius = 0.435
+			shm55.height = 0.48
+			sh55.mesh = shm55
+			sh55.material_override = dark
+			sh55.name = "SlickShoulder"
+			w.add_child(sh55)
 	# Fix Pass 15 (Item 1): contact-patch DUST - one small
 	# GPUParticles3D per wheel at its patch, driven by the
 	# telegraph (see _update_telegraph). Flat unshaded puffs,
@@ -5461,6 +5636,67 @@ func _build_car() -> void:
 		em3.draw_pass_1 = puff3
 		car_body.add_child(em3)
 		spin_emitters.append(em3)
+	# Fix Pass 55 (Item 3): EXHAUST SMOKE at the side-pipe
+	# tips - the flanks, where the driver's peripheral vision
+	# lives (the FP36 burnout smoke sits at the rear patches,
+	# behind the driver, where he never sees it: FP42's
+	# lesson). One emitter per tip, world-space like the
+	# others, blowing out and UP off the flank. The exits sit
+	# at the FRONT FENDER, the zoomie exit the reference
+	# cards draw beside the motor: this pass's first build
+	# put them at the rear and its own seat capture
+	# convicted that - a plume entirely behind the driver is
+	# smoke nobody sees - and beside the tub is no better
+	# (the eye sits ahead of it: >90 deg off-axis). At the
+	# fender the plume rises at the frame's edge, in the
+	# peripheral cone, where the fenders already sit in view.
+	# Driven by the engine state in _update_telegraph: idle
+	# puffs that lope with Item 2's idle, a launch bloom,
+	# shift puffs, a hard-throttle haze - and ZERO whenever
+	# the car is not in DRIVE (none on the crane, none in
+	# the hang, none after a wreck: the engine state reads
+	# honestly there).
+	for wi4: int in 2:
+		var side55: float = -1.0 if wi4 == 0 else 1.0
+		var em4 := GPUParticles3D.new()
+		em4.name = "ExhaustL" if wi4 == 0 else "ExhaustR"
+		em4.amount = 22
+		em4.lifetime = 0.85
+		em4.local_coords = false
+		em4.emitting = false
+		em4.amount_ratio = 0.0
+		em4.visibility_aabb = AABB(Vector3(-40.0, -15.0, -40.0), Vector3(80.0, 30.0, 80.0))
+		em4.position = Vector3(side55 * 0.95, 0.60, -1.30)
+		var pm4 := ParticleProcessMaterial.new()
+		pm4.direction = Vector3(side55 * 0.35, 1.25, 0.55)
+		pm4.spread = 30.0
+		pm4.initial_velocity_min = 1.5
+		pm4.initial_velocity_max = 2.3
+		pm4.gravity = Vector3(0.0, 0.45, 0.0)
+		pm4.damping_min = 1.0
+		pm4.damping_max = 1.8
+		pm4.scale_min = 0.10
+		pm4.scale_max = 0.30
+		var grad4 := Gradient.new()
+		grad4.set_color(0, Color(0.62, 0.64, 0.68, 0.50))
+		grad4.set_color(1, Color(0.62, 0.64, 0.68, 0.0))
+		var gtex4 := GradientTexture1D.new()
+		gtex4.gradient = grad4
+		pm4.color_ramp = gtex4
+		em4.process_material = pm4
+		var puff4 := SphereMesh.new()
+		puff4.radius = 0.15
+		puff4.height = 0.30
+		puff4.radial_segments = 6
+		puff4.rings = 3
+		var pmat4 := StandardMaterial3D.new()
+		pmat4.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		pmat4.albedo_color = Color(0.62, 0.64, 0.68)
+		pmat4.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		puff4.material = pmat4
+		em4.draw_pass_1 = puff4
+		car_body.add_child(em4)
+		exhaust_emitters.append(em4)
 	# Fix Pass 24 (Item 4): the Test-1 smoke-puff sphere that
 	# lived here is DELETED outright (owner's tap, 2026-10-30
 	# 09:26 CDT) - mesh, trigger and pulse, all of it. The run-15
@@ -10445,11 +10681,15 @@ func _update_view_spring() -> void:
 	# Fix Pass 44 (Item 2b): the seat shudder enters HERE -
 	# the body node's placement only. body_sink itself is
 	# never written with it (stage 2e's law reads body_sink).
+	# Fix Pass 55 (Item 2c): the engine's own component joins
+	# the shudder at the same seat node (vib_seat is computed
+	# in _update_engine_vib, on its own envelope - body_sink
+	# itself is never written with either, FP32's law stands).
 	if body_node != null:
-		body_node.position = Vector3(spin_shudder_lat, -body_sink + spin_shudder, 0.0)
+		body_node.position = Vector3(spin_shudder_lat + vib_seat_lat, -body_sink + spin_shudder + vib_seat, 0.0)
 		body_node.rotation = Vector3(b_pitch, 0.0, 0.0)
 	if body_node_fb != null:
-		body_node_fb.position = Vector3(spin_shudder_lat, -body_sink + spin_shudder, 0.0)
+		body_node_fb.position = Vector3(spin_shudder_lat + vib_seat_lat, -body_sink + spin_shudder + vib_seat, 0.0)
 		body_node_fb.rotation = Vector3(b_pitch, 0.0, 0.0)
 	if fallback_cam != null:
 		fallback_cam.rotation = Vector3(v_pitch, 0.0, v_roll)
@@ -10526,6 +10766,61 @@ func _update_body_spring(delta: float) -> void:
 	spin_shudder_ph += TAU * SHUDDER_FREQ * (0.65 + 0.5 * spin_shudder_env) * delta
 	spin_shudder = sin(spin_shudder_ph) * SHUDDER_AMP * spin_shudder_env
 	spin_shudder_lat = sin(spin_shudder_ph + SHUDDER_LAT_PHASE) * SHUDDER_AMP * SHUDDER_LAT_K * spin_shudder_env
+	_update_engine_vib(delta)
+
+
+func _update_engine_vib(delta: float) -> void:
+	# Fix Pass 55 (Item 2): THE ENGINE VIBRATION. Synthesis on
+	# its own envelope, on the FP44 shudder's discipline: it
+	# writes ONLY presentation offsets - the blower assembly's
+	# local transforms (base + offset, the assembly trembling
+	# on its mounts: the hat shaking is THE blown-car idle
+	# image), car_body.position (a fine buzz through the
+	# shell) and vib_seat/vib_seat_lat, which _update_view_
+	# spring adds into the seat offsets beside the shudder.
+	# It never touches body_sink, the carried frame, vf or
+	# any staged quantity - FP32's sink law, FP42's pitch law
+	# and the suite's numbers cannot see it (stage 72's guard
+	# and stage 74's witness are its tripwires).
+	# The engine is alive in DRIVE and AIR, and at the dangle
+	# (idling on the chains, the drop ahead); through the
+	# crane's attach and slew and in DONE it is off, and the
+	# envelope falls to zero.
+	var alive55: bool = mode == MODE_DRIVE or mode == MODE_AIR \
+		or (mode == MODE_HANG and hang_phase == "dangle")
+	var target55: float = 0.0
+	if alive55:
+		target55 = clampf(0.55 + 0.45 * in_throttle + 0.35 * wheelspin, 0.0, 1.0)
+		if shift_t > 0.0:
+			target55 = 1.0 # the shift gap: the motor rocks on its mounts
+	var k55: float = VIB_ENV_ATTACK if target55 > vib_env else VIB_ENV_RELEASE
+	vib_env = lerpf(vib_env, target55, clampf(delta * k55, 0.0, 1.0))
+	if gear != vib_prev_gear:
+		vib_prev_gear = gear
+		if alive55:
+			vib_blip = 1.0 # a shift's blip-shudder
+	vib_blip = maxf(vib_blip - delta * VIB_BLIP_DECAY, 0.0)
+	var rev55: float = clampf(audio_rev, 0.0, 1.0)
+	var freq55: float = VIB_FREQ_IDLE + (VIB_FREQ_REV - VIB_FREQ_IDLE) * rev55 + wheelspin * 3.0
+	vib_ph += TAU * freq55 * delta
+	vib_ph2 += TAU * freq55 * 0.61 * delta
+	# Revs smooth the shake (a motor at song trembles finer
+	# than a motor at lope); the blip punches through it.
+	var amp55: float = vib_env * (1.0 - 0.5 * rev55) * (1.0 + 0.9 * vib_blip)
+	var lope55: float = 0.72 * sin(vib_ph) + 0.28 * sin(vib_ph2 + 1.3)
+	var off55 := Vector3(
+		sin(vib_ph * 0.5 + 0.7) * VIB_HAT_AMP_X,
+		lope55 * VIB_HAT_AMP, 0.0) * amp55
+	var rock55: float = sin(vib_ph + 0.9) * VIB_HAT_ROT * amp55
+	for i55: int in vib_part_nodes.size():
+		vib_part_nodes[i55].position = vib_part_base_pos[i55] + off55
+		vib_part_nodes[i55].rotation.z = vib_part_base_rot[i55].z + rock55
+	if car_body != null:
+		car_body.position = Vector3(
+			sin(vib_ph2 + 2.1) * VIB_BODY_AMP * 0.5,
+			sin(vib_ph + 0.4) * VIB_BODY_AMP, 0.0) * amp55
+	vib_seat = sin(vib_ph + 2.6) * VIB_SEAT_AMP * amp55
+	vib_seat_lat = sin(vib_ph2 + 0.9) * VIB_SEAT_AMP * 0.5 * amp55
 
 
 func denti_clamp() -> int:
@@ -11119,6 +11414,21 @@ func _update_telegraph(_delta: float) -> void:
 		var samt: float = wheelspin if mode == MODE_DRIVE else 0.0
 		em36.emitting = samt > 0.04
 		em36.amount_ratio = samt
+	# Fix Pass 55 (Item 3): the EXHAUST speaks the engine
+	# state at the flanks: a loping idle (the puffs breathe
+	# with Item 2's lope phase), throttle haze, a wheelspin
+	# bloom, a shift puff while the gap runs. DRIVE only -
+	# the state reads zero on the crane, in the hang and
+	# after a wreck, so the smoke dies with the state that
+	# makes it.
+	var ex55: float = 0.0
+	if mode == MODE_DRIVE:
+		ex55 = clampf(0.16 + 0.55 * in_throttle + 0.45 * wheelspin \
+			+ (0.35 if shift_t > 0.0 else 0.0), 0.0, 1.0)
+		ex55 *= 0.75 + 0.25 * sin(vib_ph)
+	for em55: GPUParticles3D in exhaust_emitters:
+		em55.emitting = ex55 > 0.03
+		em55.amount_ratio = ex55
 	rumble_haptic_now = 0.0
 	if mode == MODE_DRIVE:
 		rumble_haptic_now = clampf((tire_ratio - TIRE_HAPTIC_EDGE) / (1.0 - TIRE_HAPTIC_EDGE), 0.0, 1.0)
