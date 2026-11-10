@@ -1786,8 +1786,10 @@ var thump_r_player: AudioStreamPlayer # Fix Pass 32 (Item 3): rear axle's contac
 var thump_arm: Array[float] = [-1.0, -1.0] # Fix Pass 32 (Item 3): armed severity per axle (-1 = unarmed)
 var thump_age: float = 9.0 # Fix Pass 32 (Item 3): seconds since the arming landing
 var dust_emitters: Array[GPUParticles3D] = [] # per-wheel contact-patch dust (FL, FR, RL, RR)
-var spin_emitters: Array[GPUParticles3D] = [] # Fix Pass 36: wheelspin smoke at the driven (rear) patches (RL, RR)
-var exhaust_emitters: Array[GPUParticles3D] = [] # Fix Pass 55 (Item 3): exhaust smoke at the side-pipe tips (L, R)
+var spin_emitters: Array[GPUParticles3D] = [] # Fix Pass 36: wheelspin smoke at the driven (rear) patches (RL, RR). Fix Pass 57 (Item C): rebuilt as TIRE SMOKE at ALL FOUR patches, soft billboard form, driven per wheel by spin (rear) and lateral slip (all four) - see _update_telegraph.
+var flame_jets57: Array[Node3D] = [] # Fix Pass 57 (Item B): the shift/boost flame jet holders at the header exits (L, R)
+var flame_env57: float = 0.0 # Fix Pass 57 (Item B): the flame envelope, 0..1 (shift blip + boost state, DRIVE/AIR-alive only)
+var tire_smoke57: float = 0.0 # Fix Pass 57 (Item C): the loudest tire-smoke amount this frame (test witness)
 var body_parts55: Dictionary = {} # Fix Pass 55 (Item 1): the discrete body parts by name - the carnage inventory
 var vib_part_nodes: Array[Node3D] = [] # Fix Pass 55 (Item 2): the blower assembly, trembling on its mounts
 var vib_part_base_pos: Array[Vector3] = [] # Fix Pass 55: their build positions (parallel to vib_part_nodes)
@@ -2039,7 +2041,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP56 · 2026-11-09"
+const BUILD_STAMP: String = "FP57 · 2026-11-10"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -4701,6 +4703,237 @@ func _cycle_track() -> void:
 	_set_track(order[(order.find(active_track) + 1) % order.size()])
 
 
+# ---------------------------------------------------------------- Fix Pass 57 (Item A): THE WORLD
+# Terrain derived from the track's own station frames: where the
+# ribbon runs LOW the ground rises to meet it (earth shoulder under
+# and beside the road, falling away into the desert); where the road
+# flies HIGH the terrain stays down in the valley and the gap is
+# honest, carried on piers with real section instead of stilts.
+# Landscape objects (rock outcrops, small mesas) are placed by the
+# same station rule at measured lateral clearances. ALL VISUAL ONLY:
+# no collision, no physics - the crash play-out pass will meet them
+# later, deliberately, under its own brief.
+
+func _world57_valley_y(p: Vector3) -> float:
+	return DESERT_FLOOR_Y + 1.2 + 1.1 * sin(p.x * 0.021 + 1.7) * cos(p.z * 0.017 - 0.6) \
+		+ 0.6 * sin(p.z * 0.043 + 0.3)
+
+
+var _world57_track_min_y: float = 0.0 # the active build's lowest centreline (set by _build_world57)
+
+
+func _world57_terrain_y(fr: Dictionary, lat: float) -> float:
+	var pos: Vector3 = fr["pos"]
+	var side: Vector3 = fr["side"]
+	var hw: float = float(fr["hw"])
+	var ground_pt: Vector3 = pos + side * lat
+	var valley: float = _world57_valley_y(ground_pt)
+	# "Low" is relative to the track's OWN height field: every
+	# roster track cruises far above the desert floor, so the
+	# meet is keyed to how far this station stands above the
+	# track's lowest country - within ~6 m of it the ground
+	# meets the road; 28 m above it the road is honestly
+	# airborne over the valley.
+	var rel_h: float = pos.y - _world57_track_min_y
+	var blend: float = 1.0 - clampf((rel_h - 6.0) / 22.0, 0.0, 1.0)
+	blend = blend * blend * (3.0 - 2.0 * blend)
+	if bool(fr["gap"]):
+		blend = 0.0 # no earth rises to a road that is not there
+	var a: float = absf(lat)
+	var drop: float = pos.y - DESERT_FLOOR_Y
+	var th: Array[float] = [0.0, hw, hw + 3.0, hw + 9.0, hw + 20.0, hw + 42.0]
+	# the profile's tail falls the WHOLE way to the desert, so
+	# the strip's edge lands under the global floor plane
+	# instead of ending mid-air at the boundary.
+	var off: Array[float] = [-0.62, -0.70, -1.6, -5.5, -minf(15.0, drop * 0.45), -(drop + 1.0)]
+	var rel: float = off[off.size() - 1]
+	for k57: int in range(th.size() - 1):
+		if a <= th[k57 + 1]:
+			var u57: float = (a - th[k57]) / maxf(th[k57 + 1] - th[k57], 0.001)
+			rel = lerpf(off[k57], off[k57 + 1], u57)
+			break
+	var meet: float = maxf(pos.y + rel, valley + 0.25)
+	return lerpf(valley, meet, blend)
+
+
+func _add_oriented_box57(pp: PackedVector3Array, nn: PackedVector3Array, cc: PackedColorArray,
+		center: Vector3, ax_side: Vector3, ax_up: Vector3, ax_tan: Vector3, size: Vector3, col: Color) -> void:
+	var h: Vector3 = size * 0.5
+	var corners: Array[Vector3] = []
+	for sx: float in [-1.0, 1.0]:
+		for sy: float in [-1.0, 1.0]:
+			for sz: float in [-1.0, 1.0]:
+				corners.append(center + ax_side * (sx * h.x) + ax_up * (sy * h.y) + ax_tan * (sz * h.z))
+	var axes: Array[Vector3] = [ax_side, ax_up, ax_tan]
+	var faces: Array = [
+		[0, 1, 3, 2, 0, -1.0], [4, 6, 7, 5, 0, 1.0],
+		[0, 4, 5, 1, 1, -1.0], [2, 3, 7, 6, 1, 1.0],
+		[0, 2, 6, 4, 2, -1.0], [1, 5, 7, 3, 2, 1.0],
+	]
+	for f: Array in faces:
+		var n: Vector3 = axes[int(f[4])] * float(f[5])
+		var idxs: Array = [f[0], f[1], f[2], f[0], f[2], f[3]]
+		for ix: int in idxs:
+			pp.append(corners[ix])
+			nn.append(n)
+			cc.append(col)
+
+
+func _build_world57(d: Dictionary) -> Dictionary:
+	var terr_pos := PackedVector3Array()
+	var terr_nrm := PackedVector3Array()
+	var terr_col := PackedColorArray()
+	var pier_pos := PackedVector3Array()
+	var pier_nrm := PackedVector3Array()
+	var pier_col := PackedColorArray()
+	var obj_pos := PackedVector3Array()
+	var obj_nrm := PackedVector3Array()
+	var obj_col := PackedColorArray()
+	var closed57: bool = bool(d["closed"])
+	var seg_n57: int = t_pts.size() if closed57 else t_pts.size() - 1
+	_world57_track_min_y = 1e9
+	for mp57: int in t_pts.size():
+		_world57_track_min_y = minf(_world57_track_min_y, t_pts[mp57].y)
+	var stats57: Dictionary = {"terrain_tris": 0, "piers": 0, "objects": 0,
+		"min_object_clearance": 1e9, "min_under_road": 1e9}
+	# --- terrain strip following the centreline (4 m rows) ---
+	var rows57: Array[int] = []
+	var ri57: int = 0
+	while ri57 < t_pts.size():
+		rows57.append(ri57)
+		ri57 += 4
+	if not closed57 and rows57[rows57.size() - 1] != t_pts.size() - 1:
+		rows57.append(t_pts.size() - 1)
+	var pair_n57: int = rows57.size() if closed57 else rows57.size() - 1
+	for pi57: int in pair_n57:
+		var ia57: int = rows57[pi57]
+		var ib57: int = rows57[(pi57 + 1) % rows57.size()]
+		var fra: Dictionary = _frame_at(float(ia57))
+		var frb: Dictionary = _frame_at(float(ib57))
+		var hwa: float = float(fra["hw"])
+		var hwb: float = float(frb["hw"])
+		var lats_a: Array[float] = [-(hwa + 42.0), -(hwa + 20.0), -(hwa + 9.0), -(hwa + 3.0),
+			-hwa, 0.0, hwa, hwa + 3.0, hwa + 9.0, hwa + 20.0, hwa + 42.0]
+		var lats_b: Array[float] = [-(hwb + 42.0), -(hwb + 20.0), -(hwb + 9.0), -(hwb + 3.0),
+			-hwb, 0.0, hwb, hwb + 3.0, hwb + 9.0, hwb + 20.0, hwb + 42.0]
+		var pts_a: Array[Vector3] = []
+		var pts_b: Array[Vector3] = []
+		for ci57: int in lats_a.size():
+			var pa57: Vector3 = Vector3(fra["pos"]) + Vector3(fra["side"]) * lats_a[ci57]
+			pa57.y = _world57_terrain_y(fra, lats_a[ci57])
+			pts_a.append(pa57)
+			var pb57: Vector3 = Vector3(frb["pos"]) + Vector3(frb["side"]) * lats_b[ci57]
+			pb57.y = _world57_terrain_y(frb, lats_b[ci57])
+			pts_b.append(pb57)
+			if ci57 == 5:
+				stats57["min_under_road"] = minf(float(stats57["min_under_road"]),
+					float(fra["pos"].y) - pa57.y)
+		for cj57: int in range(lats_a.size() - 1):
+			var a57: Vector3 = pts_a[cj57]
+			var b57: Vector3 = pts_a[cj57 + 1]
+			var c57: Vector3 = pts_b[cj57 + 1]
+			var dd57: Vector3 = pts_b[cj57]
+			var n57: Vector3 = (b57 - a57).cross(dd57 - a57)
+			if n57.length() < 0.0001:
+				n57 = Vector3.UP
+			else:
+				n57 = n57.normalized()
+				if n57.y < 0.0:
+					n57 = -n57
+			var amid57: float = absf((lats_a[cj57] + lats_a[cj57 + 1]) * 0.5)
+			var tcol57 := Color(0.66, 0.54, 0.38) # shoulder gravel, near the road
+			if amid57 > hwa + 9.0:
+				tcol57 = Color(0.76, 0.62, 0.42) # the desert's own tone, far out
+			elif amid57 > hwa + 3.0:
+				tcol57 = Color(0.72, 0.59, 0.41)
+			_add_quad_m(terr_pos, terr_nrm, terr_col, a57, b57, c57, dd57, n57, tcol57)
+			stats57["terrain_tris"] = int(stats57["terrain_tris"]) + 2
+	# --- piers under the airborne road (every 20 m, real section) ---
+	var hoop57: Array = d["features"].get("hoop_span", [])
+	var pier_c := Color(0.48, 0.46, 0.44)
+	var beam_c := Color(0.40, 0.40, 0.42)
+	for ip57: int in range(0, seg_n57, 20):
+		var frp: Dictionary = _frame_at(float(ip57))
+		if bool(frp["gap"]):
+			continue
+		if hoop57.size() == 2 and float(ip57) > float(hoop57[0]) - 4.0 \
+				and float(ip57) < float(hoop57[1]) + 4.0:
+			continue # the hoop stands on its own footing pad (FP47)
+		var pp57: Vector3 = frp["pos"]
+		var base57: float = _world57_terrain_y(frp, 0.0)
+		var height57: float = pp57.y - 0.45 - base57
+		if height57 < 3.2:
+			continue # low country: the terrain itself is the base
+		if bool(d["features"].get("self_clear", false)):
+			var bad57: bool = false
+			for j57: int in t_pts.size():
+				if absi(j57 - ip57) <= 15:
+					continue
+				var pj57: Vector3 = t_pts[j57]
+				if pj57.y < pp57.y - 1.0 and Vector2(pj57.x - pp57.x,
+						pj57.z - pp57.z).length() < float(t_wid[j57]) + 1.6:
+					bad57 = true
+					break
+			if bad57:
+				continue
+		var hside57: Vector3 = Vector3(Vector3(frp["side"]).x, 0.0, Vector3(frp["side"]).z)
+		var htan57: Vector3 = Vector3(Vector3(frp["tan"]).x, 0.0, Vector3(frp["tan"]).z)
+		if hside57.length() < 0.1 or htan57.length() < 0.1:
+			continue
+		hside57 = hside57.normalized()
+		htan57 = htan57.normalized()
+		_add_oriented_box57(pier_pos, pier_nrm, pier_col,
+			Vector3(pp57.x, base57 + height57 * 0.5, pp57.z),
+			hside57, Vector3.UP, htan57, Vector3(2.3, height57, 1.5), pier_c)
+		_add_oriented_box57(pier_pos, pier_nrm, pier_col,
+			pp57 - Vector3(frp["up"]) * 0.66,
+			Vector3(frp["side"]), Vector3(frp["up"]), Vector3(frp["tan"]),
+			Vector3(float(frp["hw"]) * 2.0 + 0.9, 0.44, 1.7), beam_c)
+		stats57["piers"] = int(stats57["piers"]) + 1
+	# --- landscape objects: rock outcrops + small mesas, clear of the corridor ---
+	var rock_c := Color(0.55, 0.44, 0.34)
+	var mesa_c := Color(0.63, 0.50, 0.37)
+	var oi57: int = 0
+	for io57: int in range(60, seg_n57, 137):
+		var fro: Dictionary = _frame_at(float(io57))
+		if bool(fro["gap"]):
+			continue
+		var sgn57: float = -1.0 if (oi57 % 2 == 0) else 1.0
+		var hw_o: float = float(fro["hw"])
+		var is_mesa57: bool = (oi57 % 5 == 4)
+		var lat57: float = sgn57 * (hw_o + (38.0 if is_mesa57 else 10.0 + float((io57 * 29) % 16)))
+		var base_pt57: Vector3 = Vector3(fro["pos"]) + Vector3(fro["side"]) * lat57
+		var gy57: float = _world57_terrain_y(fro, lat57)
+		var hso: Vector3 = Vector3(Vector3(fro["side"]).x, 0.0, Vector3(fro["side"]).z)
+		var hto: Vector3 = Vector3(Vector3(fro["tan"]).x, 0.0, Vector3(fro["tan"]).z)
+		if hso.length() < 0.1 or hto.length() < 0.1:
+			continue
+		hso = hso.normalized()
+		hto = hto.normalized()
+		var yaw57: float = deg_to_rad(float((io57 * 47) % 50) - 25.0)
+		var d1_57: Vector3 = (hso * cos(yaw57) + hto * sin(yaw57)).normalized()
+		var d2_57: Vector3 = (-hso * sin(yaw57) + hto * cos(yaw57)).normalized()
+		if is_mesa57:
+			_add_oriented_box57(obj_pos, obj_nrm, obj_col,
+				Vector3(base_pt57.x, gy57 + 1.8, base_pt57.z),
+				d1_57, Vector3.UP, d2_57, Vector3(16.0, 5.0, 11.0), mesa_c)
+		else:
+			var rs57: float = 2.2 + float((io57 * 13) % 20) * 0.1
+			_add_oriented_box57(obj_pos, obj_nrm, obj_col,
+				Vector3(base_pt57.x, gy57 + rs57 * 0.30, base_pt57.z),
+				d1_57, Vector3.UP, d2_57, Vector3(rs57, rs57 * 0.62, rs57 * 0.8), rock_c)
+			_add_oriented_box57(obj_pos, obj_nrm, obj_col,
+				Vector3(base_pt57.x, gy57 + rs57 * 0.72, base_pt57.z) + d1_57 * rs57 * 0.3,
+				d1_57, Vector3.UP, d2_57, Vector3(rs57 * 0.55, rs57 * 0.45, rs57 * 0.5), rock_c)
+		stats57["objects"] = int(stats57["objects"]) + 1
+		stats57["min_object_clearance"] = minf(float(stats57["min_object_clearance"]),
+			absf(lat57) - hw_o)
+		oi57 += 1
+	d["world57"] = stats57
+	return {"terr": [terr_pos, terr_nrm, terr_col], "pier": [pier_pos, pier_nrm, pier_col],
+		"obj": [obj_pos, obj_nrm, obj_col], "stats": stats57}
+
+
 func _build_track_meshes(d: Dictionary) -> void:
 	# Meshes for one track, parented to its root (only the
 	# active track's root is visible). Reads _frame_at, so the
@@ -4721,9 +4954,9 @@ func _build_track_meshes(d: Dictionary) -> void:
 	var edge_pos := PackedVector3Array()
 	var edge_nrm := PackedVector3Array()
 	var edge_col := PackedColorArray()
-	var stilt_pos := PackedVector3Array()
-	var stilt_nrm := PackedVector3Array()
-	var stilt_col := PackedColorArray()
+	# Fix Pass 57 (Item A): the old stilt arrays are GONE from this
+	# builder - the piers/terrain/objects are built by _build_world57
+	# below and added beside these meshes at the end of the function.
 	# Fix Pass 48: the ribbon's width is per-station now -
 	# each segment takes its two frames' "hw" (HALF_WIDTH
 	# everywhere a builder did not narrow the surface).
@@ -4806,47 +5039,14 @@ func _build_track_meshes(d: Dictionary) -> void:
 			_add_quad_m(edge_pos, edge_nrm, edge_col,
 				r0 - s0 * EDGE_STRIP_W + u0 * 0.02, r0 + u0 * 0.02, r1 + u1 * 0.02, r1 - s1 * EDGE_STRIP_W + u1 * 0.02,
 				up_avg, edge_c)
-		# stilts every 10 m down to the ground (Fix Pass 9: the
-		# desert floor, ~60 m below the datum - the stilts now
-		# land on something instead of ending in the void)
-		# Fix Pass 47: no stilts through the hoop - inside
-		# the loop span (plus a margin) the band stands on
-		# its own footing pad; a centreline post there
-		# would spear the hole the driver must see through.
-		# Fix Pass 49: the SELF-CLEARANCE clause (funlab
-		# only, features.self_clear): a stilt is also
-		# suppressed when its post would pierce ANOTHER
-		# part of the same course on its way down - a
-		# station far along the ribbon whose centreline
-		# passes within its own half width (+ the post's
-		# half) of the stilt's plan position, at least a
-		# metre below the stilt's top. Convicted on the
-		# funlab: the spiral bowl's upper-turn posts stood
-		# in the exit lane below (the seam again - the
-		# same spatial-separation disease as the ribbon's
-		# own interleave, in furniture). Same-height
-		# neighbours (the loop's side-by-side lanes) are
-		# saved by the metre-below clause; a post under a
-		# road that passes OVERHEAD is never touched,
-		# since the post only descends.
-		var hoop47: Array = d["features"].get("hoop_span", [])
-		var stilt_ok49: bool = true
-		if i % 10 == 0 and bool(d["features"].get("self_clear", false)):
-			for j49: int in t_pts.size():
-				if absi(j49 - i) <= 15:
-					continue
-				var pj49: Vector3 = t_pts[j49]
-				if pj49.y < p0.y - 1.0 and Vector2(pj49.x - p0.x,
-						pj49.z - p0.z).length() < float(t_wid[j49]) + 0.28:
-					stilt_ok49 = false
-					break
-		if i % 10 == 0 and stilt_ok49 and not (hoop47.size() == 2
-				and float(i) > float(hoop47[0]) - 4.0
-				and float(i) < float(hoop47[1]) + 4.0):
-			var top: Vector3 = p0
-			var bot := Vector3(p0.x, DESERT_FLOOR_Y, p0.z)
-			_add_box_verts(stilt_pos, stilt_nrm, stilt_col, (top + bot) * 0.5,
-				Vector3(0.55, top.y - bot.y, 0.55), Color(0.42, 0.42, 0.46))
+		# Fix Pass 57 (Item A): NO STILTS. The 0.55 m centreline
+		# posts that stood here every 10 m are deleted whole;
+		# _build_world57 (called at the end of this function)
+		# builds the replacement: terrain that meets the low
+		# road, and piers of real section (with the FP47 hoop
+		# exclusion and the FP49 self-clearance clause carried
+		# into the pier placement, widened for the pier's
+		# section) under the high road.
 	# Fix Pass 27: the lines are painted on the road (see
 	# _add_line_stripe) - start at s 2.0 on both tracks, plus
 	# the finish at the ribbon's end on the open track. On the
@@ -4873,8 +5073,17 @@ func _build_track_meshes(d: Dictionary) -> void:
 	_add_mesh(surf_pos, surf_nrm, surf_col, "TrackSurface", false, troot)
 	_add_mesh(skirt_pos, skirt_nrm, skirt_col, "TrackSkirt", false, troot)
 	_add_mesh(edge_pos, edge_nrm, edge_col, "TrackEdges", true, troot)
-	_add_mesh(stilt_pos, stilt_nrm, stilt_col, "Stilts", false, troot)
 	_add_mesh(line_pos, line_nrm, line_col, "TrackLine", true, troot)
+	# Fix Pass 57 (Item A): the world for this track - terrain,
+	# piers, landscape objects - three merged meshes beside the
+	# ribbon's own. Stats land in d["world57"] for the suite.
+	var w57: Dictionary = _build_world57(d)
+	var wt57: Array = w57["terr"]
+	var wp57: Array = w57["pier"]
+	var wo57: Array = w57["obj"]
+	_add_mesh(wt57[0], wt57[1], wt57[2], "WorldTerrain57", false, troot)
+	_add_mesh(wp57[0], wp57[1], wp57[2], "TrackPiers57", false, troot)
+	_add_mesh(wo57[0], wo57[1], wo57[2], "WorldRocks57", false, troot)
 	_build_gantry(2.0, "START", troot)
 	if not bool(d["closed"]):
 		_build_gantry(track_len - 2.0, "FINISH", troot)
@@ -5387,6 +5596,23 @@ func _enter_air(from_gap: bool, extra_vy: float) -> void:
 
 # ---------------------------------------------------------------- car
 
+func _soft_puff_texture57() -> ImageTexture:
+	# Fix Pass 57 (Item C): a radial-gradient puff sprite -
+	# opaque-ish core falling to nothing at the rim, with a
+	# deterministic speckle so neighbouring puffs do not read
+	# as clones. Generated once, shared by every tire emitter.
+	var sz57: int = 64
+	var img57 := Image.create(sz57, sz57, false, Image.FORMAT_RGBA8)
+	for y57: int in sz57:
+		for x57: int in sz57:
+			var d57: float = Vector2(float(x57) - 31.5, float(y57) - 31.5).length() / 31.5
+			var a57: float = clampf(1.0 - d57, 0.0, 1.0)
+			a57 = a57 * a57 * (3.0 - 2.0 * a57)
+			var sp57: float = 0.85 + 0.15 * sin(float(x57 * 12 + y57 * 7) * 1.7)
+			img57.set_pixel(x57, y57, Color(1.0, 1.0, 1.0, a57 * sp57))
+	return ImageTexture.create_from_image(img57)
+
+
 func _build_car() -> void:
 	car = Node3D.new()
 	car.name = "Car"
@@ -5588,19 +5814,24 @@ func _build_car() -> void:
 		em.draw_pass_1 = puff
 		car_body.add_child(em)
 		dust_emitters.append(em)
-	# Fix Pass 36 (Item B2): BURNOUT SMOKE - one emitter at
-	# each DRIVEN (rear) patch, driven by the wheelspin
-	# state in _update_telegraph. Grey-white where the dust
-	# is tan, rising and trailing behind the patch: the
-	# visual half of the spin tell (the rev flare + squeal
-	# are the audible half). Placeholder-grade particles,
-	# real state - the same construction as the dust above.
-	for wi3: int in 2:
-		var wl3: Vector2 = WHEEL_LOCALS[2 + wi3]
+	# Fix Pass 57 (Item C): TIRE SMOKE at ALL FOUR contact
+	# patches - the FP36 rear-only burnout channel rebuilt.
+	# The retired sphere construction does NOT carry over
+	# (the FP56 blob verdict): the draw pass is a soft-edged
+	# billboard quad (radial-gradient texture generated here),
+	# flat in the game's language and soft at the edge. The
+	# DRIVE logic lives in _update_telegraph: per wheel, the
+	# amount follows what that tire is actually doing -
+	# wheelspin at the driven (rear) patches, lateral slip
+	# (slip_state) at all four - and nothing else: no idle,
+	# no throttle, no exhaust terms.
+	var smoke_tex57: ImageTexture = _soft_puff_texture57()
+	for wi3: int in WHEEL_LOCALS.size():
+		var wl3: Vector2 = WHEEL_LOCALS[wi3]
 		var em3 := GPUParticles3D.new()
-		em3.name = "SpinSmoke%d" % wi3
-		em3.amount = 26
-		em3.lifetime = 0.9
+		em3.name = "TireSmoke%d" % wi3
+		em3.amount = 30
+		em3.lifetime = 0.7
 		em3.local_coords = false
 		em3.emitting = false
 		em3.amount_ratio = 0.0
@@ -5614,102 +5845,88 @@ func _build_car() -> void:
 		pm3.gravity = Vector3(0.0, 0.35, 0.0)
 		pm3.damping_min = 1.0
 		pm3.damping_max = 1.8
-		pm3.scale_min = 0.16
-		pm3.scale_max = 0.36
+		pm3.scale_min = 0.45
+		pm3.scale_max = 0.95
 		var grad3 := Gradient.new()
-		grad3.set_color(0, Color(0.66, 0.66, 0.68, 0.55))
+		grad3.set_color(0, Color(0.66, 0.66, 0.68, 0.50))
 		grad3.set_color(1, Color(0.66, 0.66, 0.68, 0.0))
 		var gtex3 := GradientTexture1D.new()
 		gtex3.gradient = grad3
 		pm3.color_ramp = gtex3
 		em3.process_material = pm3
-		var puff3 := SphereMesh.new()
-		puff3.radius = 0.18
-		puff3.height = 0.36
-		puff3.radial_segments = 6
-		puff3.rings = 3
-		var pmat3 := StandardMaterial3D.new()
-		pmat3.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		pmat3.albedo_color = Color(0.66, 0.66, 0.68)
-		pmat3.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		puff3.material = pmat3
-		em3.draw_pass_1 = puff3
+		var quad57 := QuadMesh.new()
+		quad57.size = Vector2(0.62, 0.62)
+		var qmat57 := StandardMaterial3D.new()
+		qmat57.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		qmat57.albedo_texture = smoke_tex57
+		qmat57.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		qmat57.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		quad57.material = qmat57
+		em3.draw_pass_1 = quad57
 		car_body.add_child(em3)
 		spin_emitters.append(em3)
-	# Fix Pass 55 (Item 3): EXHAUST SMOKE at the side-pipe
-	# tips - the flanks, where the driver's peripheral vision
-	# lives (the FP36 burnout smoke sits at the rear patches,
-	# behind the driver, where he never sees it: FP42's
-	# lesson). One emitter per tip, world-space like the
-	# others, blowing out and UP off the flank. The exits sit
-	# at the FRONT FENDER, the zoomie exit the reference
-	# cards draw beside the motor: this pass's first build
-	# put them at the rear and its own seat capture
-	# convicted that - a plume entirely behind the driver is
-	# smoke nobody sees - and beside the tub is no better
-	# (the eye sits ahead of it: >90 deg off-axis). At the
-	# fender the plume rises at the frame's edge, in the
-	# peripheral cone, where the fenders already sit in view.
-	# Driven by the engine state in _update_telegraph: idle
-	# puffs that lope with Item 2's idle, a launch bloom,
-	# shift puffs, a hard-throttle haze - and ZERO whenever
-	# the car is not in DRIVE (none on the crane, none in
-	# the hang, none after a wreck: the engine state reads
-	# honestly there).
-	# Fix Pass 56 (MICRO): THE SMOKE, CRANKED. The owner's
-	# headset verdict on FP55: "smokes needs to be cranked
-	# up, can barely be seen, but placement looks okay" -
-	# placement PASSED and is untouched here (same tips,
-	# same direction, same 48 deg plume); PRESENCE moves,
-	# dials only: amount 22 -> 52, lifetime 0.85 -> 1.15,
-	# puff radius 0.15 -> 0.21, particle scale 0.10-0.30 ->
-	# 0.30-0.62, birth alpha 0.50 -> 0.72. The working-range
-	# crank lives in _update_telegraph (idle 0.16 -> 0.24,
-	# throttle 0.55 -> 0.70). Particle cost, stated: the
-	# exhaust pair now budgets 104 spheres worst case (was
-	# 44) of the same 6x3 construction - next to the dust
-	# (72), spin (52) and ribbon, still a rounding error.
+	# Fix Pass 57 (Item B): FLAME JETS at the header exits -
+	# the FP55/56 exhaust blob channel is RETIRED WHOLE (its
+	# emitters, ratio curve and stage-74 terms are gone; the
+	# side pipes and zoomie PARTS stay - they are the car).
+	# In its place: little hard-edged jets, a hot core inside
+	# an orange sheath, both stretched cones in the game's
+	# flat-shaded language - NOT spheres, no soft particles.
+	# Each jet lives in a holder aimed out of the block's
+	# flank (outboard, slightly up, forward); the envelope
+	# (flame_env57, set in _update_engine_vib from the SAME
+	# shift event that fires FP55's vib_blip, plus the boost
+	# state - the original's boost flames, from Chris's own
+	# Amiga film) scales the holder: length and girth grow
+	# with the envelope, and the holder hides at rest.
+	var flame_core57 := StandardMaterial3D.new()
+	flame_core57.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	flame_core57.albedo_color = Color(1.0, 0.92, 0.55)
+	var flame_sheath57 := StandardMaterial3D.new()
+	flame_sheath57.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	flame_sheath57.albedo_color = Color(1.0, 0.45, 0.08)
+	flame_sheath57.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	flame_sheath57.albedo_color.a = 0.85
 	for wi4: int in 2:
-		var side55: float = -1.0 if wi4 == 0 else 1.0
-		var em4 := GPUParticles3D.new()
-		em4.name = "ExhaustL" if wi4 == 0 else "ExhaustR"
-		em4.amount = 52
-		em4.lifetime = 1.15
-		em4.local_coords = false
-		em4.emitting = false
-		em4.amount_ratio = 0.0
-		em4.visibility_aabb = AABB(Vector3(-40.0, -15.0, -40.0), Vector3(80.0, 30.0, 80.0))
-		em4.position = Vector3(side55 * 0.95, 0.60, -1.30)
-		var pm4 := ParticleProcessMaterial.new()
-		pm4.direction = Vector3(side55 * 0.35, 1.25, 0.55)
-		pm4.spread = 30.0
-		pm4.initial_velocity_min = 1.5
-		pm4.initial_velocity_max = 2.3
-		pm4.gravity = Vector3(0.0, 0.45, 0.0)
-		pm4.damping_min = 1.0
-		pm4.damping_max = 1.8
-		pm4.scale_min = 0.30
-		pm4.scale_max = 0.62
-		var grad4 := Gradient.new()
-		grad4.set_color(0, Color(0.62, 0.64, 0.68, 0.72))
-		grad4.set_color(1, Color(0.62, 0.64, 0.68, 0.0))
-		var gtex4 := GradientTexture1D.new()
-		gtex4.gradient = grad4
-		pm4.color_ramp = gtex4
-		em4.process_material = pm4
-		var puff4 := SphereMesh.new()
-		puff4.radius = 0.21
-		puff4.height = 0.42
-		puff4.radial_segments = 6
-		puff4.rings = 3
-		var pmat4 := StandardMaterial3D.new()
-		pmat4.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		pmat4.albedo_color = Color(0.62, 0.64, 0.68)
-		pmat4.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		puff4.material = pmat4
-		em4.draw_pass_1 = puff4
-		car_body.add_child(em4)
-		exhaust_emitters.append(em4)
+		var side57f: float = -1.0 if wi4 == 0 else 1.0
+		var holder57 := Node3D.new()
+		holder57.name = "FlameJetL" if wi4 == 0 else "FlameJetR"
+		var base57 := Vector3(side57f * 0.50, 0.74, -1.98)
+		var dir57 := Vector3(side57f * 0.82, 0.18, -0.54).normalized()
+		holder57.position = base57
+		# The aim basis is set BY HAND (Basis.looking_at:
+		# -Z toward the jet's direction, the convention the
+		# cones are built on; verified FP57 probe57h - the
+		# orthonormalized aim reads exactly dir57 per side).
+		holder57.transform = Transform3D(Basis.looking_at(dir57, Vector3.UP), base57)
+		var sheath57 := MeshInstance3D.new()
+		var sheath_m57 := CylinderMesh.new()
+		sheath_m57.top_radius = 0.015
+		sheath_m57.bottom_radius = 0.11
+		sheath_m57.height = 0.55
+		sheath_m57.radial_segments = 8
+		sheath57.mesh = sheath_m57
+		sheath57.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+		sheath57.position = Vector3(0.0, 0.0, -0.275)
+		sheath57.material_override = flame_sheath57
+		sheath57.name = "Sheath"
+		holder57.add_child(sheath57)
+		var core57 := MeshInstance3D.new()
+		var core_m57 := CylinderMesh.new()
+		core_m57.top_radius = 0.008
+		core_m57.bottom_radius = 0.05
+		core_m57.height = 0.34
+		core_m57.radial_segments = 8
+		core57.mesh = core_m57
+		core57.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+		core57.position = Vector3(0.0, 0.0, -0.17)
+		core57.material_override = flame_core57
+		core57.name = "Core"
+		holder57.add_child(core57)
+		holder57.visible = false
+		holder57.scale = Vector3.ONE * 0.001
+		car_body.add_child(holder57)
+		flame_jets57.append(holder57)
 	# Fix Pass 24 (Item 4): the Test-1 smoke-puff sphere that
 	# lived here is DELETED outright (owner's tap, 2026-10-30
 	# 09:26 CDT) - mesh, trigger and pulse, all of it. The run-15
@@ -10813,6 +11030,26 @@ func _update_engine_vib(delta: float) -> void:
 		if alive55:
 			vib_blip = 1.0 # a shift's blip-shudder
 	vib_blip = maxf(vib_blip - delta * VIB_BLIP_DECAY, 0.0)
+	# Fix Pass 57 (Item B): THE FLAME ENVELOPE. One event,
+	# three channels: the shift that fires vib_blip above
+	# (sound's blip, the mounts' shudder) also fires the
+	# flames - the envelope IS the blip's, so the jet bursts
+	# for the shift gap's own lifetime (~0.2 s). The boost
+	# state rides the same system as a sustained floor (the
+	# original's boost flames): while boost is genuinely
+	# burning in DRIVE the jets hold at 0.85. Gated exactly
+	# like the retired exhaust channel: alive means DRIVE,
+	# AIR, or the dangle - on the crane's attach/slew and in
+	# DONE the envelope is zero and the jets hide.
+	var boost_flame57: float = 0.85 if (mode == MODE_DRIVE and in_boost \
+		and boost_meter > 0.0 and in_throttle > 0.05) else 0.0
+	flame_env57 = maxf(vib_blip, boost_flame57) if alive55 else 0.0
+	var flick57: float = 0.90 + 0.10 * sin(vib_ph * 3.0 + 1.1)
+	for jet57: Node3D in flame_jets57:
+		jet57.visible = flame_env57 > 0.03
+		var js57: float = flame_env57 * flick57
+		jet57.scale = Vector3(0.55 + 0.65 * js57, 0.55 + 0.65 * js57,
+			0.25 + 1.15 * js57)
 	var rev55: float = clampf(audio_rev, 0.0, 1.0)
 	var freq55: float = VIB_FREQ_IDLE + (VIB_FREQ_REV - VIB_FREQ_IDLE) * rev55 + wheelspin * 3.0
 	vib_ph += TAU * freq55 * delta
@@ -11420,32 +11657,29 @@ func _update_telegraph(_delta: float) -> void:
 				amt = tire_band
 		em.emitting = amt > 0.02
 		em.amount_ratio = amt
-	# Fix Pass 36 (Item B2): the burnout smoke speaks the
-	# wheelspin state at the driven patches (amount IS the
-	# state) - silent whenever the tires are hooked.
-	for em36: GPUParticles3D in spin_emitters:
-		var samt: float = wheelspin if mode == MODE_DRIVE else 0.0
-		em36.emitting = samt > 0.04
-		em36.amount_ratio = samt
-	# Fix Pass 55 (Item 3): the EXHAUST speaks the engine
-	# state at the flanks: a loping idle (the puffs breathe
-	# with Item 2's lope phase), throttle haze, a wheelspin
-	# bloom, a shift puff while the gap runs. DRIVE only -
-	# the state reads zero on the crane, in the hang and
-	# after a wreck, so the smoke dies with the state that
-	# makes it.
-	var ex55: float = 0.0
-	if mode == MODE_DRIVE:
-		# Fix Pass 56: the ratio curve's working range cranked
-		# with the emitters (idle 0.16 -> 0.24, throttle
-		# 0.55 -> 0.70) - the events still gate it; only how
-		# much of the (larger) budget each event spends moves.
-		ex55 = clampf(0.24 + 0.70 * in_throttle + 0.45 * wheelspin \
-			+ (0.35 if shift_t > 0.0 else 0.0), 0.0, 1.0)
-		ex55 *= 0.75 + 0.25 * sin(vib_ph)
-	for em55: GPUParticles3D in exhaust_emitters:
-		em55.emitting = ex55 > 0.03
-		em55.amount_ratio = ex55
+	# Fix Pass 57 (Item C): TIRE SMOKE speaks what each tire
+	# is actually doing, per wheel, and nothing else. The
+	# rear (driven) patches smoke on the wheelspin state
+	# (FP36's channel, kept); ALL FOUR patches smoke on the
+	# lateral slip state (slip_state - the telegraph's own
+	# slide measure, already zero in the air and on a hooked
+	# tire). No idle term, no throttle term, no exhaust
+	# term: the smoke starts and stops WITH the slip/spin.
+	# (The FP55/56 exhaust channel that lived here is
+	# retired whole - Item B's flames own the engine's
+	# visual voice now.)
+	tire_smoke57 = 0.0
+	for wi57: int in spin_emitters.size():
+		var em57: GPUParticles3D = spin_emitters[wi57]
+		var amt57: float = 0.0
+		if mode == MODE_DRIVE:
+			amt57 = slip_state * 0.9
+			if wi57 >= 2: # the driven patches add their spin
+				amt57 = maxf(amt57, wheelspin)
+			amt57 = clampf(amt57, 0.0, 1.0)
+		em57.emitting = amt57 > 0.04
+		em57.amount_ratio = amt57
+		tire_smoke57 = maxf(tire_smoke57, amt57)
 	rumble_haptic_now = 0.0
 	if mode == MODE_DRIVE:
 		rumble_haptic_now = clampf((tire_ratio - TIRE_HAPTIC_EDGE) / (1.0 - TIRE_HAPTIC_EDGE), 0.0, 1.0)

@@ -7700,7 +7700,10 @@ func _run() -> void:
 		await physics_frame
 		f65 += 1
 		spin_peak65 = maxf(spin_peak65, main.wheelspin)
-		if main.spin_emitters.size() == 2 and (main.spin_emitters[0].emitting or main.spin_emitters[1].emitting):
+		# AMENDED (FP57, FLAGGED): tire smoke now lives at all
+		# four patches (FL, FR, RL, RR); this stage's sentence
+		# is about the DRIVEN pair, indices 2 and 3.
+		if main.spin_emitters.size() == 4 and (main.spin_emitters[2].emitting or main.spin_emitters[3].emitting):
 			smoke_seen65 = true
 		if spin_at_20 < 0.0 and main.speed >= 20.0:
 			spin_at_20 = main.wheelspin
@@ -7843,6 +7846,37 @@ func _run() -> void:
 		vl20_65, ddir30_65, ddir50_65])
 	check(vl20_65 < -0.5,
 		"stage65: the incoming slide is dead by 0.20 s of contact (lat_vel %+.2f; FP35 +1.74)" % vl20_65)
+	# FP57 (Item C): the slide's own smoke - while the
+	# incoming slide lives (its first frames of contact,
+	# lat_vel still large), the FRONT patches must smoke
+	# on the slip term alone (no wheelspin is staged here):
+	# the sync proof for the lateral half of the channel.
+	main.debug_stage_landing(70.0, 0.45, 24.0)
+	main.air_from_release = false
+	main.air_from_gap = false
+	main.air_from_rebound = false
+	main.air_vel += Vector3(main._frame_at(70.0)["side"]) * 5.0
+	main.wheel_angle = 0.0
+	# The landing condition is watched frame by frame, not
+	# via wait_until: the slide's first contact frames are
+	# the whole subject (the grip bleed eats the slide in
+	# ~0.15 s), and wait_until's post-true check would read
+	# the aftermath. Probe-verified (FP57 probe57i): slip
+	# 0.97 and front smoke 0.87 on the first contact frame.
+	var front_smoke57: float = 0.0
+	var slip_seen57: float = 0.0
+	var ok57s: bool = false
+	for i57s: int in 300:
+		await physics_frame
+		if main.mode == main.MODE_DRIVE:
+			ok57s = true
+			slip_seen57 = maxf(slip_seen57, main.slip_state)
+			front_smoke57 = maxf(front_smoke57,
+				maxf(main.spin_emitters[0].amount_ratio, main.spin_emitters[1].amount_ratio))
+			if i57s > 40:
+				break
+	check(ok57s and slip_seen57 > 0.2 and front_smoke57 > 0.1,
+		"stage65: FP57 - a sliding touchdown smokes at the FRONT patches on slip alone (slip %.2f, front smoke %.2f)" % [slip_seen57, front_smoke57])
 	check(ddir30_65 < -2.5,
 		"stage65: a drumbeat-length contact turns the velocity %+.2f deg (FP35 -1.33)" % ddir30_65)
 	check(ddir50_65 < -6.0,
@@ -8303,8 +8337,16 @@ func _run() -> void:
 	# station counts only when a post was actually BUILT at
 	# it, read off the built Stilts mesh (verts within the
 	# post's own half width in plan, below its top).
+	# AMENDED (FP57, FLAGGED): the stilts are deleted; the
+	# built structure is now the TrackPiers57 mesh (piers of
+	# 2.3 x 1.5 section every 20 m, FP49's self-clearance
+	# clause carried over widened to the pier's section).
+	# The built-detection radius grows 0.4 -> 1.35 (the
+	# pier's plan half-diagonal) and the corridor clause
+	# below widens +0.28 -> +1.6 to match the production
+	# suppression - same sentence, new section.
 	var stilts_mesh49: ArrayMesh = null
-	var stilts_node49: Node = froot66.get_node_or_null("Stilts")
+	var stilts_node49: Node = froot66.get_node_or_null("TrackPiers57")
 	if stilts_node49 != null and stilts_node49 is MeshInstance3D:
 		stilts_mesh49 = (stilts_node49 as MeshInstance3D).mesh as ArrayMesh
 	var stilts_verts49: PackedVector3Array = PackedVector3Array()
@@ -8314,7 +8356,7 @@ func _run() -> void:
 		var sp49: Vector3 = pts66[sj49]
 		var built49: bool = false
 		for v49: Vector3 in stilts_verts49:
-			if v49.y < sp49.y - 0.5 and Vector2(v49.x - sp49.x, v49.z - sp49.z).length() < 0.4:
+			if v49.y < sp49.y - 0.5 and Vector2(v49.x - sp49.x, v49.z - sp49.z).length() < 1.35:
 				built49 = true
 				break
 		if not built49:
@@ -8323,11 +8365,11 @@ func _run() -> void:
 			if absi(ci49b - sj49) <= 15:
 				continue
 			var frs49: Dictionary = main._frame_at(float(ci49b))
-			if float(frs49["pos"].y) < sp49.y - 1.0 and Vector2(sp49.x - float(frs49["pos"].x), sp49.z - float(frs49["pos"].z)).length() < float(frs49["hw"]) + 0.28:
+			if float(frs49["pos"].y) < sp49.y - 1.0 and Vector2(sp49.x - float(frs49["pos"].x), sp49.z - float(frs49["pos"].z)).length() < float(frs49["hw"]) + 1.6:
 				stilts_in49 += 1
 				break
 	check(stilts_in49 == 0,
-		"stage66: no stilt post stands in the bowl/exit corridor (%d found)" % stilts_in49)
+		"stage66: no pier stands in the bowl/exit corridor (%d found)" % stilts_in49)
 	# Entry states, sampled 5 m before each span: BOTH
 	# elements are now entered from the flat, unbanked -
 	# the Hot Wheels form (entry on a straight). (Fix
@@ -8712,7 +8754,7 @@ func _run() -> void:
 		zone50_66.append(main._frame_at(zs50_66))
 		zs50_66 += 0.5
 	var smp50_66: Array = []
-	for mn50_66: String in ["LoopHoop", "LoopLattice", "LoopThreshold", "Stilts"]:
+	for mn50_66: String in ["LoopHoop", "LoopLattice", "LoopThreshold", "TrackPiers57", "WorldTerrain57", "WorldRocks57"]:
 		var mi50_66: MeshInstance3D = froot66.get_node_or_null(mn50_66) as MeshInstance3D
 		if mi50_66 == null or mi50_66.mesh == null:
 			continue
@@ -10665,7 +10707,7 @@ func _run() -> void:
 		bz73 += 1
 	main.test_brake = 0.0
 
-	# ---------- stage 74: Fix Pass 55 - THE CAR (parts, vibration, exhaust) ----
+	# ---------- stage 74: Fix Pass 55 - THE CAR (parts, vibration) + FP57 (flames, tire smoke) ----
 	# Item 1: the parts inventory - every registered part a
 	# real, separable MeshInstance3D riding DIRECTLY on
 	# car_body (the render proof's sightline audit reads the
@@ -10675,8 +10717,16 @@ func _run() -> void:
 	# buzz measured, not asserted from the code) and its
 	# fence: body_sink - FP32's law, which the channel must
 	# never write - sits at rest while the vib runs.
-	# Item 3: exhaust puffs live at idle in DRIVE and dead
-	# on the crane.
+	# REWRITTEN (FP57, FLAGGED): Item 3's exhaust terms are
+	# DELETED with their channel (the FP55/56 blob system is
+	# retired whole). The stage's third act now proves the
+	# FP57 channels: (a) TIRE SMOKE is silent at a hooked
+	# idle - no slip, no spin, no smoke, because the channel
+	# has no idle/throttle/exhaust terms left; (b) FLAMES
+	# fire on the shift event (vib_blip forced, the envelope
+	# follows and the jets show); (c) on the crane BOTH
+	# channels are dead - flames gated even with the blip
+	# forced, tire smoke at exactly zero.
 	main._set_track("ribbon")
 	await frames(5)
 	if main.mode != main.MODE_DRIVE:
@@ -10725,24 +10775,79 @@ func _run() -> void:
 		"stage74: the shell buzzes at idle (%.2f mm peak-to-peak)" % ((bmx74 - bmn74) * 1000.0))
 	check(absf(main.body_sink) < 0.002,
 		"stage74: body_sink stays FP32's at rest (%.4f) - the vib channel never writes it" % main.body_sink)
-	var ex_idle74: float = 0.0
-	for em74: GPUParticles3D in main.exhaust_emitters:
-		ex_idle74 = maxf(ex_idle74, em74.amount_ratio)
-	check(main.exhaust_emitters.size() == 2 and ex_idle74 > 0.05,
-		"stage74: exhaust puffs live at idle in DRIVE (ratio %.2f)" % ex_idle74)
+	# FP57 (Item C): at a hooked idle the tire smoke is
+	# silent - the channel's only terms are slip and spin.
+	var ts_idle74: float = 0.0
+	var ts_emit74: bool = false
+	for em74: GPUParticles3D in main.spin_emitters:
+		ts_idle74 = maxf(ts_idle74, em74.amount_ratio)
+		ts_emit74 = ts_emit74 or em74.emitting
+	check(main.spin_emitters.size() == 4 and not ts_emit74 and ts_idle74 == 0.0,
+		"stage74: tire smoke silent at idle in DRIVE (emitting %s, ratio %.2f) - no slip, no spin, no smoke" % [str(ts_emit74), ts_idle74])
+	# FP57 (Item B): the shift event fires the flames.
+	main.vib_blip = 1.0
+	await frames(3)
+	var jets_vis74: bool = main.flame_jets57.size() == 2
+	for jet74: Node3D in main.flame_jets57:
+		jets_vis74 = jets_vis74 and jet74.visible
+	check(main.flame_env57 > 0.3 and jets_vis74,
+		"stage74: the shift blip fires the flame jets (envelope %.2f, jets visible %s)" % [main.flame_env57, str(jets_vis74)])
 	main._call_crane()
 	var hang74: bool = await wait_until(func() -> bool: return main.mode == main.MODE_HANG, 700)
+	main.vib_blip = 1.0 # forced: the gate, not the event, must kill the flames
 	await frames(30)
-	var ex_hang74: float = 0.0
-	var em_hang74: bool = false
-	for em74b: GPUParticles3D in main.exhaust_emitters:
-		ex_hang74 = maxf(ex_hang74, em74b.amount_ratio)
-		em_hang74 = em_hang74 or em74b.emitting
-	check(hang74 and not em_hang74 and ex_hang74 == 0.0,
-		"stage74: no exhaust on the crane (emitting %s, ratio %.2f)" % [str(em_hang74), ex_hang74])
+	var ts_hang74: float = 0.0
+	var ts_hem74: bool = false
+	for em74b: GPUParticles3D in main.spin_emitters:
+		ts_hang74 = maxf(ts_hang74, em74b.amount_ratio)
+		ts_hem74 = ts_hem74 or em74b.emitting
+	var jets_hang74: bool = false
+	for jet74b: Node3D in main.flame_jets57:
+		jets_hang74 = jets_hang74 or jet74b.visible
+	check(hang74 and not ts_hem74 and ts_hang74 == 0.0 and main.flame_env57 == 0.0 and not jets_hang74,
+		"stage74: on the crane both FP57 channels are dead (tire emitting %s ratio %.2f, flame env %.2f, jets visible %s)" % [str(ts_hem74), ts_hang74, main.flame_env57, str(jets_hang74)])
 	main.debug_set_hang_dangle()
 	main._do_release()
 	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)
+
+	# ---------- stage 75: Fix Pass 57 - THE WORLD ----
+	# Every track slot carries the world by the same rule:
+	# a terrain strip derived from its own station frames
+	# (never closer than 0.5 m under the road surface at the
+	# centreline - the corridor discipline, measured at
+	# build), piers under the airborne road, and landscape
+	# objects placed at >= 8 m measured clearance from the
+	# road's edge. The old Stilts node must not exist.
+	var world_ok75: bool = true
+	for tn75: String in ["circuit", "ribbon", "lab", "funlab"]:
+		var td75: Dictionary = main.track_data[tn75]
+		var ws75: Dictionary = td75.get("world57", {})
+		var rt75: Node3D = td75["root"]
+		# AMENDED (FP57, FLAGGED, in-pass): the pier-node
+		# clause as drafted demanded a TrackPiers57 node on
+		# every track - but the funlab's honest pier count is
+		# ZERO (candidate census, probe57b: 36 low/terrain-
+		# carried, 6 hoop-excluded, 0 suppressed, 0 built -
+		# the course never stands 3.2 m over its own terrain
+		# outside the hoop's footing), and _add_mesh builds
+		# no node for an empty mesh. The clause now reads:
+		# the node exists exactly where piers were built.
+		if ws75.is_empty() or int(ws75["terrain_tris"]) <= 0 or int(ws75["objects"]) <= 0 \
+				or float(ws75["min_object_clearance"]) < 8.0 \
+				or float(ws75["min_under_road"]) < 0.5 \
+				or rt75.get_node_or_null("WorldTerrain57") == null \
+				or (int(ws75["piers"]) > 0 and rt75.get_node_or_null("TrackPiers57") == null) \
+				or (int(ws75["piers"]) == 0 and rt75.get_node_or_null("TrackPiers57") != null) \
+				or rt75.get_node_or_null("WorldRocks57") == null \
+				or rt75.get_node_or_null("Stilts") != null:
+			world_ok75 = false
+			print("stage75: %s world FAIL - stats %s" % [tn75, str(ws75)])
+		else:
+			print("stage75: %s - terrain %d tris, %d piers, %d objects, object clearance %.1f m, under-road %.2f m" % [
+				tn75, int(ws75["terrain_tris"]), int(ws75["piers"]), int(ws75["objects"]),
+				float(ws75["min_object_clearance"]), float(ws75["min_under_road"])])
+	check(world_ok75,
+		"stage75: all four tracks sit in the FP57 world (terrain meets low road, piers under high road, objects clear, no stilts)")
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")

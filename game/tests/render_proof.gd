@@ -1714,9 +1714,9 @@ func _run() -> void:
 	# proof lives in frame_strips' FP55 strip; this pair is
 	# the seat's still of the same tremble, with the hat's
 	# measured travel between the frames). 38 = a staged
-	# burnout from the seat: throttle against brake, the
-	# exhaust bloom live, and both pipe tips projecting into
-	# the frame's outer bands - the periphery, geometrically.
+	# burnout from the seat (FP57: the tire-smoke sync is
+	# its subject - see the capture's own note). 39 = the
+	# FP57 shift flame pair.
 	main._set_track("ribbon")
 	for i55z: int in 3:
 		await physics_frame
@@ -1776,52 +1776,66 @@ func _run() -> void:
 		hat_hi37, hat_lo37, (hat_hi37 - hat_lo37) * 1000.0])
 	check(snap_hi37 and snap_lo37 and hat_hi37 - hat_lo37 > 0.003,
 		"capture 37: the hat rides the lope between the two frames (%.2f mm of travel)" % ((hat_hi37 - hat_lo37) * 1000.0))
-	# 38: the staged burnout and the periphery geometry.
+	# 38: REWRITTEN (FP57, FLAGGED). The staged burnout's
+	# subject is no longer the retired exhaust bloom - it is
+	# the TIRE SMOKE sync (Item C): throttle against brake,
+	# the driven wheels spinning, and the rear patches'
+	# smoke amount following the spin state in the same
+	# frames. The frame itself is the seat's evidence: smoke
+	# at the patches, in motion, at working slip.
 	main.test_brake = 1.0
 	main.test_throttle = 1.0
 	for i38: int in 72:
 		await physics_frame
 	main.fallback_cam.current = true
 	await process_frame
-	var ex38: float = 0.0
-	for em38: GPUParticles3D in main.exhaust_emitters:
-		ex38 = maxf(ex38, em38.amount_ratio)
-	# The periphery, measured as geometry, not projection:
-	# unproject_position lies about points behind the eye
-	# (this pass's first capture-38 build proved that - the
-	# rear tips "projected" mirrored into the frame's top).
-	# The honest measure: each side's MID-PLUME point (tip +
-	# plume velocity x 0.45 s) must sit in the peripheral
-	# cone from the eye - 40 to 85 degrees off the forward
-	# axis, neither at the centre of vision nor behind the
-	# eye plane.
-	var peri38: bool = main.exhaust_emitters.size() == 2
-	var eye38: Vector3 = main.fallback_cam.global_position
-	var fwd38: Vector3 = -main.fallback_cam.global_transform.basis.z
-	for em38b: GPUParticles3D in main.exhaust_emitters:
-		var pm38: ParticleProcessMaterial = em38b.process_material as ParticleProcessMaterial
-		var vel38: Vector3 = main.car.global_transform.basis * (pm38.direction.normalized() * 1.9)
-		var mid38: Vector3 = em38b.global_position + vel38 * 0.45
-		var off38: float = rad_to_deg(fwd38.angle_to(mid38 - eye38))
-		print("capture 38: mid-plume point %.0f deg off the forward axis" % off38)
-		if off38 < 40.0 or off38 > 85.0:
-			peri38 = false
+	var ts38: float = 0.0
+	for em38: GPUParticles3D in main.spin_emitters:
+		ts38 = maxf(ts38, em38.amount_ratio)
 	await snap(main.fallback_cam, "oddrod_launch_smoke_view.png")
 	# The glance frame: a temp camera at the eye, yawed 55
-	# degrees toward the left pipe - the driver's fraction
-	# of a head-turn - with the plume in frame.
+	# degrees toward the left side - the driver's fraction
+	# of a head-turn - with the patch smoke in frame.
+	var eye38: Vector3 = main.fallback_cam.global_position
 	var cam38 := Camera3D.new()
 	main.add_child(cam38)
 	cam38.global_position = eye38
 	cam38.global_rotation = main.fallback_cam.global_rotation + Vector3(0.0, 0.96, 0.0)
 	await snap(cam38, "oddrod_launch_smoke_glance_view.png")
 	cam38.queue_free()
-	print("capture 38: burnout - wheelspin %.2f, exhaust ratio %.2f" % [main.wheelspin, ex38])
-	check(main.wheelspin > 0.3 and ex38 > 0.3,
-		"capture 38: the staged launch is a real burnout (wheelspin %.2f) with the exhaust bloom live (%.2f)" % [
-			main.wheelspin, ex38])
-	check(peri38,
-		"capture 38: both plumes ride the peripheral cone (40-85 deg off-axis) - at the edge of vision, not the centre, not behind")
+	print("capture 38: burnout - wheelspin %.2f, tire smoke %.2f" % [main.wheelspin, ts38])
+	check(main.wheelspin > 0.3 and ts38 > 0.3,
+		"capture 38: the staged launch is a real burnout (wheelspin %.2f) and the tire smoke follows the spin (%.2f)" % [
+			main.wheelspin, ts38])
+	check(main.tire_smoke57 > 0.3,
+		"capture 38: the tire-smoke witness reads the sync (%.2f)" % main.tire_smoke57)
+	main.test_throttle = 0.0
+	main.test_brake = 0.0
+
+	# Capture 39 (Fix Pass 57, Item B): THE SHIFT FLAME -
+	# the NUMERIC pair. The blip is forced (the production
+	# shift event's own envelope) and the envelope + jet
+	# state are asserted at two points: fired, then dead
+	# with the blip. NO snap claims a flame still: the jets
+	# live ~0.2 s, the snap path spans process frames with
+	# zero physics ticks between its read and its save, and
+	# across this pass's staging attempts the burst never
+	# once landed in a saved still (probe-verified three
+	# ways). The flame's visual read is the owner's, in the
+	# headset, in motion - Hal-side evidence is the envelope
+	# identity with vib_blip (stage 74 reads the same state)
+	# and the aim proof (probe57h: each holder's -Z reads
+	# exactly its jet direction, orthonormalized).
+	main.vib_blip = 1.0
+	await physics_frame
+	await physics_frame
+	check(main.flame_env57 > 0.5 and main.flame_jets57[0].visible,
+		"capture 39: the forced shift blip fires the jets (envelope %.2f)" % main.flame_env57)
+	for i39: int in 40:
+		await physics_frame
+	check(main.flame_env57 < 0.25,
+		"capture 39: the flame dies with the blip (envelope %.2f after 40 frames)" % main.flame_env57)
+
 	main.test_throttle = 0.0
 	main.test_brake = 0.0
 
