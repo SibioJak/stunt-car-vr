@@ -403,6 +403,23 @@ func _tire_audit_frac(wi: int, occ_inv: Array[Transform3D], occ_box: Array[AABB]
 	return {"n": pts.size(), "in": n_in, "vis": n_vis, "blockers": blockers}
 
 
+func _pursuit58() -> void:
+	# Fix Pass 58 (capture 40): pure-pursuit steering through
+	# the production input path - the smoke suite's
+	# autopilot_pursuit law (speed-scaled lookahead, the
+	# wheel angle in the same +-PI range the hands use). The
+	# caller owns throttle/brake via the test channels.
+	var s58: float = main.car_s
+	var spd58: float = maxf(main.speed, 0.0)
+	var la58: float = clampf(spd58 * 0.55, 6.0, 22.0)
+	var fr58: Dictionary = main._frame_at(s58 + la58)
+	var tgt58: Vector3 = fr58["pos"]
+	var pos58: Vector3 = main.car.global_position
+	var des58: float = atan2(-(tgt58.x - pos58.x), -(tgt58.z - pos58.z))
+	var err58: float = wrapf(des58 - main.car_heading, -PI, PI)
+	main.wheel_angle = clampf(-err58 * 1.6, -1.0, 1.0) * PI
+
+
 func _init() -> void:
 	_run()
 
@@ -1838,6 +1855,104 @@ func _run() -> void:
 
 	main.test_throttle = 0.0
 	main.test_brake = 0.0
+
+	# Capture 40 (Fix Pass 58, Item 1): THE DRIVEN SLIDE -
+	# the smoke channel's new proof standard. Staged
+	# standstill evidence is BANNED for cockpit visibility
+	# (it lied in FP56 and FP57); this capture instead
+	# DRIVES the slide: the stage-2f forced-slip recipe
+	# (ribbon s=145, the banked R30 corner, pinned ONCE to
+	# 24 m/s, pursuit steering through the production input
+	# path, throttle 0.3). The corner demands ~19 m/s^2
+	# against the ~11 cap, so the slide develops over ~2/3 s
+	# and SATURATES (probe58d: slip 1.00 sustained 100+
+	# frames, amounts 1.00 per tire, front loads ~0.09-0.12
+	# late in the corner - the fronts unloading as the tail
+	# takes the slide). Once slip saturates, DENSE seat
+	# frames come off the fallback camera (the eye anchor)
+	# at process rate - tiles fp58_slide_tNN.png, the tile
+	# strip. Sync is asserted on the same frames: per-tire
+	# amounts high WHILE slip is high, and the particle
+	# system's own mouth count read at the tile frames.
+	main._set_track("ribbon")
+	for i40a: int in 10:
+		await physics_frame
+	main.debug_warp_to_s(145.0)
+	main.debug_pin_speed(24.0)
+	main.test_throttle = 0.3
+	main.test_brake = 0.0
+	var sat40: int = 0
+	var guard40: int = 0
+	while sat40 < 30 and guard40 < 400:
+		_pursuit58()
+		await physics_frame
+		guard40 += 1
+		if main.slip_state > 0.6:
+			sat40 += 1
+		else:
+			sat40 = 0
+	print("capture 40: slide saturated after %d frames (slip %.2f, speed %.1f)" % [
+		guard40, main.slip_state, main.speed])
+	check(sat40 >= 30 and main.mode == main.MODE_DRIVE,
+		"capture 40: a REAL slide at speed, driven, not staged (slip %.2f at %.1f m/s)" % [
+			main.slip_state, main.speed])
+	main.fallback_cam.current = true
+	var tiles40: int = 0
+	var born_fwd40: int = 0
+	var amt_min40: float = 1.0
+	var mouths40: int = 0
+	for t40: int in 10:
+		_pursuit58()
+		await physics_frame
+		await process_frame
+		await RenderingServer.frame_post_draw
+		var img40: Image = root.get_texture().get_image()
+		var outp40: String = ProjectSettings.globalize_path(
+			"res://tests/fp58_slide_t%02d.png" % t40)
+		check(img40.save_png(outp40) == OK, "capture 40: slide tile %d saved" % t40)
+		tiles40 += 1
+		amt_min40 = minf(amt_min40, main.tire_smoke57)
+		# the birth-mouth witness: smoke being born this frame
+		# whose world point sits AHEAD of the eye anchor (the
+		# driver's forward airspace), not in the car's wake
+		var eye40: Vector3 = main.fallback_cam.global_position
+		var fwdb40: Vector3 = -main.fallback_cam.global_transform.basis.z
+		for w40: int in 4:
+			if main.tire_smoke58_amt[w40] > 0.3:
+				mouths40 += 1
+				if (main.tire_smoke58_born[w40] - eye40).dot(fwdb40) > -1.2:
+					born_fwd40 += 1
+	print("capture 40: %d dense tiles, min smoke witness %.2f across tiles, generating mouths %d, ahead-of-eye %d" % [
+		tiles40, amt_min40, mouths40, born_fwd40])
+	check(tiles40 == 10 and amt_min40 > 0.3,
+		"capture 40: the smoke amount holds through the dense tiles (min %.2f) - sync on the same run" % amt_min40)
+	main.test_throttle = 0.0
+	main.wheel_angle = 0.0
+
+	# Capture 40b (Fix Pass 58, Item 1): THE CORNER, SHOT
+	# FOR THE TERRAIN. The edge census's banked+shallow
+	# candidate cluster (circuit s~1182-1184, bank 10 deg,
+	# the track's lowest country, pre-fix edge clearance
+	# -0.342 m - terrain ABOVE the road's low edge): the
+	# seat frames it at driving height on the approach, the
+	# low edge and its shoulder in view.
+	main._set_track("circuit")
+	for i40b: int in 10:
+		await physics_frame
+	main.debug_warp_to_s(1152.0)
+	main.test_throttle = 0.5
+	main.test_brake = 0.0
+	for t40b: int in 8:
+		_pursuit58()
+		await physics_frame
+		await process_frame
+		await RenderingServer.frame_post_draw
+		var img40b: Image = root.get_texture().get_image()
+		check(img40b.save_png(ProjectSettings.globalize_path(
+			"res://tests/fp58_corner_t%02d.png" % t40b)) == OK,
+			"capture 40b: corner tile %d saved" % t40b)
+	main.test_throttle = 0.0
+	main.wheel_angle = 0.0
 
 	print("---")
 	if failures == 0:

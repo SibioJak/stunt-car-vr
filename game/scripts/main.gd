@@ -1790,6 +1790,8 @@ var spin_emitters: Array[GPUParticles3D] = [] # Fix Pass 36: wheelspin smoke at 
 var flame_jets57: Array[Node3D] = [] # Fix Pass 57 (Item B): the shift/boost flame jet holders at the header exits (L, R)
 var flame_env57: float = 0.0 # Fix Pass 57 (Item B): the flame envelope, 0..1 (shift blip + boost state, DRIVE/AIR-alive only)
 var tire_smoke57: float = 0.0 # Fix Pass 57 (Item C): the loudest tire-smoke amount this frame (test witness)
+var tire_smoke58_amt: Array[float] = [0.0, 0.0, 0.0, 0.0] # Fix Pass 58 (Item 1): per-tire generation amounts (test witness - the driven proof reads the sync per tire, not just the max)
+var tire_smoke58_born: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO, Vector3.ZERO, Vector3.ZERO] # Fix Pass 58 (Item 1): per-patch world birth points while generating (test witness)
 var body_parts55: Dictionary = {} # Fix Pass 55 (Item 1): the discrete body parts by name - the carnage inventory
 var vib_part_nodes: Array[Node3D] = [] # Fix Pass 55 (Item 2): the blower assembly, trembling on its mounts
 var vib_part_base_pos: Array[Vector3] = [] # Fix Pass 55: their build positions (parallel to vib_part_nodes)
@@ -2041,7 +2043,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP57 · 2026-11-10"
+const BUILD_STAMP: String = "FP58 · 2026-11-10"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -4740,7 +4742,26 @@ func _world57_terrain_y(fr: Dictionary, lat: float) -> float:
 	if bool(fr["gap"]):
 		blend = 0.0 # no earth rises to a road that is not there
 	var a: float = absf(lat)
-	var drop: float = pos.y - DESERT_FLOOR_Y
+	# Fix Pass 58 (Item 3): THE LOW EDGE RULES. FP57 keyed this
+	# profile to the station's CENTRE height (pos.y + rel) -
+	# but a banked section's edges sit at pos.y +/- side.y*hw,
+	# so on any bank the apron stood ABOVE the section's low
+	# edge and the road read sunk into the sand on corners
+	# (owner's seat verdict). The probe58a census convicted
+	# it: worst edge clearance circuit -0.342 m (s=1182),
+	# lab -2.264 m (s=853), funlab -3.756 m (s=450, the bowl),
+	# while the centre read a perfect 0.620 everywhere - the
+	# one place the defect cannot occur. The profile now keys
+	# to the SECTION's own surface height at this lateral
+	# (pos.y + side.y*lat), with the tilt CAPPED at the edges:
+	# past +/-hw the key stops following the bank, so the
+	# apron falls away from each edge's own level - it can
+	# neither bury the low edge nor pile against the high
+	# edge of a steep bank (the stated conflict rule). Under
+	# the road the register is the FP57 one (-0.62 centre,
+	# -0.70 at the edges) measured from the surface itself.
+	var surf: float = pos.y + side.y * clampf(lat, -hw, hw)
+	var drop: float = surf - DESERT_FLOOR_Y
 	var th: Array[float] = [0.0, hw, hw + 3.0, hw + 9.0, hw + 20.0, hw + 42.0]
 	# the profile's tail falls the WHOLE way to the desert, so
 	# the strip's edge lands under the global floor plane
@@ -4752,7 +4773,18 @@ func _world57_terrain_y(fr: Dictionary, lat: float) -> float:
 			var u57: float = (a - th[k57]) / maxf(th[k57 + 1] - th[k57], 0.001)
 			rel = lerpf(off[k57], off[k57 + 1], u57)
 			break
-	var meet: float = maxf(pos.y + rel, valley + 0.25)
+	# FP58 (cont.): the +0.25 lift's purpose is the blend's
+	# FAR side: where rel_h is large the strip's edge tail
+	# dives to the floor and would cut a cliff through an
+	# undulating valley swell the road itself clears. Where
+	# the blend is FULL (low country - the whole defect
+	# zone, where the lift's own surface can sit above the
+	# section: probe58b, circuit s=1182, the track's lowest
+	# corner, lift at surf + 0.199 against a -0.70 register)
+	# the register rules unconditionally. The blend itself
+	# is the gate: smoothstepped, so the lift fades exactly
+	# as the meet's authority fades.
+	var meet: float = maxf(surf + rel, lerpf(valley + 0.25, surf + rel, blend))
 	return lerpf(valley, meet, blend)
 
 
@@ -4795,7 +4827,27 @@ func _build_world57(d: Dictionary) -> Dictionary:
 	for mp57: int in t_pts.size():
 		_world57_track_min_y = minf(_world57_track_min_y, t_pts[mp57].y)
 	var stats57: Dictionary = {"terrain_tris": 0, "piers": 0, "objects": 0,
-		"min_object_clearance": 1e9, "min_under_road": 1e9}
+		"min_object_clearance": 1e9, "min_under_road": 1e9,
+		"min_edge_clearance": 1e9, "worst_edge_s": -1.0}
+	# Fix Pass 58 (Item 3): the EDGE CENSUS - every station,
+	# BOTH edges: the road surface height at the edge (from
+	# the frame) minus the terrain height at that edge's
+	# lateral. FP57 measured this only at the centre (its
+	# min_under_road above), the one place a banked section
+	# cannot sink; this census is the stage-75 gate.
+	for ei58: int in t_pts.size():
+		var fre: Dictionary = _frame_at(float(ei58))
+		if bool(fre["gap"]):
+			continue
+		var pose: Vector3 = fre["pos"]
+		var sidee: Vector3 = fre["side"]
+		var hwe: float = float(fre["hw"])
+		var cl58: float = (pose - sidee * hwe).y - _world57_terrain_y(fre, -hwe)
+		var cr58: float = (pose + sidee * hwe).y - _world57_terrain_y(fre, hwe)
+		var cw58: float = minf(cl58, cr58)
+		if cw58 < float(stats57["min_edge_clearance"]):
+			stats57["min_edge_clearance"] = cw58
+			stats57["worst_edge_s"] = float(ei58)
 	# --- terrain strip following the centreline (4 m rows) ---
 	var rows57: Array[int] = []
 	var ri57: int = 0
@@ -5613,6 +5665,18 @@ func _soft_puff_texture57() -> ImageTexture:
 	return ImageTexture.create_from_image(img57)
 
 
+func _smoke_grow_curve58() -> Curve:
+	# Fix Pass 58 (Item 1): a tire-smoke particle GROWS as it
+	# ages - born at the patch half a metre across, ending
+	# three times that: the expansion IS the photo's read (a
+	# cloud that boils outward, not a trail of fixed sprites).
+	var c58 := Curve.new()
+	c58.add_point(Vector2(0.0, 0.45))
+	c58.add_point(Vector2(0.35, 1.1))
+	c58.add_point(Vector2(1.0, 3.0))
+	return c58
+
+
 func _build_car() -> void:
 	car = Node3D.new()
 	car.name = "Car"
@@ -5820,47 +5884,74 @@ func _build_car() -> void:
 	# (the FP56 blob verdict): the draw pass is a soft-edged
 	# billboard quad (radial-gradient texture generated here),
 	# flat in the game's language and soft at the edge. The
-	# DRIVE logic lives in _update_telegraph: per wheel, the
-	# amount follows what that tire is actually doing -
-	# wheelspin at the driven (rear) patches, lateral slip
-	# (slip_state) at all four - and nothing else: no idle,
-	# no throttle, no exhaust terms.
+	# DRIVE logic lives in _update_telegraph.
+	# Fix Pass 58 (Item 1): THE TIRES GENERATE THE SMOKE.
+	# The owner's verdict on FP57: no smoke visible at all
+	# from the cockpit. Convicted mechanism: these emitters
+	# ran in WORLD space at a 1.1-2.4 m/s drift - at driving
+	# speed the car vacates the emission point instantly and
+	# the cloud exists only in space the car has left. Now
+	# the emitters run in LOCAL space (they ride with the
+	# car) and the per-frame process-material settings in
+	# _update_telegraph hand each particle the patch's own
+	# motion: born at the contact patch carrying the car's
+	# velocity (rotated into car space) plus the tire's
+	# surface throw, so the cloud boils off the patch,
+	# TRAVELS WITH THE CAR through its first life and
+	# expands - the reference photo's behaviour (dense,
+	# opaque-white, engulfing forward). Density is the
+	# photo's register, not FP57's wisp: more, longer-lived,
+	# faster-growing puffs at near-full birth opacity.
+	# Budget: 4 patches x 56 = 224 billboards worst case.
 	var smoke_tex57: ImageTexture = _soft_puff_texture57()
 	for wi3: int in WHEEL_LOCALS.size():
 		var wl3: Vector2 = WHEEL_LOCALS[wi3]
 		var em3 := GPUParticles3D.new()
 		em3.name = "TireSmoke%d" % wi3
-		em3.amount = 30
-		em3.lifetime = 0.7
-		em3.local_coords = false
+		em3.amount = 56
+		em3.lifetime = 1.15
+		em3.local_coords = true
 		em3.emitting = false
 		em3.amount_ratio = 0.0
-		em3.visibility_aabb = AABB(Vector3(-40.0, -15.0, -40.0), Vector3(80.0, 30.0, 80.0))
-		em3.position = Vector3(wl3.x, 0.05, wl3.y + 0.30)
+		em3.visibility_aabb = AABB(Vector3(-60.0, -25.0, -60.0), Vector3(120.0, 50.0, 120.0))
+		em3.position = Vector3(wl3.x, 0.05, wl3.y)
 		var pm3 := ParticleProcessMaterial.new()
-		pm3.direction = Vector3(0.0, 0.75, 0.65)
-		pm3.spread = 26.0
-		pm3.initial_velocity_min = 1.1
-		pm3.initial_velocity_max = 2.4
-		pm3.gravity = Vector3(0.0, 0.35, 0.0)
-		pm3.damping_min = 1.0
-		pm3.damping_max = 1.8
-		pm3.scale_min = 0.45
-		pm3.scale_max = 0.95
+		pm3.direction = Vector3(0.0, 0.55, 0.45)
+		pm3.spread = 34.0
+		pm3.initial_velocity_min = 2.2
+		pm3.initial_velocity_max = 4.2
+		# FP58: the puff texture is ONE soft blob; a cloud of
+		# identical blobs reads as image grain, not smoke. The
+		# particles TUMBLE - random initial rotation and a
+		# steady angular velocity per particle (the process
+		# material's own rotation terms) - so the speckle
+		# pattern every puff carries turns as it expands and
+		# no two puffs present the same face twice.
+		pm3.angle_min = 0.0
+		pm3.angle_max = 360.0
+		pm3.angular_velocity_min = -70.0
+		pm3.angular_velocity_max = 70.0
+		pm3.gravity = Vector3(0.0, 0.55, 0.0)
+		pm3.damping_min = 1.6
+		pm3.damping_max = 2.6
+		pm3.scale_min = 0.55
+		pm3.scale_max = 1.05
+		pm3.set("scale_curve", _smoke_grow_curve58())
 		var grad3 := Gradient.new()
-		grad3.set_color(0, Color(0.66, 0.66, 0.68, 0.50))
-		grad3.set_color(1, Color(0.66, 0.66, 0.68, 0.0))
+		grad3.set_color(0, Color(0.88, 0.88, 0.90, 0.92))
+		grad3.set_color(1, Color(0.88, 0.88, 0.90, 0.0))
 		var gtex3 := GradientTexture1D.new()
 		gtex3.gradient = grad3
 		pm3.color_ramp = gtex3
 		em3.process_material = pm3
 		var quad57 := QuadMesh.new()
-		quad57.size = Vector2(0.62, 0.62)
+		quad57.size = Vector2(0.85, 0.85)
 		var qmat57 := StandardMaterial3D.new()
 		qmat57.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		qmat57.albedo_texture = smoke_tex57
 		qmat57.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		qmat57.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		qmat57.render_priority = 2 # over the flame jets' sheath (1) - smoke in front reads smoke
 		quad57.material = qmat57
 		em3.draw_pass_1 = quad57
 		car_body.add_child(em3)
@@ -5873,7 +5964,11 @@ func _build_car() -> void:
 	# an orange sheath, both stretched cones in the game's
 	# flat-shaded language - NOT spheres, no soft particles.
 	# Each jet lives in a holder aimed out of the block's
-	# flank (outboard, slightly up, forward); the envelope
+	# flank (FP58 Item 2: outboard, slightly up, BACKWARD -
+	# FP57 aimed them forward and the owner convicted it
+	# from the seat: "back at angle feel more right"; the
+	# aim's z component flipped sign, proportions otherwise
+	# FP57's); the envelope
 	# (flame_env57, set in _update_engine_vib from the SAME
 	# shift event that fires FP55's vib_blip, plus the boost
 	# state - the original's boost flames, from Chris's own
@@ -5892,12 +5987,13 @@ func _build_car() -> void:
 		var holder57 := Node3D.new()
 		holder57.name = "FlameJetL" if wi4 == 0 else "FlameJetR"
 		var base57 := Vector3(side57f * 0.50, 0.74, -1.98)
-		var dir57 := Vector3(side57f * 0.82, 0.18, -0.54).normalized()
+		var dir57 := Vector3(side57f * 0.82, 0.18, 0.54).normalized()
 		holder57.position = base57
 		# The aim basis is set BY HAND (Basis.looking_at:
 		# -Z toward the jet's direction, the convention the
 		# cones are built on; verified FP57 probe57h - the
-		# orthonormalized aim reads exactly dir57 per side).
+		# orthonormalized aim reads exactly dir57 per side;
+		# re-verified FP58 probe58c after the re-aim).
 		holder57.transform = Transform3D(Basis.looking_at(dir57, Vector3.UP), base57)
 		var sheath57 := MeshInstance3D.new()
 		var sheath_m57 := CylinderMesh.new()
@@ -11668,18 +11764,60 @@ func _update_telegraph(_delta: float) -> void:
 	# (The FP55/56 exhaust channel that lived here is
 	# retired whole - Item B's flames own the engine's
 	# visual voice now.)
+	# Fix Pass 58 (Item 1): GENERATION IS PER-TIRE - the
+	# amount is that tire's slip/spin state GATED BY THAT
+	# TIRE'S LOAD (wheel_load, the suspension's per-corner
+	# normal-load factor, read at line ~10400): a planted
+	# tire at its limit makes the cloud; an unloaded tire
+	# (load under the FP21 air epsilon) makes none, however
+	# hard it spins - it is not worrying the road. Lateral
+	# slip stays car-level (the model keeps ONE slip_state,
+	# honestly: no per-wheel slip signal exists to fake),
+	# but load-gating makes the amounts differ per tire -
+	# in a slide the loaded outside tires out-smoke the
+	# unloaded inside pair. And the EMISSION IS BORN
+	# MOVING: the emitters now ride in car space, and here
+	# each emitter's process direction is set per frame to
+	# the patch's own motion in car space - the car's
+	# velocity rotated into the car frame (vel3 IS that
+	# vector: FP41 built it in the road frame, which the
+	# carried frame levels to the car's own axes on
+	# ordinary road) plus the tire's surface throw: a
+	# spinning rear sheds backward off the patch, a
+	# sliding tire sheds along the slip. Scale rides the
+	# same speed so the throw reads at any pace.
 	tire_smoke57 = 0.0
+	for tw58: int in tire_smoke58_amt.size():
+		tire_smoke58_amt[tw58] = 0.0
+	var basis58: Basis = car.global_transform.basis
 	for wi57: int in spin_emitters.size():
 		var em57: GPUParticles3D = spin_emitters[wi57]
 		var amt57: float = 0.0
 		if mode == MODE_DRIVE:
-			amt57 = slip_state * 0.9
+			var gen57: float = slip_state
 			if wi57 >= 2: # the driven patches add their spin
-				amt57 = maxf(amt57, wheelspin)
-			amt57 = clampf(amt57, 0.0, 1.0)
+				gen57 = maxf(gen57, wheelspin)
+			var ld57: float = clampf(wheel_load[wi57], 0.0, 1.25)
+			var gate57: float = clampf((ld57 - 0.10) / 0.55, 0.0, 1.0)
+			amt57 = clampf(gen57 * gate57, 0.0, 1.0)
 		em57.emitting = amt57 > 0.04
 		em57.amount_ratio = amt57
 		tire_smoke57 = maxf(tire_smoke57, amt57)
+		tire_smoke58_amt[wi57] = amt57
+		if amt57 > 0.04:
+			var throw58: Vector3 = -vel3 # the patch's wake, in car axes
+			throw58.y = 0.0
+			if throw58.length() > 0.5:
+				throw58 = throw58.normalized()
+				var pm58: ParticleProcessMaterial = em57.process_material
+				pm58.direction = Vector3(throw58.x, 0.45, throw58.z).normalized()
+				var spd58: float = clampf(vel3.length() * 0.85, 2.2, 30.0)
+				pm58.initial_velocity_min = spd58 * 0.75
+				pm58.initial_velocity_max = spd58 * 1.15
+			# witness for the driven proof: where this patch's
+			# smoke is being born, in world space
+			if wi57 < tire_smoke58_born.size():
+				tire_smoke58_born[wi57] = basis58 * em57.position + car.global_position
 	rumble_haptic_now = 0.0
 	if mode == MODE_DRIVE:
 		rumble_haptic_now = clampf((tire_ratio - TIRE_HAPTIC_EDGE) / (1.0 - TIRE_HAPTIC_EDGE), 0.0, 1.0)

@@ -8351,3 +8351,76 @@ UNVERIFIED UNTIL THE SEAT JUDGES: the amount. Presence is
 measured, not felt - whether the crank lands at "reads
 unmistakably" or overshoots into too much is the owner's
 eyes to settle. Stamp FP56.
+
+FIX PASS 58 - three seat-convicted corrections (brief:
+fix-brief-58.md), in the brief's order.
+
+ITEM 3 - TERRAIN: the low edge is the datum. The terrain
+profile keys to the section's own surface height with the
+bank TILT CAPPED at the road's edges, so the apron falls
+away from each edge's own level - a banked corner's LOW
+edge never buries, and the high edge never piles into the
+wall. The desert-valley lift is gated by the blend itself
+(it cannot override the apron near the road). The build
+runs a per-track EDGE CENSUS over every station; stage 75
+requires min edge clearance >= 0.60 m on all four tracks.
+After: min edge clearance 0.700 m on ALL four tracks, zero
+stations under register (pre-fix census: circuit -0.342 m,
+lab -2.264 m, funlab -3.756 m worst edge, 628 stations
+total under the 0.6 register). Capture 40b frames the
+pre-fix worst: circuit s~1182-1184, banked 10 deg, in the
+track's lowest country - shoulders sit below both edges.
+
+ITEM 2 - FLAMES: the jets aim BACK at an angle now -
+direction (+/-0.82, 0.18, +0.54), rearward where FP57 had
+aimed them forward (the seat: "look like they forward at an
+angle"; his first-named option taken; the straight-up
+alternative not used). Envelope, boost flame, alive gating
+and the stage-74 terms are untouched. A probe measured the
+built jet frames against the wanted aim: error 0.000000 rad
+on both jets. No still of a 0.2 s burst is offered as
+evidence; the direction read is the seat's.
+
+ITEM 1 - TIRE SMOKE, the third construction: what changed
+is the physics of the puff, not the dials. The emitters now
+LIVE IN CAR SPACE (local_coords): the cloud is born at the
+patch and CARRIED with the car - the FP57 world-space
+emitters were re-born every frame at a car that had already
+left (at 20 m/s the car clears a 0.7 s cloud in one frame
+step), which is why the seat saw nothing while outside
+proof insisted the smoke existed. Each puff is born MOVING:
+initial velocity along the patch's wake (the road rushing
+back) at ~0.85 of road speed, so the cloud lays down along
+the ground the car is crossing, billows, and overtakes the
+sightline - the shape of the reference photo, where the
+cloud boils off the patch and expands FORWARD past the
+car. Emission is born dense (alpha 0.92, near-white), grows
+~3x over a 1.15 s life, and the puffs TUMBLE (random
+rotation, steady angular velocity) so the speckle texture
+never repeats as static grain. Generation is unchanged in
+law - slip, with wheelspin at the rears - but now GATED BY
+THE PATCH'S OWN LOAD (normal-load factor from the
+suspension): a planted tire at its limit makes the cloud;
+an unloaded tire makes none. Stage 74 gains the amount
+floor for the driven-slide test; stage 65 gains a clause
+(front-patch sliding touchdown smokes on slip alone). PROOF
+STANDARD (the brief's, standing): driven, not staged -
+capture 40 drives the production slide at ribbon s=145
+(slip 1.00 sustained at ~21 m/s through the production
+input path), 10 dense seat tiles: smoke witness 1.00 on
+every tile, 20 generating mouths ahead of the eye anchor.
+Honest residue: at slide entry the cloud reads grainy for
+the first moments - individual speckle-textured discs
+before the puffs swell and merge; the texture is still a
+single soft-noise image. Whether that reads as smoke or as
+grain in the headset is the seat's call, stated, not
+papered over.
+
+GATES (filled at ship): smoke suite ALL 877 PASSED
+(finisher-run on the shipped tree, end to end, after
+the builder's own final run died mid-suite at stage 3;
+an earlier finisher run read 853 PASS / 0 FAIL before
+its timebox at stage 73), API guard 71/71 inside it,
+render proof 226/228 - the standing pair only. The stage-54 audit is digit-identical
+(circuit 185.4, ribbon 91.7): presentation and visual-only
+world, no physics touched. Stamp FP58.

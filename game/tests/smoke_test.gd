@@ -10835,6 +10835,7 @@ func _run() -> void:
 		if ws75.is_empty() or int(ws75["terrain_tris"]) <= 0 or int(ws75["objects"]) <= 0 \
 				or float(ws75["min_object_clearance"]) < 8.0 \
 				or float(ws75["min_under_road"]) < 0.5 \
+				or float(ws75.get("min_edge_clearance", -1.0)) < 0.60 \
 				or rt75.get_node_or_null("WorldTerrain57") == null \
 				or (int(ws75["piers"]) > 0 and rt75.get_node_or_null("TrackPiers57") == null) \
 				or (int(ws75["piers"]) == 0 and rt75.get_node_or_null("TrackPiers57") != null) \
@@ -10843,11 +10844,23 @@ func _run() -> void:
 			world_ok75 = false
 			print("stage75: %s world FAIL - stats %s" % [tn75, str(ws75)])
 		else:
-			print("stage75: %s - terrain %d tris, %d piers, %d objects, object clearance %.1f m, under-road %.2f m" % [
+			print("stage75: %s - terrain %d tris, %d piers, %d objects, object clearance %.1f m, under-road %.2f m, min EDGE clearance %.3f m at s=%.0f" % [
 				tn75, int(ws75["terrain_tris"]), int(ws75["piers"]), int(ws75["objects"]),
-				float(ws75["min_object_clearance"]), float(ws75["min_under_road"])])
+				float(ws75["min_object_clearance"]), float(ws75["min_under_road"]),
+				float(ws75.get("min_edge_clearance", -1.0)), float(ws75.get("worst_edge_s", -1.0))])
+	# AMENDED (FP58, FLAGGED, in-pass): stage 75 gains the
+	# EDGE CENSUS clause - min clearance under EITHER road
+	# edge across all stations (the build's own census,
+	# ws75.min_edge_clearance) must hold >= 0.60 m (the -0.70
+	# edge register, tolerance for the valley clamp). FP57
+	# measured under-road at the centre only (0.620 m on
+	# every track - the one place a bank cannot sink); the
+	# pre-fix census (probe58a) read circuit -0.342 m,
+	# lab -2.264 m, funlab -3.756 m, ribbon +0.700 m. The
+	# owner's seat named exactly this: "one shallow part
+	# seems to sink into sand on a corner."
 	check(world_ok75,
-		"stage75: all four tracks sit in the FP57 world (terrain meets low road, piers under high road, objects clear, no stilts)")
+		"stage75: all four tracks sit in the FP57 world (terrain meets low road, piers under high road, objects clear, no stilts, FP58 edge census holds)")
 
 	print("---")
 	print("UNVERIFIED (XR layer, by design): live XR grip/button channel VALUES and real hand poses (grab, dash and button logic itself is verified on synthetic poses/states, stages 11/31/32/33); in-headset panel legibility")
