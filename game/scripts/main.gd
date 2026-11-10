@@ -2039,7 +2039,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP55 · 2026-11-09"
+const BUILD_STAMP: String = "FP56 · 2026-11-09"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -5656,12 +5656,25 @@ func _build_car() -> void:
 	# the car is not in DRIVE (none on the crane, none in
 	# the hang, none after a wreck: the engine state reads
 	# honestly there).
+	# Fix Pass 56 (MICRO): THE SMOKE, CRANKED. The owner's
+	# headset verdict on FP55: "smokes needs to be cranked
+	# up, can barely be seen, but placement looks okay" -
+	# placement PASSED and is untouched here (same tips,
+	# same direction, same 48 deg plume); PRESENCE moves,
+	# dials only: amount 22 -> 52, lifetime 0.85 -> 1.15,
+	# puff radius 0.15 -> 0.21, particle scale 0.10-0.30 ->
+	# 0.30-0.62, birth alpha 0.50 -> 0.72. The working-range
+	# crank lives in _update_telegraph (idle 0.16 -> 0.24,
+	# throttle 0.55 -> 0.70). Particle cost, stated: the
+	# exhaust pair now budgets 104 spheres worst case (was
+	# 44) of the same 6x3 construction - next to the dust
+	# (72), spin (52) and ribbon, still a rounding error.
 	for wi4: int in 2:
 		var side55: float = -1.0 if wi4 == 0 else 1.0
 		var em4 := GPUParticles3D.new()
 		em4.name = "ExhaustL" if wi4 == 0 else "ExhaustR"
-		em4.amount = 22
-		em4.lifetime = 0.85
+		em4.amount = 52
+		em4.lifetime = 1.15
 		em4.local_coords = false
 		em4.emitting = false
 		em4.amount_ratio = 0.0
@@ -5675,18 +5688,18 @@ func _build_car() -> void:
 		pm4.gravity = Vector3(0.0, 0.45, 0.0)
 		pm4.damping_min = 1.0
 		pm4.damping_max = 1.8
-		pm4.scale_min = 0.10
-		pm4.scale_max = 0.30
+		pm4.scale_min = 0.30
+		pm4.scale_max = 0.62
 		var grad4 := Gradient.new()
-		grad4.set_color(0, Color(0.62, 0.64, 0.68, 0.50))
+		grad4.set_color(0, Color(0.62, 0.64, 0.68, 0.72))
 		grad4.set_color(1, Color(0.62, 0.64, 0.68, 0.0))
 		var gtex4 := GradientTexture1D.new()
 		gtex4.gradient = grad4
 		pm4.color_ramp = gtex4
 		em4.process_material = pm4
 		var puff4 := SphereMesh.new()
-		puff4.radius = 0.15
-		puff4.height = 0.30
+		puff4.radius = 0.21
+		puff4.height = 0.42
 		puff4.radial_segments = 6
 		puff4.rings = 3
 		var pmat4 := StandardMaterial3D.new()
@@ -11423,7 +11436,11 @@ func _update_telegraph(_delta: float) -> void:
 	# makes it.
 	var ex55: float = 0.0
 	if mode == MODE_DRIVE:
-		ex55 = clampf(0.16 + 0.55 * in_throttle + 0.45 * wheelspin \
+		# Fix Pass 56: the ratio curve's working range cranked
+		# with the emitters (idle 0.16 -> 0.24, throttle
+		# 0.55 -> 0.70) - the events still gate it; only how
+		# much of the (larger) budget each event spends moves.
+		ex55 = clampf(0.24 + 0.70 * in_throttle + 0.45 * wheelspin \
 			+ (0.35 if shift_t > 0.0 else 0.0), 0.0, 1.0)
 		ex55 *= 0.75 + 0.25 * sin(vib_ph)
 	for em55: GPUParticles3D in exhaust_emitters:

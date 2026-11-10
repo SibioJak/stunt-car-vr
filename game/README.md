@@ -8288,3 +8288,66 @@ sightline from the real seat in both view modes, the tremble's
 feel (alive or annoying?), and the smoke's presence at the edge
 of vision. The captures are evidence for the owner's eyes, not
 a claim the car looks right - art is his verdict, as always.
+
+## Fix Pass 56 (MICRO) - THE SMOKE, CRANKED
+
+THE VERDICT (headset, 2026-11-09, on FP55): "smokes needs to
+be cranked up, can barely be seen, but placement looks okay."
+Placement PASSED and is fenced; presence is the whole pass.
+DIALS ONLY, all in main.gd - no placement moves, no puff-system
+rebuild, no physics contact:
+
+- emitter amount 22 -> 52 (per side)
+- lifetime 0.85 -> 1.15 s
+- puff sphere radius 0.15 -> 0.21 m (height 0.30 -> 0.42)
+- particle scale 0.10-0.30 -> 0.30-0.62
+- gradient birth alpha 0.50 -> 0.72
+- amount_ratio working range: idle 0.16 -> 0.24, throttle
+  0.55 -> 0.70 (wheelspin 0.45, shift 0.35, lope factor
+  unchanged)
+
+WHY THE CRANK IS THIS SHAPE: FP55's own committed launch
+capture, measured, showed the exhaust was nearly invisible -
+two small puff blobs at the left edge; the visible grey was
+mostly the burnout smoke, not the exhaust. The shipped puffs
+were 1.5-4.5 cm across (sphere 0.15 m x scale 0.10-0.30).
+
+MEASURED PRESENCE, before vs after (same staging, capture 38,
+periphery pixel coverage of the light neutral grey band):
+left zone 5.86% -> 32.97% (5.63x), right zone 3.91% -> 34.66%
+(8.87x), centre zone 9.53% -> 9.41% (0.99x - unchanged, no
+centre bleed). The overshoot past the brief's 2-3x band is
+the baseline's fault: FP55's capture was near-zero, so the
+multiplier is large; the after capture shows a proper smoke
+storm at both frame edges with dash and road unobscured.
+PLUME ANGLE RE-CHECK: mid-plume point 48 deg off the forward
+axis, both sides - unchanged from FP55, inside the 40-85 deg
+gate. Placement untouched: same tips (side +/-0.95, 0.60,
+-1.30), same direction.
+
+PARTICLE COST, stated: the exhaust pair now budgets 104
+spheres worst case (was 44), same 6x3 construction - next to
+dust (72) and spin (52), modest.
+
+GATES: smoke ALL 874, API GUARD ALL 71 (stage 74's contracts
+hold under the crank: idle exhaust ratio 0.12 in DRIVE; on
+the crane emitting=false, ratio exactly 0.00). Render proof
+204/206 - the standing pair only (wheel-hub 0.31 m below the
+eye; the flipping 1-of-63 DIAG graze). Capture 38 passes both
+its checks (burnout wheelspin 1.00, exhaust ratio 0.83; both
+plumes in the peripheral cone). The road to the green smoke
+run: two earlier attempts died outside the code (a 1700 s
+timebox at 587 PASS / 0 FAIL, a VM restart at 518 PASS /
+0 FAIL); the shipped run is clean end to end on this tree.
+
+THE FOLLOW-ON QUESTION, stated plainly as the brief requires:
+the bubbly sphere read is now MUCH more visible - the puffs
+are big distinct unshaded spheres, plainly readable as balls
+in the after capture. If the seat names it, the puff
+construction itself (not the dials) is the next question.
+This pass does not rebuild it.
+
+UNVERIFIED UNTIL THE SEAT JUDGES: the amount. Presence is
+measured, not felt - whether the crank lands at "reads
+unmistakably" or overshoots into too much is the owner's
+eyes to settle. Stamp FP56.
