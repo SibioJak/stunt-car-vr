@@ -1800,6 +1800,13 @@ func _run() -> void:
 	# smoke amount following the spin state in the same
 	# frames. The frame itself is the seat's evidence: smoke
 	# at the patches, in motion, at working slip.
+	# AMENDED (FP59, FLAGGED): the owner's ruling - the
+	# smoke answers the SKID only; the spin term is out of
+	# the channel. This capture's subject inverts: the
+	# staged burnout is still real (wheelspin high), and
+	# the tire smoke must now read ZERO through it - the
+	# negative proof of the FP59 law, shot from the seat.
+	# The frames show a burnout with no smoke: correct.
 	main.test_brake = 1.0
 	main.test_throttle = 1.0
 	for i38: int in 72:
@@ -1820,12 +1827,12 @@ func _run() -> void:
 	cam38.global_rotation = main.fallback_cam.global_rotation + Vector3(0.0, 0.96, 0.0)
 	await snap(cam38, "oddrod_launch_smoke_glance_view.png")
 	cam38.queue_free()
-	print("capture 38: burnout - wheelspin %.2f, tire smoke %.2f" % [main.wheelspin, ts38])
-	check(main.wheelspin > 0.3 and ts38 > 0.3,
-		"capture 38: the staged launch is a real burnout (wheelspin %.2f) and the tire smoke follows the spin (%.2f)" % [
+	print("capture 38: burnout - wheelspin %.2f, tire smoke %.2f (FP59: spin is smokeless)" % [main.wheelspin, ts38])
+	check(main.wheelspin > 0.3 and ts38 < 0.05,
+		"capture 38: the staged launch is a real burnout (wheelspin %.2f) and the tire smoke does NOT follow the spin (%.2f) - FP59: smoke answers the skid only" % [
 			main.wheelspin, ts38])
-	check(main.tire_smoke57 > 0.3,
-		"capture 38: the tire-smoke witness reads the sync (%.2f)" % main.tire_smoke57)
+	check(main.tire_smoke57 < 0.05,
+		"capture 38: the tire-smoke witness stays at zero through the burnout (%.2f)" % main.tire_smoke57)
 	main.test_throttle = 0.0
 	main.test_brake = 0.0
 

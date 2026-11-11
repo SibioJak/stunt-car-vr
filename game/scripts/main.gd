@@ -2043,7 +2043,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP58 · 2026-11-10"
+const BUILD_STAMP: String = "FP59 · 2026-11-11"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -5670,10 +5670,14 @@ func _smoke_grow_curve58() -> Curve:
 	# ages - born at the patch half a metre across, ending
 	# three times that: the expansion IS the photo's read (a
 	# cloud that boils outward, not a trail of fixed sprites).
+	# Fix Pass 59: steepened for the boil - the growth is
+	# front-loaded (x1.7 by a fifth of the puff's life)
+	# and ends larger (x3.6): mass first, trail never.
 	var c58 := Curve.new()
-	c58.add_point(Vector2(0.0, 0.45))
-	c58.add_point(Vector2(0.35, 1.1))
-	c58.add_point(Vector2(1.0, 3.0))
+	c58.add_point(Vector2(0.0, 0.5))
+	c58.add_point(Vector2(0.22, 1.7))
+	c58.add_point(Vector2(0.6, 2.8))
+	c58.add_point(Vector2(1.0, 3.6))
 	return c58
 
 
@@ -5903,23 +5907,41 @@ func _build_car() -> void:
 	# photo's register, not FP57's wisp: more, longer-lived,
 	# faster-growing puffs at near-full birth opacity.
 	# Budget: 4 patches x 56 = 224 billboards worst case.
+	# Fix Pass 59: the motion law above is now a BOIL,
+	# not a stream. FP58 set velocity per frame along
+	# the car's wake vector (0.85x road speed) and the
+	# seat convicted the read - a diagonal streak sheet
+	# at bodywork height. Now the numbers are set ONCE,
+	# here: low relative velocity (0.5-1.5 m/s - the
+	# emitters ride in car space, so a slow puff keeps
+	# pace with the car through its first life), a
+	# mostly-rising direction with wide spread, buoyant
+	# gravity, gentle damping, and the steepened growth
+	# curve below - puffs born at the sliding patch that
+	# EXPAND in place around the fenders, in the
+	# driver's forward airspace, for exactly the skid's
+	# duration. Nothing per frame rewrites them. Density
+	# raised to the photo's register in the same pass:
+	# 72 puffs per patch (budget 4 x 72 = 288 billboards
+	# worst case, over FP58's 224 - stated, not hidden)
+	# and a larger birth scale.
 	var smoke_tex57: ImageTexture = _soft_puff_texture57()
 	for wi3: int in WHEEL_LOCALS.size():
 		var wl3: Vector2 = WHEEL_LOCALS[wi3]
 		var em3 := GPUParticles3D.new()
 		em3.name = "TireSmoke%d" % wi3
-		em3.amount = 56
-		em3.lifetime = 1.15
+		em3.amount = 72
+		em3.lifetime = 1.30
 		em3.local_coords = true
 		em3.emitting = false
 		em3.amount_ratio = 0.0
 		em3.visibility_aabb = AABB(Vector3(-60.0, -25.0, -60.0), Vector3(120.0, 50.0, 120.0))
 		em3.position = Vector3(wl3.x, 0.05, wl3.y)
 		var pm3 := ParticleProcessMaterial.new()
-		pm3.direction = Vector3(0.0, 0.55, 0.45)
-		pm3.spread = 34.0
-		pm3.initial_velocity_min = 2.2
-		pm3.initial_velocity_max = 4.2
+		pm3.direction = Vector3(0.0, 0.85, 0.30)
+		pm3.spread = 42.0
+		pm3.initial_velocity_min = 0.5
+		pm3.initial_velocity_max = 1.5
 		# FP58: the puff texture is ONE soft blob; a cloud of
 		# identical blobs reads as image grain, not smoke. The
 		# particles TUMBLE - random initial rotation and a
@@ -5931,11 +5953,11 @@ func _build_car() -> void:
 		pm3.angle_max = 360.0
 		pm3.angular_velocity_min = -70.0
 		pm3.angular_velocity_max = 70.0
-		pm3.gravity = Vector3(0.0, 0.55, 0.0)
-		pm3.damping_min = 1.6
-		pm3.damping_max = 2.6
-		pm3.scale_min = 0.55
-		pm3.scale_max = 1.05
+		pm3.gravity = Vector3(0.0, 0.7, 0.0)
+		pm3.damping_min = 1.0
+		pm3.damping_max = 1.8
+		pm3.scale_min = 0.7
+		pm3.scale_max = 1.25
 		pm3.set("scale_curve", _smoke_grow_curve58())
 		var grad3 := Gradient.new()
 		grad3.set_color(0, Color(0.88, 0.88, 0.90, 0.92))
@@ -11786,6 +11808,27 @@ func _update_telegraph(_delta: float) -> void:
 	# spinning rear sheds backward off the patch, a
 	# sliding tire sheds along the slip. Scale rides the
 	# same speed so the throw reads at any pace.
+	# Fix Pass 59: THE SMOKE ANSWERS THE SKID. The
+	# owner's ruling (2026-11-11): "focus on smoke
+	# coming from tires during loss of traction, when
+	# car makes the skidding sound around turns." So the
+	# channel's drive is now the SKID AUDIO'S OWN DRIVE
+	# - audio_skid_now, slip_state smoothed in
+	# _update_audio (attack 16/s, release 22/s), which
+	# runs immediately before this function in the
+	# physics step, so eye and ear read the same value
+	# in the same frame and can never disagree about
+	# whether the tires are sliding. The FP58 terms are
+	# gone: raw slip_state no longer drives the channel
+	# directly, and the wheelspin term is REMOVED - the
+	# spin keeps its audio voice only; at a launch, on
+	# the straights, the smoke is zero. FP58's per-tire
+	# load gate stays exactly as built (a planted tire
+	# smokes, an unloaded one does not), applied to the
+	# skid drive at all four patches, fronts first-class:
+	# in a turning slide the fronts are the tires the
+	# driver can see working. When you hear the skid,
+	# you see the smoke; when you don't, you don't.
 	tire_smoke57 = 0.0
 	for tw58: int in tire_smoke58_amt.size():
 		tire_smoke58_amt[tw58] = 0.0
@@ -11794,30 +11837,24 @@ func _update_telegraph(_delta: float) -> void:
 		var em57: GPUParticles3D = spin_emitters[wi57]
 		var amt57: float = 0.0
 		if mode == MODE_DRIVE:
-			var gen57: float = slip_state
-			if wi57 >= 2: # the driven patches add their spin
-				gen57 = maxf(gen57, wheelspin)
+			var gen59: float = audio_skid_now # FP59: the skid audio's own drive (below)
 			var ld57: float = clampf(wheel_load[wi57], 0.0, 1.25)
 			var gate57: float = clampf((ld57 - 0.10) / 0.55, 0.0, 1.0)
-			amt57 = clampf(gen57 * gate57, 0.0, 1.0)
+			amt57 = clampf(gen59 * gate57, 0.0, 1.0)
 		em57.emitting = amt57 > 0.04
 		em57.amount_ratio = amt57
 		tire_smoke57 = maxf(tire_smoke57, amt57)
 		tire_smoke58_amt[wi57] = amt57
-		if amt57 > 0.04:
-			var throw58: Vector3 = -vel3 # the patch's wake, in car axes
-			throw58.y = 0.0
-			if throw58.length() > 0.5:
-				throw58 = throw58.normalized()
-				var pm58: ParticleProcessMaterial = em57.process_material
-				pm58.direction = Vector3(throw58.x, 0.45, throw58.z).normalized()
-				var spd58: float = clampf(vel3.length() * 0.85, 2.2, 30.0)
-				pm58.initial_velocity_min = spd58 * 0.75
-				pm58.initial_velocity_max = spd58 * 1.15
-			# witness for the driven proof: where this patch's
-			# smoke is being born, in world space
-			if wi57 < tire_smoke58_born.size():
-				tire_smoke58_born[wi57] = basis58 * em57.position + car.global_position
+		# Fix Pass 59: the birth witness stays (the driven
+		# proof reads it). The FP58 per-frame wake throw
+		# that used to be set here is DELETED whole - it
+		# raced every puff along the car's velocity vector
+		# and the seat read a streak sheet. The boil's
+		# motion law now lives entirely in the build's
+		# process material (low relative velocity, rise,
+		# growth) and is never rewritten per frame.
+		if amt57 > 0.04 and wi57 < tire_smoke58_born.size():
+			tire_smoke58_born[wi57] = basis58 * em57.position + car.global_position
 	rumble_haptic_now = 0.0
 	if mode == MODE_DRIVE:
 		rumble_haptic_now = clampf((tire_ratio - TIRE_HAPTIC_EDGE) / (1.0 - TIRE_HAPTIC_EDGE), 0.0, 1.0)

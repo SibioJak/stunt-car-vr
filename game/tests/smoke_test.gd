@@ -7692,7 +7692,7 @@ func _run() -> void:
 	main.test_boost = false
 	main.test_throttle = 1.0
 	var spin_peak65: float = 0.0
-	var smoke_seen65: bool = false
+	var smoke_peak65: float = 0.0 # FP59: the launch's peak rear tire-smoke ratio (must stay ~0)
 	var t30_65: float = -1.0
 	var f65: int = 0
 	var spin_at_20: float = -1.0
@@ -7703,20 +7703,32 @@ func _run() -> void:
 		# AMENDED (FP57, FLAGGED): tire smoke now lives at all
 		# four patches (FL, FR, RL, RR); this stage's sentence
 		# is about the DRIVEN pair, indices 2 and 3.
-		if main.spin_emitters.size() == 4 and (main.spin_emitters[2].emitting or main.spin_emitters[3].emitting):
-			smoke_seen65 = true
+		# AMENDED (FP59, FLAGGED): the channel no longer
+		# answers the spin at all - it answers the skid
+		# drive. This loop now records the PEAK rear smoke
+		# ratio across the launch so the check below can
+		# assert the FP59 negative: a spinning launch is a
+		# smokeless launch.
+		if main.spin_emitters.size() == 4:
+			smoke_peak65 = maxf(smoke_peak65, maxf(
+				main.spin_emitters[2].amount_ratio, main.spin_emitters[3].amount_ratio))
 		if spin_at_20 < 0.0 and main.speed >= 20.0:
 			spin_at_20 = main.wheelspin
 		if main.speed >= 30.0:
 			t30_65 = float(f65) / 90.0
 			break
 	main.test_throttle = 0.0
-	print("stage65: floored launch spin peak %.2f, 0-30 %.2f s, spin at 20 m/s %.2f" % [
-		spin_peak65, t30_65, spin_at_20])
+	print("stage65: floored launch spin peak %.2f, 0-30 %.2f s, spin at 20 m/s %.2f, rear smoke peak %.2f" % [
+		spin_peak65, t30_65, spin_at_20, smoke_peak65])
 	check(spin_peak65 > 0.5,
 		"stage65: a floored launch spins the driven wheels (peak %.2f; audit 0.72)" % spin_peak65)
-	check(smoke_seen65,
-		"stage65: the spin shows - the rear smoke emitters fire while the state is up")
+	# AMENDED (FP59, FLAGGED): this check used to assert
+	# the rear smoke FIRED under spin (FP36-FP58 law). The
+	# owner's FP59 ruling removes the spin term from the
+	# smoke channel - the sentence inverts: under a real
+	# spin (peak asserted just above) the smoke stays out.
+	check(smoke_peak65 < 0.05,
+		"stage65: FP59 - the spin is smokeless: the launch's rear tire smoke peaks at %.2f while the spin peaks at %.2f (the channel answers the skid only)" % [smoke_peak65, spin_peak65])
 	# AMENDED (FP40, FLAGGED): the gearbox stretches the
 	# floored run on purpose (the owner's "2 gears" verdict) -
 	# FP40's audit and this stage both read 2.86 s. The guard
@@ -7851,6 +7863,10 @@ func _run() -> void:
 	# lat_vel still large), the FRONT patches must smoke
 	# on the slip term alone (no wheelspin is staged here):
 	# the sync proof for the lateral half of the channel.
+	# FP59: the fronts now answer the skid drive
+	# (audio_skid_now - slip's smoothed self), so the
+	# clause reads the same ratios a few frames into the
+	# slide's life, once the smoothing has attacked.
 	main.debug_stage_landing(70.0, 0.45, 24.0)
 	main.air_from_release = false
 	main.air_from_gap = false
@@ -10777,13 +10793,17 @@ func _run() -> void:
 		"stage74: body_sink stays FP32's at rest (%.4f) - the vib channel never writes it" % main.body_sink)
 	# FP57 (Item C): at a hooked idle the tire smoke is
 	# silent - the channel's only terms are slip and spin.
+	# AMENDED (FP59, FLAGGED): the channel's only term is
+	# now the skid drive (audio_skid_now) - the spin is
+	# not a term at all. At a hooked idle the drive is
+	# zero either way; the check is unchanged.
 	var ts_idle74: float = 0.0
 	var ts_emit74: bool = false
 	for em74: GPUParticles3D in main.spin_emitters:
 		ts_idle74 = maxf(ts_idle74, em74.amount_ratio)
 		ts_emit74 = ts_emit74 or em74.emitting
 	check(main.spin_emitters.size() == 4 and not ts_emit74 and ts_idle74 == 0.0,
-		"stage74: tire smoke silent at idle in DRIVE (emitting %s, ratio %.2f) - no slip, no spin, no smoke" % [str(ts_emit74), ts_idle74])
+		"stage74: tire smoke silent at idle in DRIVE (emitting %s, ratio %.2f) - the skid drive is zero, no smoke" % [str(ts_emit74), ts_idle74])
 	# FP57 (Item B): the shift event fires the flames.
 	main.vib_blip = 1.0
 	await frames(3)
