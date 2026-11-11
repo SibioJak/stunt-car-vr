@@ -10679,8 +10679,18 @@ func _run() -> void:
 		await physics_frame
 		att1_73 += 1
 	print("stage73: roof attach frames %d (ordinary is 90)" % att1_73)
-	check(att1_73 > 90 * 5,
-		"stage73: the roof recovery's attach is VISIBLY longer than ordinary (%d frames vs 90)" % att1_73)
+	# AMENDED (FP60, FLAGGED): the FP51 form charged 6.0 s
+	# of dead attach wait (the check read >450 frames).
+	# FP60's Item 2 kills the dead air, not the penalty:
+	# the roof attach is now a 1.0 s strain beat + the 1.0 s
+	# lift = 180 frames nominal, the extra time carried by
+	# the righting the attach performs (probe-verified in
+	# the pass's roof timeline proof). The band re-derives
+	# to [150, 240]: still VISIBLY longer than the ordinary
+	# 90, honestly bounded above - a regression to the
+	# 6 s statue reads ~630 and fails here.
+	check(att1_73 >= 150 and att1_73 <= 240,
+		"stage73: the roof recovery's attach is longer than ordinary but all work (%d frames vs 90; FP51's dead wait read ~630)" % att1_73)
 	main.debug_set_hang_dangle()
 	main._do_release()
 	await wait_until(func() -> bool: return main.mode == main.MODE_DRIVE, 700)

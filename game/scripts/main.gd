@@ -344,6 +344,13 @@ const DRAG_QUAD: float = 0.001241 # Fix Pass 54: aero drag, m/s^2 per (m/s)^2
 # catch never fires there: the full MORE slip is what
 # stage 68 reads. Lift still collapses u the same
 # frame; the catch is what the tuck lands on.
+# Fix Pass 60 (Item 1): the TAX RATE is unchanged; its
+# INPUT is re-priced at the bleed (see _update_drive):
+# engine demand (rear_u) alone no longer spends the
+# circle - the spend reads the rear's saturation state
+# (wheelspin, and demand relieved by the slide itself),
+# so sustained cornering drive stops starving the
+# bleed while the corner-exit punch still pays full.
 const FISHTAIL_TAX: float = 2.00 # friction-circle spend of the rear's lateral capacity (FP42: was 0.75; sized by probe - see the note above)
 const FISHTAIL_FLOOR: float = 0.0625 # the tax factor's floor, squared (factor never under 0.25)
 const FISHTAIL_CATCH_S: float = 0.30 # seconds the catch boost runs after demand falls
@@ -934,16 +941,19 @@ const AIR_TRIM_BLEED_K: float = 3.5 # Fix Pass 54: 1/s - the bought share's blee
 # the crane stand-in collects it - the pre-carnage shape
 # of WRECK -> LONG REPAIR (owner's ruling 2026-11-07):
 # the same off-stage collection as any recovery, but the
-# attach waits ROOF_HOLD_EXTRA_S longer at the pickup
-# (the recovery's extra time on the chains is the
-# penalty; the full wreck spectacle - carnage, welding -
-# is the carnage build's, not this pass's). The ruling is
+# attach runs longer at the pickup (the recovery's extra
+# time on the chains is the penalty; the full wreck
+# spectacle - carnage, welding - is the carnage build's,
+# not this pass's). Fix Pass 60 (Item 2): the extra time
+# is a 1 s strain beat inside a 2 s attach that visibly
+# RIGHTS the car from its inverted pickup pose - the
+# FP51 form (6 s of motionless wait) is dead. The ruling is
 # named on the DIAG (LAST line) and in the grab log, like
 # every ruling this game surfaces.
 const ROOF_MISALIGN_DEG: float = 100.0 # up-vs-road angle past which an arrival is inverted, not misaligned
 const ROOF_RATE_RAD_S: float = 1.2 # |attitude rate| at contact past which a COMMITTED arrival is still going over
 const ROOF_COMMIT_DEG: float = 45.0 # tilt past which the rate arm of the roof ruling applies (see _land)
-const ROOF_HOLD_EXTRA_S: float = 6.0 # s of extra attach wait at the pickup on a roof recovery (charged in _begin_recovery)
+const ROOF_HOLD_EXTRA_S: float = 1.0 # Fix Pass 60 (Item 2): s of STRAIN BEAT at the pickup on a roof recovery (FP51: 6.0 of dead wait - the owner's fifth strike, "the crane pause is annoying"; now the beat is the chains taking the strain while the attach visibly rights the car, see _update_hang)
 # The return stroke itself (measured, see _susp_integrate):
 # with the stock rate the gated throw reached only 1.33 m/s
 # of its 3.66 cap on the staged gap landing - the impact's
@@ -1504,6 +1514,7 @@ var _trim_v51: float = 0.0 # Fix Pass 51 (Item 2): the trim's accumulated attitu
 var _trim_held53: float = 0.0 # Fix Pass 53 (Item 1): s the current trim direction has been continuously held - the spend fade's clock
 var _trim_sign53: float = 0.0 # Fix Pass 53 (Item 1): the held trim's direction (+1 throttle / -1 brake / 0 none) - a change resets the clock
 var roof_recovery: bool = false # the current hang is a ROOF stand-in recovery (longer hold)
+var hang_roof60: bool = false # Fix Pass 60 (Item 2): this hang's pickup is a roof collection - the attach rights the car from inverted (captured in _setup_hang_at before roof_recovery is consumed)
 var last_roof: String = "-" # the last ROOF ruling, for the DIAG ("" until the first)
 # Fix Pass 10 (Item 1): the s at which the car LEFT the road,
 # recorded at air entry. The drone's drop may never be ahead of
@@ -2043,7 +2054,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP59 · 2026-11-11"
+const BUILD_STAMP: String = "FP60 · 2026-11-11"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -8365,6 +8376,7 @@ func start_race() -> void:
 	anchor_pos = Vector3(pickup.x, float(fr["pos"].y) + HANG_LEN + HANG_CLEAR, pickup.z)
 	pivot_pos = anchor_pos
 	anchor_t = 0.0
+	hang_roof60 = false # Fix Pass 60 (Item 2): a Drop Start pickup is never a roof collection
 	carrier_vel = Vector3.ZERO
 	carrier_accel = Vector3.ZERO
 	carrier_path.clear()
@@ -8469,6 +8481,10 @@ func _begin_recovery(_catch_pos: Vector3, from_s: float) -> void:
 	# at the station: an early release off a roof hang
 	# skips the dangle, never the wait (the Full Moron
 	# clause keeps the button live in every phase).
+	# Fix Pass 60 (Item 2): the charge is now the 1 s
+	# strain beat (ROOF_HOLD_EXTRA_S) and the wait is
+	# WORK - the attach rights the inverted car across
+	# the whole 2 s (see _update_hang's roof branch).
 	if roof_recovery:
 		anchor_t = -ROOF_HOLD_EXTRA_S
 	drop_target_s = _find_drop_s(from_s)
@@ -8480,6 +8496,10 @@ func _setup_hang_at() -> void:
 	# surcharge was charged in _begin_recovery (anchor_t)
 	# before this call, and a hang stationed any other way
 	# (the funlab jump-in) is never a roof recovery.
+	# Fix Pass 60 (Item 2): the roof-ness of this hang is
+	# captured for the attach's righting before the flag
+	# is consumed.
+	hang_roof60 = roof_recovery
 	roof_recovery = false
 	# Fix Pass 41 (Item 4): the hang setup at drop_target_s,
 	# extracted from _begin_recovery so the funlab jump-in
@@ -9208,7 +9228,42 @@ func _update_drive(delta: float) -> void:
 	# product stays under the tire's own load ceiling:
 	# the catch can restore the bleed up to GRIP_LOAD_MAX,
 	# never past it - it is a re-bite, not new grip.
-	var tax_factor42: float = sqrt(clampf(1.0 - FISHTAIL_TAX * rear_u * rear_u, FISHTAIL_FLOOR, 1.0))
+	# Fix Pass 60 (Item 1): THE TAX'S INPUT, RE-PRICED.
+	# FP40/42 priced the tax on rear_u - engine demand
+	# over the spin cap - but demand is not saturation:
+	# rear_u sits at 0.64-0.70 through ANY sustained
+	# working drive, so on the ribbon's first banked
+	# corner (still climbing, load_grip ~0.69) the factor
+	# sat at 0.25-0.43 and the effective lateral cap at
+	# 1.6-4.2 m/s^2 against a 12-18 m/s^2 demand - held-
+	# throttle entries at 15.7-39.6 m/s ALL departed at
+	# s151-154 (traces pass, 2026-11-11). The tax now
+	# spends against the rear's ACTUAL saturation state,
+	# the wheelspin/slip family: the whole input - the
+	# demand term and the spin state together - is
+	# relieved by the slide itself (slip_state, last
+	# tick's - the bleed below is what this tick's will
+	# be computed from), so once the rear is genuinely
+	# sliding the circle is no longer charged twice and
+	# the bleed recovers to the load's own class. The
+	# spin state is in the input so a rear breaking
+	# loose longitudinally pays in full at the punch -
+	# but it too is relieved mid-slide: the first
+	# census form let it re-tax at s155-160, when the
+	# falling speed drops the car into the high-force
+	# gear and the spin state wakes, crashing the cap
+	# (9.7 -> 1.6) in the very metres the slide was
+	# being recovered. What is protected is untouched:
+	# at the standard corner's exit the slide has not
+	# built when the throttle punches (slip ~0, spin
+	# the punch's own), so the step-out and its
+	# regulation read as FP42 staged them (stage 68 -
+	# whose fixture peaks at slip_state 0.04, where
+	# this relief is a 4% whisper), and the catch on
+	# lift is the same code on the same trigger.
+	var tax_u60: float = clampf(maxf(wheelspin, rear_u)
+		* (1.0 - slip_state), 0.0, 1.0)
+	var tax_factor42: float = sqrt(clampf(1.0 - FISHTAIL_TAX * tax_u60 * tax_u60, FISHTAIL_FLOOR, 1.0))
 	if tail_catch_t > 0.0:
 		tax_factor42 *= 1.0 + FISHTAIL_CATCH_GAIN * (tail_catch_t / FISHTAIL_CATCH_S)
 	var lat_factor40: float = minf(lg5 * tax_factor42, GRIP_LOAD_MAX)
@@ -10161,10 +10216,48 @@ func _update_hang(delta: float) -> void:
 			anchor_t += delta / 1.0
 			_step_pendulum(delta)
 			var target_car: Vector3 = _hang_car_pos(_frame_at(drop_target_s))
-			var t: float = clampf(anchor_t, 0.0, 1.0)
-			var e: float = t * t * (3.0 - 2.0 * t)
-			car.global_position = hang_from_pos.lerp(target_car, e)
+			if hang_roof60:
+				# Fix Pass 60 (Item 2): THE ROOF ATTACH READS
+				# AS WORK. The progress runs over the WHOLE
+				# attach - the 1 s strain beat (anchor_t < 0)
+				# plus the 1 s lift - eased once: the car
+				# begins on the pad INVERTED (see the righting
+				# roll just below) and the
+				# lift blends in across the beat instead of
+				# waiting it out statue-still, so the chains'
+				# strain, the pendulum's seeded swing (the
+				# target already carries it) and the righting
+				# are all under way from the first second and
+				# the lift proper completes the motion as the
+				# carry begins. The penalty survives as time:
+				# 2.0 s of attach against the ordinary 1.0 s.
+				var rp60: float = clampf((anchor_t + ROOF_HOLD_EXTRA_S)
+					/ (1.0 + ROOF_HOLD_EXTRA_S), 0.0, 1.0)
+				var e60: float = rp60 * rp60 * (3.0 - 2.0 * rp60)
+				car.global_position = hang_from_pos.lerp(target_car, e60)
+			else:
+				var t: float = clampf(anchor_t, 0.0, 1.0)
+				var e: float = t * t * (3.0 - 2.0 * t)
+				car.global_position = hang_from_pos.lerp(target_car, e)
 			_orient_car_hang(delta, true)
+			if hang_roof60:
+				# Fix Pass 60 (Item 2): THE RIGHTING. The car
+				# was collected off its roof; at the pickup it
+				# presents INVERTED (a half-turn about its own
+				# longitudinal axis on top of the hang pose)
+				# and the attach rolls it upright on the same
+				# eased progress as the lift - visibly under
+				# way inside the first second, complete as
+				# the carry begins (progress 1.0 = no roll).
+				# Applied after the hang orient each frame, so
+				# the pose is always hang-pose + this roll.
+				var rp60r: float = clampf((anchor_t + ROOF_HOLD_EXTRA_S)
+					/ (1.0 + ROOF_HOLD_EXTRA_S), 0.0, 1.0)
+				var e60r: float = rp60r * rp60r * (3.0 - 2.0 * rp60r)
+				var ang60: float = PI * (1.0 - e60r)
+				if ang60 > 0.0001:
+					var zb60: Vector3 = car.global_transform.basis.z.normalized()
+					car.global_transform.basis = car.global_transform.basis.rotated(zb60, ang60)
 			if anchor_t >= 1.0:
 				hang_phase = "carry"
 				anchor_from = anchor_pos
