@@ -791,7 +791,38 @@ const REBOUND_CHAIN_RESET_S: float = 0.5
 # throw (already in vel3), not an unload, and keeps
 # the token; the priced case is the unload alone,
 # which is the case the lossy argument covers.
-const KICK62_EXT_K: float = 0.55 # the throw family's pricing of extension rate (see REBOUND route)
+# Fix Pass 63: THE KICK, SIZED. The seat's verdict on
+# FP62: "the smallest of kicks, but its there" - presence
+# confirmed, size fails small. Two moves, argued from the
+# FP62 replica's numbers (~/fp63-scratch/): (1) the heave
+# share is paid net of the road-shape rate (see the
+# separation site) - at FP62's factors that alone moves
+# the rough hump crest's honest price from 2.184 to
+# ~1.52 while the ramp (road part -0.07) and the control
+# crest (-0.13) barely move; (2) the extension factor
+# scales 0.55 -> 1.00 with room the filter frees. The
+# arithmetic that bounds the size: the rough crest's raw
+# extension state is genuinely ~14% hotter than the
+# ramp's, so any factor past ~1.53 total (ext + the
+# heave's spring half) takes the rough crest back over
+# its FP62 read; KICK63_EXT_K 1.00 + the net heave's
+# ~0.5 prices the total spring release at ~1.50x.
+# MEASURED at K = 1.00 (probe62/probe63 replicas,
+# ~/fp63-scratch/): ramp 1.169 -> 1.671 (heave 0.557 -
+# its road part reads ~0 at the birth, nothing to
+# filter - plus ext 1.114), control crest 1.003 ->
+# 1.487, rough crest 2.184 -> 1.894 with the stage-10b
+# row landing ROUGH/OK and dent-free. K = 1.15 was
+# tried and REVERTED: ramp 1.84, but the rough crest
+# re-priced 2.114, its landings went HARD again and
+# the dent returned (0->2) - the grade boundary at
+# that crest sits between the 1.89 and 2.11 births,
+# so 1.00 is the largest factor that keeps the rough
+# crest dent-free, and the ramp's remaining shortfall
+# against the 2.0 class is that boundary, not the cap.
+# The fresh-unload gate's terms are EXACTLY FP62's; the
+# cap stays 2.6; the landing throw is untouched, again.
+const KICK63_EXT_K: float = 1.00 # Fix Pass 63: extension-rate pricing, scaled up from FP62's 0.55 on the room the road-shape filter frees
 const KICK62_CAP: float = 2.6 # total birth increment ceiling, m/s = the throw's ungated cap
 # Fix Pass 14 (Item 7): flight attitude. The film study
 # (section 3): through a real flight the nose-down attitude
@@ -1698,6 +1729,9 @@ var deep_hit_age: float = 9.0 # FP14 (Item 2): seconds since the last deep compr
 var bounce_chain: int = 0 # FP14 (Item 1): spring throws since the last settled ground run
 var heave_rate62: float = 0.0 # Fix Pass 62: d(heave_off)/dt across consecutive DRIVE ticks, m/s (the body's spring-driven vertical rate the geometry route now inherits)
 var heave_was_drive62: bool = false # Fix Pass 62: the previous tick was a DRIVE tick (the rate is only honest across an unbroken DRIVE run)
+var geom_prev63: float = 0.0 # Fix Pass 63: last tick's mean sampled road rise (geom_f/geom_r mean), for the road-shape rate
+var road_rate63: float = 0.0 # Fix Pass 63: d(mean sampled road rise)/dt across consecutive DRIVE ticks, m/s - the road-shape part of the heave rate
+var kick63_road: float = 0.0 # Fix Pass 63: witness - the road-shape rate filtered out of the last geometry-route heave share
 var kick62_heave: float = 0.0 # Fix Pass 62: witness - the heave share of the last geometry-route increment
 var kick62_ext: float = 0.0 # Fix Pass 62: witness - the extension share of the last geometry-route increment
 var kick62_wound62: bool = false # Fix Pass 62: witness - the last geometry separation was wound past rest (token paid, not priced)
@@ -2143,7 +2177,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP62 · 2026-11-13"
+const BUILD_STAMP: String = "FP63 · 2026-11-13"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -10824,11 +10858,24 @@ func _update_suspension(delta: float) -> void:
 		# across an unbroken run of DRIVE ticks; a mode
 		# change restarts it at zero.
 		var heave_pre62: float = heave_off
+		var geom_now63: float = (geom_f + geom_r) * 0.5
 		_susp_integrate_corners(tw, delta)
 		if delta > 0.0 and heave_was_drive62:
 			heave_rate62 = (heave_off - heave_pre62) / delta
+			# Fix Pass 63: the road-shape rate across the
+			# same tick - the sampled rise the attach
+			# heights are built from, differenced the same
+			# way. heave_off = geom_mean - compression
+			# mean + rest, so heave_rate62 - road_rate63
+			# is the heave's SPRING-DRIVEN part (the
+			# compression release), and road_rate63 alone
+			# is the road's own shape arriving through the
+			# sampling - motion already carried in vel3.
+			road_rate63 = (geom_now63 - geom_prev63) / delta
 		else:
 			heave_rate62 = 0.0
+			road_rate63 = 0.0
+		geom_prev63 = geom_now63
 		heave_was_drive62 = true
 		# Fix Pass 32 (Item 3): the armed contact thump fires
 		# per axle at the moment that axle takes the landing's
@@ -11018,8 +11065,28 @@ func _update_suspension(delta: float) -> void:
 			# pricing reads the car's state, not one
 			# corner's.
 			bounce_pending = true
-			kick62_heave = clampf(heave_rate62 * float(fr["up"].y), 0.0, KICK62_CAP)
-			kick62_ext = clampf(-(cv_f + cv_r) * KICK62_EXT_K, 0.0, KICK62_CAP)
+			# Fix Pass 63: the heave share is paid NET of
+			# the road-shape rate (road_rate63, differenced
+			# alongside heave_rate62 above): the raw heave
+			# rate mixes the springs' release with the
+			# road's own shape arriving through the sampled
+			# rise, and the shape part is already carried
+			# in vel3 - paying it here too is the double
+			# count the wound gate below refuses on the
+			# cycle route. Measured at the FP62 sites
+			# (~/fp63-scratch/ analysis): the road-shape
+			# part reads -0.07 at the ramp birth and -0.13
+			# at the control crest (nothing to filter -
+			# their heave is spring release), but +0.68 of
+			# the rough hump crest's 1.38 heave share -
+			# the facet-stepping of the sampled rise on a
+			# rough face, not spring motion. Netting it
+			# out is what lets the extension factor below
+			# scale up (KICK63_EXT_K) without the scale
+			# flowing into the rough-face read.
+			kick63_road = road_rate63
+			kick62_heave = clampf((heave_rate62 - road_rate63) * float(fr["up"].y), 0.0, KICK62_CAP)
+			kick62_ext = clampf(-(cv_f + cv_r) * KICK63_EXT_K, 0.0, KICK62_CAP)
 			# Fix Pass 62 (the fresh-unload gate, added
 			# on the pass's own staged evidence): the
 			# pricing above is for an UNLOAD - the
