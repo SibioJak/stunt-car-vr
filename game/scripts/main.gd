@@ -355,6 +355,31 @@ const FISHTAIL_TAX: float = 2.00 # friction-circle spend of the rear's lateral c
 const FISHTAIL_FLOOR: float = 0.0625 # the tax factor's floor, squared (factor never under 0.25)
 const FISHTAIL_CATCH_S: float = 0.30 # seconds the catch boost runs after demand falls
 const FISHTAIL_CATCH_GAIN: float = 0.35 # bleed boost at the catch's peak (decays linearly)
+# Fix Pass 61: LATERAL LOAD TRANSFER. Through FP60 the
+# per-corner load law read only speed and the patch's
+# longitudinal curvature - cornering never moved weight
+# sideways, so at the ribbon's first banked corner all
+# four corners pressed within 0.01 of each other and the
+# inside pair never came within ~20x of the separation
+# line (traces pass, 2026-11-12: lefts' minimums 0.67-
+# 0.82 against AIR_LOAD_EPS 0.03, zero air frames in
+# clean cornering). The transfer moves press across each
+# axle, zero-sum, priced on the lateral SPECIFIC FORCE
+# the tires actually exert - the achieved yaw's
+# centripetal demand less gravity's own feed along the
+# banked surface (the right vector's rise) - so a banked
+# carve at its neutral speed transfers nothing and the
+# term never fights the bank. The factor is the CG-
+# height/track family: t = (a_spec / g) x 2h/track, with
+# h ~0.64 m over the 1.56 m track. Sized by the ramp
+# recording re-run (see _update_suspension): at the
+# ramp's working pace the inside pair reaches the
+# liftoff neighbourhood; at cruise demand it is merely
+# light. The steep-regime (loop) corners are NOT
+# transferred - their road-frame normal-force law
+# already prices gravity's full vector, bank feed
+# included, so the term would double-count there.
+const LAT_TRANSFER61: float = 0.82 # 2h/track: fraction of an axle's mean load moved across it at 1 g of lateral specific force (FP61)
 # Launch wheelspin: the rear tires are the driven ones (the
 # car is a dragster - big rear slicks, the rake). The
 # ENGINE's applied force is tested against the rear tires'
@@ -1641,6 +1666,7 @@ var sup_lat: Array[float] = [0.0, 0.0, 0.0, 0.0] # Fix Pass 21: each wheel's lat
 # cumulative evidence counter the stages read.
 var wheel_kv: Array[float] = [0.0, 0.0, 0.0, 0.0]
 var wheel_load: Array[float] = [1.0, 1.0, 1.0, 1.0]
+var transfer61_t: float = 0.0 # Fix Pass 61: the lateral transfer fraction applied this tick (test witness; + = press moved to the car's right)
 var wheel_air: Array[bool] = [false, false, false, false]
 var wheel_air_frames: Array[int] = [0, 0, 0, 0]
 var edge_roll: float = 0.0
@@ -2054,7 +2080,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP60 · 2026-11-11"
+const BUILD_STAMP: String = "FP61 · 2026-11-13"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -10590,6 +10616,48 @@ func _update_suspension(delta: float) -> void:
 			else:
 				frame_fall41 = false
 				wheel_load[wi] = clampf(1.0 - speed * speed * wheel_kv[wi] / (GRAV * cos_w), 0.0, 1.25) if sup_ok[wi] else 0.0
+		# Fix Pass 61: LATERAL LOAD TRANSFER (see the
+		# LAT_TRANSFER61 note at the constants). The
+		# specific force along the car's right is the
+		# achieved yaw's centripetal demand (which points
+		# along -hr, toward the turn's centre) less
+		# gravity's own component along hr - on a banked
+		# road gravity feeds the turn itself, and at the
+		# neutral speed the two cancel and nothing
+		# transfers. Press moves AWAY from the specific
+		# force's side: a left turn (demand along -hr)
+		# loads the right pair and unloads the left.
+		# Zero-sum per axle, scaled by the axle's own
+		# mean load, applied only where both corners are
+		# supported and read by the ordinary load law -
+		# a steep-regime corner's normal-force law
+		# already prices gravity whole, and an
+		# unsupported corner has no press to move. Every
+		# reader below (the axle means, separation, the
+		# targets, load_grip) and the FP59 smoke gate
+		# inherit the transferred loads.
+		var spec61: float = -speed * yaw_rate + GRAV * hr.y
+		# The slide relieves it, as it relieves the
+		# FP60 tax: the specific force above is the
+		# force that would curve the car with its
+		# heading, and a car at full slide is not
+		# receiving it - its tires are spending their
+		# force against the slip, not on the turn. At
+		# slip_state 1 the transfer is zero and the
+		# load story is FP60's own, so a slide's
+		# recovery proceeds on the loads it was staged
+		# on; in clean cornering (slip near 0) the
+		# transfer stands at full strength.
+		transfer61_t = clampf(-spec61 / GRAV * LAT_TRANSFER61, -0.95, 0.95) \
+			* (1.0 - slip_state)
+		for ax61: int in [0, 2]:
+			var il61: int = ax61 # the axle's left corner
+			var ir61: int = ax61 + 1 # the axle's right corner
+			if sup_ok[il61] and sup_ok[ir61] \
+					and not wheel_steep41[il61] and not wheel_steep41[ir61]:
+				var sh61: float = (wheel_load[il61] + wheel_load[ir61]) * 0.5 * transfer61_t
+				wheel_load[il61] = clampf(wheel_load[il61] - sh61, 0.0, 1.25)
+				wheel_load[ir61] = clampf(wheel_load[ir61] + sh61, 0.0, 1.25)
 		geom_f = (sup_rise[0] + sup_rise[1]) * 0.5
 		geom_r = (sup_rise[2] + sup_rise[3]) * 0.5
 		# Fix Pass 7 (Item 2): the suspension samples the QUANTISED
