@@ -735,6 +735,64 @@ const REBOUND_GATE_VY: float = 4.5 # impact vy (m/s) that arms the energy return
 const REBOUND_THROW_FRAC: float = 0.62 # gated throw cap = this x impact vy
 const REBOUND_THROW_CAP: float = 6.2 # absolute ceiling on the gated throw, m/s
 const REBOUND_CHAIN_RESET_S: float = 0.5
+# Fix Pass 62: THE KICK, WIRED. The kick recording
+# (~/kick-scratch/TRACE-REPORT.md) convicted the geometry
+# route's birth increment: a flat 0.35 at every load-driven
+# separation, the same at every speed and stored energy,
+# while the body's spring-driven upward motion (the heave
+# rate, 0.27-0.63 m/s into the lip separation) was measured
+# and discarded, and the springs contributed exactly
+# 0.00 m/s to every crest flight. The game's one real
+# spring-to-flight converter - the rebound throw above -
+# is gated to landings on four conditions an unload fails
+# all of. So the geometry route's increment is now PRICED
+# from the suspension's state at the separation tick:
+#   increment = clamp(heave_rate x up.y, 0, CAP)
+#             + clamp(-(cv_f + cv_r) x 0.55, 0, CAP),
+#   total clamped to CAP -
+# the heave the old code threw away, inherited, plus an
+# extension term in the throw's own 0.55 pricing family
+# (no 0.5 floor: a separation whose springs are spent
+# earns ~nothing, and that is the truth the brief asks
+# for). CAP is the throw route's UNGATED cap - the gated
+# 6.2 stays exclusive to the landing throw. The throw
+# route and its four gates are UNTOUCHED; this is a
+# second, smaller door, for unloads only. Gap entries
+# still get +0.0 and off-edge falls their own terms.
+# WHY THIS CANNOT PUMP (the FP14 guards, re-argued for
+# unload-born energy): the throw route needed a chain
+# guard because it AMPLIFIES - an armed gate returns
+# 0.62x a stored impact, so a memory (arming, chain) had
+# to police it. This door has no memory and no amplifier:
+# it reads two instantaneous, damper-bled quantities -
+# the heave rate and the axle extension rate at the one
+# tick all four corners read ~zero load - and pays out
+# at most what that state holds, capped. Between hops
+# the only way the state refills is a landing, and every
+# landing passes through SUSP_DAMP (ungated on this
+# route) before the next separation can price it: each
+# cycle is strictly lossy, so a drumbeat chain cannot
+# grow hop-over-hop from this term. The FP62 census
+# prices the ridge chain hop by hop as the verification.
+# FP62 CORRECTION (the pass's own staged evidence,
+# recorded plainly): the lossy-cycle argument holds for
+# the UNLOAD case it was written for, and the first
+# ungated build still ran the ridge chain hot - not by
+# growing hop-over-hop, but by paying the wound price
+# at every hop and arming the gated throw oftener
+# (births alternating 2.0-2.4 priced / 3.4-4.1 thrown,
+# landings HARD, dent +2 at the row's design cruise,
+# where FP61 read token births, OK/FLAT, dent 0). The
+# flaw in the argument: a hump FACE refills the state
+# by driving, inside one feature's cycle, faster than
+# the damper bleeds it - no landing needs to intervene.
+# The wound gate at the route is the correction: a
+# separation met still wound past rest is the road's
+# throw (already in vel3), not an unload, and keeps
+# the token; the priced case is the unload alone,
+# which is the case the lossy argument covers.
+const KICK62_EXT_K: float = 0.55 # the throw family's pricing of extension rate (see REBOUND route)
+const KICK62_CAP: float = 2.6 # total birth increment ceiling, m/s = the throw's ungated cap
 # Fix Pass 14 (Item 7): flight attitude. The film study
 # (section 3): through a real flight the nose-down attitude
 # BUILDS - the car leaves on the lip's angle and arrives
@@ -1638,6 +1696,11 @@ var air_from_release: bool = false # FP14 (Item 1): this flight began as a drone
 var rebound_gate_vy: float = 0.0 # FP14 (Item 1): impact vy of an armed energy return (0 = unarmed)
 var deep_hit_age: float = 9.0 # FP14 (Item 2): seconds since the last deep compression (route-2 evidence)
 var bounce_chain: int = 0 # FP14 (Item 1): spring throws since the last settled ground run
+var heave_rate62: float = 0.0 # Fix Pass 62: d(heave_off)/dt across consecutive DRIVE ticks, m/s (the body's spring-driven vertical rate the geometry route now inherits)
+var heave_was_drive62: bool = false # Fix Pass 62: the previous tick was a DRIVE tick (the rate is only honest across an unbroken DRIVE run)
+var kick62_heave: float = 0.0 # Fix Pass 62: witness - the heave share of the last geometry-route increment
+var kick62_ext: float = 0.0 # Fix Pass 62: witness - the extension share of the last geometry-route increment
+var kick62_wound62: bool = false # Fix Pass 62: witness - the last geometry separation was wound past rest (token paid, not priced)
 var grounded_t: float = 0.0 # FP14 (Item 1): continuous grounded seconds (chain re-arm clock)
 var wheel_mis: Array[MeshInstance3D] = []
 var wheel_axle: Array[int] = [] # 0 = front, 1 = rear, parallel to wheel_mis
@@ -2080,7 +2143,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP61 · 2026-11-13"
+const BUILD_STAMP: String = "FP62 · 2026-11-13"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -10754,7 +10817,19 @@ func _update_suspension(delta: float) -> void:
 		# rise plus its axle's jitter delta.
 		for wi3: int in 4:
 			susp_geom[wi3] = sup_rise[wi3] + (jit_f if wi3 < 2 else jit_r)
+		# Fix Pass 62: the heave rate across this tick -
+		# the body's spring-driven vertical motion, read
+		# off the same heave_off the placement uses (the
+		# kick recording's own measure). Only honest
+		# across an unbroken run of DRIVE ticks; a mode
+		# change restarts it at zero.
+		var heave_pre62: float = heave_off
 		_susp_integrate_corners(tw, delta)
+		if delta > 0.0 and heave_was_drive62:
+			heave_rate62 = (heave_off - heave_pre62) / delta
+		else:
+			heave_rate62 = 0.0
+		heave_was_drive62 = true
 		# Fix Pass 32 (Item 3): the armed contact thump fires
 		# per axle at the moment that axle takes the landing's
 		# weight - its mean compression crossing rest still
@@ -10929,8 +11004,60 @@ func _update_suspension(delta: float) -> void:
 			# terms as the FP8 geometry route (0.35 on top
 			# of the slope-following vertical the velocity
 			# already carries, see _enter_air).
+			# Fix Pass 62: the flat 0.35 is DEAD here. The
+			# increment is priced from the suspension's
+			# state at this tick (see the KICK62 note at
+			# the constants): the heave's upward rate -
+			# projected on the world's up - is inherited
+			# instead of discarded, and the axles'
+			# extension rate is priced at the throw
+			# family's 0.55, with NO floor - a spent
+			# suspension earns ~nothing. The loaded
+			# outside pair's state enters through the
+			# axle means, as the brief directs: the
+			# pricing reads the car's state, not one
+			# corner's.
 			bounce_pending = true
-			bounce_vy = 0.35
+			kick62_heave = clampf(heave_rate62 * float(fr["up"].y), 0.0, KICK62_CAP)
+			kick62_ext = clampf(-(cv_f + cv_r) * KICK62_EXT_K, 0.0, KICK62_CAP)
+			# Fix Pass 62 (the fresh-unload gate, added
+			# on the pass's own staged evidence): the
+			# pricing above is for an UNLOAD - the
+			# brief's case, "the car leaves the ground
+			# because its tires unloaded". The suite's
+			# hump rows convicted the ungated form: on
+			# the ridge row at its 24 m/s design cruise
+			# the geometry births read 1.96-2.36, the
+			# drumbeat's 0.1-0.4 s hops vanished (0 in
+			# band, stage 51), and landings graded HARD
+			# with dents (stage 10b) where FP61 read
+			# OK/FLAT, dent 0. Two measured tells mark
+			# those separations as cycle energy, not
+			# unloads: the springs are still WOUND past
+			# rest (mean compression > SUSP_REST - the
+			# road throwing the car through the springs,
+			# a throw already in vel3), or a DEEP HIT
+			# charged the state inside the chain window
+			# (deep_hit_age <= REBOUND_CHAIN_RESET_S -
+			# the hump face reloads the springs ~0.3 s
+			# before each crest separation, and the
+			# heave channel there reads the road's own
+			# shape rate, 1.2-1.5 m/s of it). The
+			# recording's cases sit clear on both: the
+			# ramp's unload separates at mean
+			# compression 0.076 with deep_hit_age 4.6 s;
+			# the control crest at 0.018 and 8.8 s. So
+			# a separation failing either tell keeps
+			# the flat 0.35 token it always had - the
+			# throw route owns landing-cycle energy -
+			# and only a FRESH unload, state built by
+			# driving, is priced.
+			kick62_wound62 = (c_f + c_r) * 0.5 > SUSP_REST \
+				or deep_hit_age <= REBOUND_CHAIN_RESET_S
+			if kick62_wound62:
+				bounce_vy = 0.35
+			else:
+				bounce_vy = clampf(kick62_heave + kick62_ext, 0.0, KICK62_CAP)
 			pending_rebound = false
 		elif (c_f + c_r) * 0.5 <= REBOUND_FIRE_TRAVEL and cv_f + cv_r < REBOUND_THROW_VEL \
 				and load_f >= REBOUND_LOAD_FLOOR and load_r >= REBOUND_LOAD_FLOOR \
@@ -10954,6 +11081,7 @@ func _update_suspension(delta: float) -> void:
 			else:
 				bounce_vy = clampf(-(cv_f + cv_r) * 0.55, 0.5, 2.6)
 	elif mode == MODE_DONE:
+		heave_was_drive62 = false # Fix Pass 62: the heave rate restarts on the next DRIVE run
 		geom_f = 0.0
 		geom_r = 0.0
 		load_f = 1.0
@@ -10966,6 +11094,7 @@ func _update_suspension(delta: float) -> void:
 	else:
 		# AIR / HANG: no road contact - springs extend to full droop
 		# (the dangling car's wheels hang; the flying car's settle).
+		heave_was_drive62 = false # Fix Pass 62: the heave rate restarts on the next DRIVE run
 		geom_f = 0.0
 		geom_r = 0.0
 		load_f = 1.0

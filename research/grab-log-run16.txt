@@ -1,0 +1,15 @@
+FP16 grab log - events: LAT latch, FIRE activation, EARLY lever release, NOLAT zone entry unlatched, RIM passenger attach
+T14.3 R WHEEL LAT g0.94
+T14.6 L DRP LAT g0.78
+T14.8 L RIM ATT g1.00
+T14.8 L DRP FIRE g1.00
+T18.0 L RIM ATT g0.87
+T19.9 R WHEEL REL g0.25
+T21.4 R RIM ATT g0.87
+T22.3 L WHEEL REL g0.14
+T22.3 L RIM ATT g1.00
+T33.0 L DRP LAT g1.00
+T33.1 L DRP FIRE g1.00
+T34.3 L WHEEL LAT g0.89
+T34.3 R RIM ATT g1.00
+T49.4 L WHEEL REL g0.24
