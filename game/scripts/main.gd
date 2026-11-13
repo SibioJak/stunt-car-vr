@@ -2177,7 +2177,7 @@ var last_release_err_deg: float = 0.0
 # constant as part of its delivery, and the smoke suite
 # format-checks it (stage 62), so a forgotten stamp
 # fails loudly instead of shipping silently.
-const BUILD_STAMP: String = "FP63 · 2026-11-13"
+const BUILD_STAMP: String = "FP64 · 2026-11-13"
 # Fix Pass 17 (Item 2): the grab log's build tag, stamped into
 # each launch's session header next to the wall-clock time.
 # Updated per pass, like the README's own accounting.
@@ -6059,6 +6059,30 @@ func _build_car() -> void:
 	# 72 puffs per patch (budget 4 x 72 = 288 billboards
 	# worst case, over FP58's 224 - stated, not hidden)
 	# and a larger birth scale.
+	# Fix Pass 64 (Items 1+2): THE SMOKE GETS A LIFE.
+	# The owner's FP59 verdict: the sync is right but the
+	# cloud "just kind of sits there" (FP59's car-space
+	# puffs ride the car's frame their whole life) and one
+	# flat white gives it no depth. This pass changes
+	# PRESENTATION ONLY - the drive in _update_telegraph
+	# (audio_skid_now x the per-tire load gate) is the
+	# proven channel and is not touched. Third form for
+	# the motion: the emitters run in WORLD space again
+	# (local_coords off), but now each newborn puff is
+	# handed THE PATCH'S OWN WORLD VELOCITY (written per
+	# frame in _update_telegraph) and the material's
+	# damping - air drag - bleeds it while buoyancy lifts
+	# the remains: born at the car's speed, the cloud
+	# boils past and falls behind as the car drives
+	# through and out of it. FP57's world-space try had
+	# no inheritance (a walking-pace drift the car
+	# vacated instantly); FP58's inheritance was written
+	# into car-space emitters, where a puff could never
+	# leave the car's frame. Colour (Item 2 as amended by
+	# the owner's reference, research/
+	# smoke-colour-reference.jpg - the Niagara plume):
+	# a LIT VOLUME - two ramps below; the soft-puff
+	# texture stays FP59's, the colour lives in them.
 	var smoke_tex57: ImageTexture = _soft_puff_texture57()
 	for wi3: int in WHEEL_LOCALS.size():
 		var wl3: Vector2 = WHEEL_LOCALS[wi3]
@@ -6066,14 +6090,24 @@ func _build_car() -> void:
 		em3.name = "TireSmoke%d" % wi3
 		em3.amount = 72
 		em3.lifetime = 1.30
-		em3.local_coords = true
+		em3.local_coords = false # FP64: world space - a puff's life is the world's, not the car's
 		em3.emitting = false
 		em3.amount_ratio = 0.0
 		em3.visibility_aabb = AABB(Vector3(-60.0, -25.0, -60.0), Vector3(120.0, 50.0, 120.0))
 		em3.position = Vector3(wl3.x, 0.05, wl3.y)
 		var pm3 := ParticleProcessMaterial.new()
-		pm3.direction = Vector3(0.0, 0.85, 0.30)
-		pm3.spread = 42.0
+		# Fix Pass 64: direction and initial velocity are
+		# written PER FRAME in _update_telegraph (the
+		# patch's inherited world velocity + the boil's
+		# rise bias); the values here are only the rest
+		# state before the first generating frame. The
+		# cone narrows to 13 deg (FP59: 42): at road speed
+		# a wide cone sprays the stream sideways at a large
+		# fraction of the car's speed and the cloud smears
+		# off the road; the volume now comes from growth,
+		# tumble and buoyancy as the drag acts.
+		pm3.direction = Vector3(0.0, 1.0, 0.0)
+		pm3.spread = 13.0
 		pm3.initial_velocity_min = 0.5
 		pm3.initial_velocity_max = 1.5
 		# FP58: the puff texture is ONE soft blob; a cloud of
@@ -6085,20 +6119,48 @@ func _build_car() -> void:
 		# no two puffs present the same face twice.
 		pm3.angle_min = 0.0
 		pm3.angle_max = 360.0
-		pm3.angular_velocity_min = -70.0
-		pm3.angular_velocity_max = 70.0
+		# Fix Pass 64 (churn): the tumble variance doubles
+		# (+-150 deg/s, was FP58/59's +-70) and the ranges
+		# around it widen with it - birth scale 0.55..1.65
+		# (was 0.7..1.25) and drag 0.9..2.0 - so neighbouring
+		# puffs are born different sizes, decelerate on
+		# different curves and swell to different ends: the
+		# reference plume's billow, nothing stamped twice.
+		# (No lifetime_randomness exists on GPUParticles3D
+		# in this engine build - checked, not assumed; the
+		# variance lives in these ranges instead.)
+		pm3.angular_velocity_min = -150.0
+		pm3.angular_velocity_max = 150.0
 		pm3.gravity = Vector3(0.0, 0.7, 0.0)
-		pm3.damping_min = 1.0
-		pm3.damping_max = 1.8
-		pm3.scale_min = 0.7
-		pm3.scale_max = 1.25
+		pm3.damping_min = 0.9
+		pm3.damping_max = 2.0
+		pm3.scale_min = 0.55
+		pm3.scale_max = 1.65
 		pm3.set("scale_curve", _smoke_grow_curve58())
+		# Fix Pass 64 (Item 2, as amended): the mix is two
+		# ramps deep. color_initial_ramp is sampled once per
+		# puff at birth (its random point between bright
+		# warm white and a soft mid grey), so core births
+		# and edge births differ from their first frame.
+		# color_ramp then walks the puff's AGE: warm white
+		# at birth, through neutral grey, cooling into the
+		# blue-grey of the reference plume's shadowed, older
+		# mass as the alpha dies. Multiplied together they
+		# give a lit volume - never a hue outside the
+		# plume's own family.
 		var grad3 := Gradient.new()
-		grad3.set_color(0, Color(0.88, 0.88, 0.90, 0.92))
-		grad3.set_color(1, Color(0.88, 0.88, 0.90, 0.0))
+		grad3.set_color(0, Color(1.00, 0.97, 0.92, 0.92))
+		grad3.add_point(0.45, Color(0.82, 0.82, 0.83, 0.70))
+		grad3.set_color(2, Color(0.60, 0.67, 0.74, 0.0))
 		var gtex3 := GradientTexture1D.new()
 		gtex3.gradient = grad3
 		pm3.color_ramp = gtex3
+		var grad64 := Gradient.new()
+		grad64.set_color(0, Color(1.00, 0.98, 0.94, 1.0))
+		grad64.set_color(1, Color(0.70, 0.71, 0.73, 1.0))
+		var gtex64 := GradientTexture1D.new()
+		gtex64.gradient = grad64
+		pm3.color_initial_ramp = gtex64
 		em3.process_material = pm3
 		var quad57 := QuadMesh.new()
 		quad57.size = Vector2(0.85, 0.85)
@@ -12210,8 +12272,40 @@ func _update_telegraph(_delta: float) -> void:
 		# motion law now lives entirely in the build's
 		# process material (low relative velocity, rise,
 		# growth) and is never rewritten per frame.
-		if amt57 > 0.04 and wi57 < tire_smoke58_born.size():
-			tire_smoke58_born[wi57] = basis58 * em57.position + car.global_position
+		# Fix Pass 64 (Item 1): a per-frame write returns -
+		# but only the BIRTH, and only because the emitters
+		# now live in WORLD space (local_coords off at the
+		# build), where a birth velocity, once given, is
+		# the world's to keep: FP58's write failed because
+		# its emitters were car-space, so every puff stayed
+		# locked in the car's frame whatever it was handed.
+		# Here each generating patch hands its newborns the
+		# PATCH'S OWN WORLD VELOCITY: vel3 (the car's world
+		# velocity) plus the yaw throw at this patch's
+		# offset (omega x r), plus the boil's rise bias
+		# (world up) composed on top - not instead of. The
+		# direction is converted into the emitter's own
+		# axes (the spawn transform rotates it back out);
+		# the speed band (0.82..1.10 of the patch speed)
+		# gives each puff a different drag path, so the
+		# stream stretches and churns as it slows. The
+		# material's damping bleeds the inherited speed
+		# while buoyancy (gravity +0.7) lifts what remains -
+		# from the seat the cloud boils past and falls
+		# behind while the car drives through and out of
+		# it. amt57 (the drive) is NOT touched by any of
+		# this: presentation only, exactly as briefed.
+		if amt57 > 0.04:
+			var pm64: ParticleProcessMaterial = em57.process_material
+			var r64: Vector3 = basis58 * em57.position
+			var w64: Vector3 = vel3 + (basis58.y * yaw_rate).cross(r64) + Vector3.UP * 1.1
+			var spd64: float = clampf(w64.length(), 1.5, 60.0)
+			if w64.length() > 0.01:
+				pm64.direction = em57.global_transform.basis.inverse() * w64.normalized()
+			pm64.initial_velocity_min = spd64 * 0.82
+			pm64.initial_velocity_max = spd64 * 1.10
+			if wi57 < tire_smoke58_born.size():
+				tire_smoke58_born[wi57] = basis58 * em57.position + car.global_position
 	rumble_haptic_now = 0.0
 	if mode == MODE_DRIVE:
 		rumble_haptic_now = clampf((tire_ratio - TIRE_HAPTIC_EDGE) / (1.0 - TIRE_HAPTIC_EDGE), 0.0, 1.0)
